@@ -104,7 +104,7 @@ bool bootloader_utility_load_partition_table(bootloader_state_t* bs)
     ESP_LOGI(TAG, "Partition Table:");
     ESP_LOGI(TAG, "## Label            Usage          Type ST Offset   Length");
 
-    for(int i = 0, part_printed; part_printed < num_partitions; i++) {
+    for(int i = 0, part_printed = 0; part_printed < num_partitions; i++) {
         const esp_partition_info_t *partition = &partitions[i];
         if (partition->magic == ESP_PARTITION_MAGIC_MD5) continue;
 	++part_printed;
