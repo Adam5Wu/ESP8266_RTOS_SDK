@@ -151,10 +151,10 @@ bool bootloader_utility_load_partition_table(bootloader_state_t* bs)
                 partition_usage = "WiFi data";
                 break;
             case PART_SUBTYPE_DATA_FAT:
-                partition_usage = "FAT filesystem";
+                partition_usage = "FAT FS";
                 break;
             case PART_SUBTYPE_DATA_SPIFFS:
-                partition_usage = "SPIFFS filesystem";
+                partition_usage = "SPIFFS";
                 break;
             default:
                 partition_usage = "Other data";
@@ -612,10 +612,10 @@ bool bootloader_utility_load_partition_table(bootloader_state_t* bs)
                 partition_usage = "WiFi data";
                 break;
             case PART_SUBTYPE_DATA_FAT:
-                partition_usage = "FAT filesystem";
+                partition_usage = "FAT FS";
                 break;
             case PART_SUBTYPE_DATA_SPIFFS:
-                partition_usage = "SPIFFS filesystem";
+                partition_usage = "SPIFFS";
                 break;
             default:
                 partition_usage = "Other data";
