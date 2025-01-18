@@ -31,9 +31,12 @@ extern "C" {
  */
 #define HEAP_ALIGN(ptr)	        (((size_t)ptr + (HEAP_ALIGN_SIZE - 1)) & ~(HEAP_ALIGN_SIZE - 1))
 
+#define MALLOC_CAP_EXEC         (1 << 0)    ///< Memory must be able to run executable code
 #define MALLOC_CAP_32BIT	    (1 << 1)    ///< Memory must allow for aligned 32-bit data accesses
 #define MALLOC_CAP_8BIT	        (1 << 2)    ///< Memory must allow for 8-bit data accesses
 #define MALLOC_CAP_DMA		    (1 << 3)    ///< Memory must be able to accessed by DMA
+#define MALLOC_CAP_INTERNAL     (1 << 11)   ///< Just for code compatibility
+#define MALLOC_CAP_SPIRAM       (1 << 10)   ///< Just for code compatibility
 
 #define MEM_HEAD_SIZE           sizeof(mem_blk_t)   ///< Size of first type memory block
 #define MEM2_HEAD_SIZE          sizeof(mem2_blk_t)  ///< Size of second type memory block
@@ -49,6 +52,7 @@ typedef struct mem_blk {
 /**
  * Second type memory block.
  */
+#ifdef CONFIG_HEAP_TRACING
 typedef struct mem_blk2 {
     struct mem_blk2 *prev;  ///< Point to previous memory block
     struct mem_blk2 *next;  ///< Point to next memory block
@@ -56,6 +60,9 @@ typedef struct mem_blk2 {
     const char      *file;  ///< Which "file" allocate the memory block
     size_t          line;   ///< Which "line" allocate the memory block                      
 } mem2_blk_t;
+#else
+typedef mem_blk_t mem2_blk_t;
+#endif
 
 /**
  * User region information.

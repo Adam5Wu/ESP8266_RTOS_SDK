@@ -16,15 +16,6 @@
 #include "mbedtls/sha256.h"
 #include <string.h>
 
-#ifdef MBEDTLS_SHA256_ALT
-/* Wrapper only works if the libsodium context structure can be mapped
-   directly to the mbedTLS context structure.
-
-   See extended comments in crypto_hash_sha512_mbedtls.c
-*/
-#error "This wrapper only support standard software mbedTLS SHA"
-#endif
-
 /* Sanity check that all the context fields have identical sizes
    (this should be more or less given from the SHA256 algorithm)
 

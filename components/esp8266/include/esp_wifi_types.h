@@ -18,8 +18,10 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <sys/queue.h>
 #include "esp_err.h"
 #include "esp_interface.h"
+#include "esp_event_base.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -59,6 +61,8 @@ typedef enum {
     WIFI_AUTH_WPA2_PSK,         /**< authenticate mode : WPA2_PSK */
     WIFI_AUTH_WPA_WPA2_PSK,     /**< authenticate mode : WPA_WPA2_PSK */
     WIFI_AUTH_WPA2_ENTERPRISE,  /**< authenticate mode : WPA2_ENTERPRISE */
+    WIFI_AUTH_WPA3_PSK,         /**< authenticate mode : WPA3_PSK */
+    WIFI_AUTH_WPA2_WPA3_PSK,    /**< authenticate mode : WPA2_WPA3_PSK */
     WIFI_AUTH_MAX
 } wifi_auth_mode_t;
 
@@ -87,12 +91,16 @@ typedef enum {
     WIFI_REASON_802_1X_AUTH_FAILED       = 23,
     WIFI_REASON_CIPHER_SUITE_REJECTED    = 24,
 
+    WIFI_REASON_INVALID_PMKID            = 53,
+
     WIFI_REASON_BEACON_TIMEOUT           = 200,
     WIFI_REASON_NO_AP_FOUND              = 201,
     WIFI_REASON_AUTH_FAIL                = 202,
     WIFI_REASON_ASSOC_FAIL               = 203,
     WIFI_REASON_HANDSHAKE_TIMEOUT        = 204,
-    WIFI_REASON_BASIC_RATE_NOT_SUPPORT   = 205,
+    WIFI_REASON_CONNECTION_FAIL          = 205,
+    WIFI_REASON_AP_TSF_RESET             = 206,
+    WIFI_REASON_BASIC_RATE_NOT_SUPPORT   = 207,
 } wifi_err_reason_t;
 
 typedef enum {
@@ -137,6 +145,7 @@ typedef enum {
     WIFI_CIPHER_TYPE_TKIP,       /**< the cipher type is TKIP */
     WIFI_CIPHER_TYPE_CCMP,       /**< the cipher type is CCMP */
     WIFI_CIPHER_TYPE_TKIP_CCMP,  /**< the cipher type is TKIP and CCMP */
+    WIFI_CIPHER_TYPE_AES_CMAC128,/**< the cipher type is AES-CMAC-128 */
     WIFI_CIPHER_TYPE_UNKNOWN,    /**< the cipher type is unknown */
 } wifi_cipher_type_t;
 
@@ -153,6 +162,7 @@ typedef struct {
     uint8_t primary;                      /**< channel of AP */
     wifi_second_chan_t second;            /**< secondary channel of AP */
     int8_t  rssi;                         /**< signal strength of AP */
+    int16_t freq_offset;                  /**< frequency offset of AP */
     wifi_auth_mode_t authmode;            /**< authmode of AP */
     wifi_cipher_type_t pairwise_cipher;   /**< pairwise cipher of AP */
     wifi_cipher_type_t group_cipher;      /**< group cipher of AP */
@@ -183,10 +193,44 @@ typedef struct {
 } wifi_fast_scan_threshold_t;
 
 typedef enum {
+    WIFI_STATE_DEINIT=0,
+    WIFI_STATE_INIT,
+    WIFI_STATE_START
+}wifi_state_t;
+
+typedef enum {
     WIFI_PS_NONE,        /**< No power save */
-    WIFI_PS_MAX_MODEM,   /**< Maximum modem power saving. In this mode, station close cpu and RF in DTIM period */
-    WIFI_PS_MIN_MODEM,   /**< Minimum modem power saving. In this mode, station close RF in DTIM period */
+    WIFI_PS_MIN_MODEM,   /**< Minimum modem power saving. In this mode, station wakes up to receive beacon every DTIM period */
+    WIFI_PS_MAX_MODEM,   /**< Maximum modem power saving. In this mode, interval to receive beacons is determined by the listen_interval 
+                              parameter in wifi_sta_config_t. 
+                              Attention: Using this option may cause ping failures. Not recommended */
 } wifi_ps_type_t;
+
+/**
+ * @brief Wi-Fi Power management config for ESP8266
+ *
+ * Pass a pointer to this structure as an argument to esp_wifi_set_pm_config function.
+ */
+typedef struct {
+    uint8_t max_bcn_early_ms;    /**< max beacon early time(2~15ms), default 4ms. */
+    uint8_t max_bcn_timeout_ms;  /**< max beacon timeout time(12~32ms), default 24ms. */
+    uint8_t wait_time;           /**< wait time before close RF (10~100ms), default 20ms. */
+    uint8_t wait_tx_cnt;         /**< wait cnt after tx packet done(1~20), default 2, real time = wait_tx_cnt * wait_time. */
+    uint8_t wait_rx_bdata_cnt;   /**< wait cnt after rx broadcast packet(1~100), default 2, real time = wait_tx_cnt * wait_time. */
+    uint8_t wait_rx_udata_cnt;   /**< wait cnt after rx unicast packet(1~100), default 4, real time = wait_tx_cnt * wait_time. */
+    bool recv_bdata;             /**< Receive broadcast/multicast packet or not when WiFi in power save. default true(receive broadcast/multicast packet)*/
+} esp_pm_config_t;
+
+/**
+ * @brief Power management config for ESP8266
+ *
+ * Pass a pointer to this structure as an argument to esp_pm_configure function.
+ */
+typedef struct {
+    int max_freq_mhz;   /*!< Not used in ESP8266 */
+    int min_freq_mhz;   /*!< Not used in ESP8266 */
+    bool light_sleep_enable;        /*!< Enter light sleep when no locks are taken */
+} esp_pm_config_esp8266_t;
 
 #define WIFI_PS_MODEM WIFI_PS_MIN_MODEM /**< @deprecated Use WIFI_PS_MIN_MODEM or WIFI_PS_MAX_MODEM instead */
 
@@ -199,6 +243,12 @@ typedef enum {
     WIFI_BW_HT20 = 1, /* Bandwidth is HT20 */
     WIFI_BW_HT40,     /* Bandwidth is HT40 */
 } wifi_bandwidth_t;
+
+/** Configuration structure for Protected Management Frame */
+typedef struct {
+    bool capable;            /**< Advertizes support for Protected Management Frame. Device will prefer to connect in PMF mode if other device also advertizes PMF capability. */
+    bool required;           /**< Advertizes that Protected Management Frame is required. Device will not associate to non-PMF capable devices. */
+} wifi_pmf_config_t;
 
 /** @brief Soft-AP configuration settings for the ESP8266 */
 typedef struct {
@@ -223,6 +273,10 @@ typedef struct {
     uint16_t listen_interval;   /**< Listen interval for ESP8266 station to receive beacon when WIFI_PS_MAX_MODEM is set. Units: AP beacon intervals. Defaults to 3 if set to 0. */
     wifi_sort_method_t sort_method;    /**< sort the connect AP in the list by rssi or security mode */
     wifi_fast_scan_threshold_t  threshold;     /**< When scan_method is set to WIFI_FAST_SCAN, only APs which have an auth mode that is more secure than the selected auth mode and a signal stronger than the minimum RSSI will be used. */
+    wifi_pmf_config_t pmf_cfg;    /**< Configuration for Protected Management Frame. Will be advertized in RSN Capabilities in RSN IE. */
+    uint32_t rm_enabled:1;        /**< Whether radio measurements are enabled for the connection */
+    uint32_t btm_enabled:1;       /**< Whether BTM is enabled for the connection */
+    uint32_t reserved:30;         /**< Reserved for future feature set */
 } wifi_sta_config_t;
 
 /** @brief Configuration data for ESP8266 AP or STA.
@@ -330,7 +384,9 @@ typedef struct {
  */
 typedef struct {
     wifi_pkt_rx_ctrl_t rx_ctrl; /**< metadata header */
-    uint8_t payload[0];       /**< Data or management payload. Length of payload is described by rx_ctrl.legacy_length or rx_ctrl.HT_length. Type of content determined by packet type argument of callback. */
+    uint8_t payload[0];       /**< Data or management frame payload. Length of payload is
+                                min(112, (pkt->rx_ctrl.sig_mode ? pkt->rx_ctrl.HT_length : pkt->rx_ctrl.legacy_length))
+                                Type of content determined by packet type argument of callback. */
 } wifi_promiscuous_pkt_t;
 
 /**
@@ -415,6 +471,101 @@ typedef struct {
     unsigned wifi_tx_rate: 8;               /*!< TX rate, descripted by "wifi_tx_rate_t" */
     unsigned unused: 4;                     /*!< Resolved */
 } wifi_tx_status_t;
+
+/** @cond **/
+/** @brief WiFi event base declaration */
+ESP_EVENT_DECLARE_BASE(WIFI_EVENT);
+/** @endcond **/
+
+/** WiFi event declarations */
+typedef enum {
+    WIFI_EVENT_WIFI_READY = 0,           /**< WiFi ready */
+    WIFI_EVENT_SCAN_DONE,                /**< finish scanning AP */
+    WIFI_EVENT_STA_START,                /**< station start */
+    WIFI_EVENT_STA_STOP,                 /**< station stop */
+    WIFI_EVENT_STA_CONNECTED,            /**< station connected to AP */
+    WIFI_EVENT_STA_DISCONNECTED,         /**< station disconnected from AP */
+    WIFI_EVENT_STA_AUTHMODE_CHANGE,      /**< the auth mode of AP connected by station changed */
+    WIFI_EVENT_STA_BSS_RSSI_LOW,         /**< AP's RSSI crossed configured threshold */
+    WIFI_EVENT_STA_WPS_ER_SUCCESS,       /**< station wps succeeds in enrollee mode */
+    WIFI_EVENT_STA_WPS_ER_FAILED,        /**< station wps fails in enrollee mode */
+    WIFI_EVENT_STA_WPS_ER_TIMEOUT,       /**< station wps timeout in enrollee mode */
+    WIFI_EVENT_STA_WPS_ER_PIN,           /**< station wps pin code in enrollee mode */
+    WIFI_EVENT_AP_START,                 /**< soft-AP start */
+    WIFI_EVENT_AP_STOP,                  /**< soft-AP stop */
+    WIFI_EVENT_AP_STACONNECTED,          /**< a station connected to soft-AP */
+    WIFI_EVENT_AP_STADISCONNECTED,       /**< a station disconnected from soft-AP */
+    WIFI_EVENT_AP_PROBEREQRECVED,        /**< Receive probe request packet in soft-AP interface */
+} wifi_event_t;
+
+/** Argument structure for WIFI_EVENT_STA_WPS_ER_FAILED event */
+typedef enum {
+    WPS_FAIL_REASON_NORMAL = 0,     /**< WPS normal fail reason */
+    WPS_FAIL_REASON_RECV_M2D,       /**< WPS receive M2D frame */
+    WPS_FAIL_REASON_MAX
+} wifi_event_sta_wps_fail_reason_t;
+
+/** Argument structure for WIFI_EVENT_SCAN_DONE event */
+typedef struct {
+    uint32_t status;          /**< status of scanning APs: 0 — success, 1 - failure */
+    uint8_t  number;          /**< number of scan results */
+    uint8_t  scan_id;         /**< scan sequence number, used for block scan */
+} wifi_event_sta_scan_done_t;
+
+/** Argument structure for WIFI_EVENT_STA_CONNECTED event */
+typedef struct {
+    uint8_t ssid[32];         /**< SSID of connected AP */
+    uint8_t ssid_len;         /**< SSID length of connected AP */
+    uint8_t bssid[6];         /**< BSSID of connected AP*/
+    uint8_t channel;          /**< channel of connected AP*/
+    wifi_auth_mode_t authmode;/**< authentication mode used by AP*/
+} wifi_event_sta_connected_t;
+
+/** Argument structure for WIFI_EVENT_STA_AUTHMODE_CHANGE event */
+typedef struct {
+    wifi_auth_mode_t old_mode;         /**< the old auth mode of AP */
+    wifi_auth_mode_t new_mode;         /**< the new auth mode of AP */
+} wifi_event_sta_authmode_change_t;
+
+#define MAX_SSID_LEN        32
+#define MAX_PASSPHRASE_LEN  64
+#define MAX_WPS_AP_CRED     3
+
+/** Argument structure for WIFI_EVENT_STA_WPS_ER_PIN event */
+typedef struct {
+    uint8_t pin_code[8];         /**< PIN code of station in enrollee mode */
+} wifi_event_sta_wps_er_pin_t;
+
+/** Argument structure for WIFI_EVENT_AP_STACONNECTED event */
+typedef struct {
+    uint8_t mac[6];           /**< MAC address of the station connected to soft-AP */
+    uint8_t aid;              /**< the aid that soft-AP gives to the station connected to  */
+} wifi_event_ap_staconnected_t;
+
+/** Argument structure for WIFI_EVENT_AP_STADISCONNECTED event */
+typedef struct {
+    uint8_t mac[6];           /**< MAC address of the station disconnects to soft-AP */
+    uint8_t aid;              /**< the aid that soft-AP gave to the station disconnects to  */
+} wifi_event_ap_stadisconnected_t;
+
+/** Argument structure for WIFI_EVENT_AP_PROBEREQRECVED event */
+typedef struct {
+    int rssi;                 /**< Received probe request signal strength */
+    uint8_t mac[6];           /**< MAC address of the station which send probe request */
+} wifi_event_ap_probe_req_rx_t;
+
+/** Argument structure for WIFI_EVENT_STA_DISCONNECTED event */
+typedef struct {
+    uint8_t ssid[32];         /**< SSID of disconnected AP */
+    uint8_t ssid_len;         /**< SSID length of disconnected AP */
+    uint8_t bssid[6];         /**< BSSID of disconnected AP */
+    uint8_t reason;           /**< reason of disconnection */
+} wifi_event_sta_disconnected_t;
+
+/** Argument structure for WIFI_EVENT_STA_BSS_RSSI_LOW event */
+typedef struct {
+    int32_t rssi;                 /**< RSSI value of bss */
+} wifi_event_bss_rssi_low_t;
 
 #ifdef __cplusplus
 }

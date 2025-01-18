@@ -36,12 +36,12 @@ Actions to be taken for *ESP8266_RTOS_SDK v3.0* include the following items:
 
 ## Get toolchain
 
-v5.2.0
+v8.4.0
 
-* [Windows](https://dl.espressif.com/dl/xtensa-lx106-elf-win32-1.22.0-92-g8facf4c-5.2.0.tar.gz)
-* [Mac](https://dl.espressif.com/dl/xtensa-lx106-elf-osx-1.22.0-92-g8facf4c-5.2.0.tar.gz)
-* [Linux(64)](https://dl.espressif.com/dl/xtensa-lx106-elf-linux64-1.22.0-92-g8facf4c-5.2.0.tar.gz)
-* [Linux(32)](https://dl.espressif.com/dl/xtensa-lx106-elf-linux32-1.22.0-92-g8facf4c-5.2.0.tar.gz)
+* [Windows](https://dl.espressif.com/dl/xtensa-lx106-elf-gcc8_4_0-esp-2020r3-win32.zip)
+* [Mac](https://dl.espressif.com/dl/xtensa-lx106-elf-gcc8_4_0-esp-2020r3-macos.tar.gz)
+* [Linux(64)](https://dl.espressif.com/dl/xtensa-lx106-elf-gcc8_4_0-esp-2020r3-linux-amd64.tar.gz)
+* [Linux(32)](https://dl.espressif.com/dl/xtensa-lx106-elf-gcc8_4_0-esp-2020r3-linux-i686.tar.gz)
 
 If you are still using old version SDK(< 3.0), please use toolchain v4.8.5, as following:
 
@@ -71,7 +71,7 @@ export IDF_PATH=~/esp/ESP8266_RTOS_SDK
 ```
 
 ## Start a Project
-Now you are ready to prepare your application for ESP8266. To start off quickly, we can use `examples/get-started/project_template` project from `examples` directory in SDK.
+Now you are ready to prepare your application for ESP8266. To start off quickly, we can use `examples/get-started/hello_world` project from `examples` directory in SDK.
 
 Once you've found the project you want to work with, change to its directory and you can configure and build it.
 
@@ -81,10 +81,10 @@ You are almost there. To be able to proceed further, connect ESP8266 board to PC
 
 ## Configuring the Project
 
-Being in terminal window, go to directory of `project_template` application by typing `cd ~/esp/ESP8266_RTOS_SDK/examples/get-started/project_template`. Then start project configuration utility `menuconfig`:
+Being in terminal window, go to directory of `hello_world` application by typing `cd ~/esp/ESP8266_RTOS_SDK/examples/get-started/hello_world`. Then start project configuration utility `menuconfig`:
 
 ```
-cd ~/esp/ESP8266_RTOS_SDK/examples/get-started/project_template
+cd ~/esp/ESP8266_RTOS_SDK/examples/get-started/hello_world
 make menuconfig
 ```
 

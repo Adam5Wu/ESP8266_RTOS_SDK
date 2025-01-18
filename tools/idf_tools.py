@@ -796,11 +796,11 @@ def get_python_env_path():
             idf_version_str = version_file.read()
     else:
         idf_version_str = subprocess.check_output(['git', '-C', global_idf_path, 'describe', '--tags'], cwd=global_idf_path, env=os.environ).decode()
-    match = re.match(r'^v([0-9]+\.[0-9]+).*', idf_version_str)
+    match = re.search(r'v([0-9]+\.[0-9]+).*', idf_version_str)
     idf_version = match.group(1)
 
     idf_python_env_path = os.path.join(global_idf_tools_path, 'python_env',
-                                       'idf{}_py{}_env'.format(idf_version, python_ver_major_minor))
+                                       'rtos{}_py{}_env'.format(idf_version, python_ver_major_minor))
 
     if sys.platform == 'win32':
         subdir = 'Scripts'
@@ -1066,7 +1066,7 @@ def action_install_python_env(args):
             subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--user', 'virtualenv'],
                                   stdout=sys.stdout, stderr=sys.stderr)
 
-        subprocess.check_call([sys.executable, '-m', 'virtualenv', '--no-site-packages', idf_python_env_path],
+        subprocess.check_call([sys.executable, '-m', 'virtualenv', idf_python_env_path],
                               stdout=sys.stdout, stderr=sys.stderr)
     run_args = [virtualenv_python, '-m', 'pip', 'install', '--no-warn-script-location']
     requirements_txt = os.path.join(global_idf_path, 'requirements.txt')

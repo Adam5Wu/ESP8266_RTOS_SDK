@@ -553,7 +553,24 @@ void __assert_func(const char *file, int line, const char *func, const char *exp
 #include "esp8266/pin_mux_register.h"
 #include "esp8266/rom_functions.h"
 
-#define BOOTLOADER_CONSOLE_CLK_FREQ 52 * 1000 * 1000
+#define BOOTLOADER_CONSOLE_CLK_FREQ ((CONFIG_ESP8266_XTAL_FREQ * 2) * 1000 * 1000)
+
+/**
+ * XTAL=26MHz, UART baudrate=74880 (default)
+ * XTAL=40MHz, UART baudrate=115200 (default)
+ */
+
+#if CONFIG_ESP_CONSOLE_UART_NUM == 0
+#  if CONFIG_ESP8266_XTAL_FREQ == 26 && CONFIG_ESP_CONSOLE_UART_BAUDRATE == 74880
+#    define ESP8266_MODIFY_UART_BAUDRATE 0
+#  elif CONFIG_ESP8266_XTAL_FREQ == 40 && CONFIG_ESP_CONSOLE_UART_BAUDRATE == 115200
+#    define ESP8266_MODIFY_UART_BAUDRATE 0
+#  endif
+#endif
+
+#ifndef ESP8266_MODIFY_UART_BAUDRATE
+#  define ESP8266_MODIFY_UART_BAUDRATE 1
+#endif
 
 extern int _bss_start;
 extern int _bss_end;
@@ -568,7 +585,7 @@ static void update_flash_config(const esp_image_header_t* pfhdr);
 
 static void uart_console_configure(void)
 {
-#if CONFIG_UART0_SWAP_IO
+#if CONFIG_ESP_UART0_SWAP_IO
     while (READ_PERI_REG(UART_STATUS(0)) & (UART_TXFIFO_CNT << UART_TXFIFO_CNT_S));
 
     PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTCK_U, FUNC_UART0_CTS);
@@ -578,25 +595,37 @@ static void uart_console_configure(void)
     SET_PERI_REG_MASK(UART_SWAP_REG, 0x4);
 #endif
 
-#if CONFIG_CONSOLE_UART_NUM == 1
+#if CONFIG_ESP_CONSOLE_UART_NUM == 1
     PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO2_U, FUNC_U1TXD_BK);
 
-    CLEAR_PERI_REG_MASK(UART_CONF1(CONFIG_CONSOLE_UART_NUM), UART_RX_FLOW_EN);
-    CLEAR_PERI_REG_MASK(UART_CONF0(CONFIG_CONSOLE_UART_NUM), UART_TX_FLOW_EN);
+    CLEAR_PERI_REG_MASK(UART_CONF1(CONFIG_ESP_CONSOLE_UART_NUM), UART_RX_FLOW_EN);
+    CLEAR_PERI_REG_MASK(UART_CONF0(CONFIG_ESP_CONSOLE_UART_NUM), UART_TX_FLOW_EN);
 
-    WRITE_PERI_REG(UART_CONF0(CONFIG_CONSOLE_UART_NUM),
+    WRITE_PERI_REG(UART_CONF0(CONFIG_ESP_CONSOLE_UART_NUM),
                    0                // None parity
                    | (1 << 4)       // 1-bit stop
                    | (3 << 2)       // 8-bit data
                    | 0              // None flow control
                    | 0);            // None Inverse
 
-    SET_PERI_REG_MASK(UART_CONF0(CONFIG_CONSOLE_UART_NUM), UART_RXFIFO_RST | UART_TXFIFO_RST);
-    CLEAR_PERI_REG_MASK(UART_CONF0(CONFIG_CONSOLE_UART_NUM), UART_RXFIFO_RST | UART_TXFIFO_RST);
+    SET_PERI_REG_MASK(UART_CONF0(CONFIG_ESP_CONSOLE_UART_NUM), UART_RXFIFO_RST | UART_TXFIFO_RST);
+    CLEAR_PERI_REG_MASK(UART_CONF0(CONFIG_ESP_CONSOLE_UART_NUM), UART_RXFIFO_RST | UART_TXFIFO_RST);
 #endif
 
-#ifdef CONFIG_CONSOLE_UART_BAUDRATE
-    uart_div_modify(CONFIG_CONSOLE_UART_NUM, BOOTLOADER_CONSOLE_CLK_FREQ / CONFIG_CONSOLE_UART_BAUDRATE);
+#if ESP8266_MODIFY_UART_BAUDRATE
+
+    /* Wait UART TX over */
+
+    while(1) {
+        int uart_status = REG_READ(UART_STATUS(CONFIG_ESP_CONSOLE_UART_NUM));
+        int tx_bytes = (uart_status >> UART_TXFIFO_CNT_S) & UART_TXFIFO_CNT;
+
+        if (!tx_bytes) {
+            break;
+        }
+    }
+
+    uart_div_modify(CONFIG_ESP_CONSOLE_UART_NUM, BOOTLOADER_CONSOLE_CLK_FREQ / CONFIG_ESP_CONSOLE_UART_BAUDRATE);
 #endif
 }
 
@@ -613,7 +642,25 @@ esp_err_t bootloader_init()
 
 static esp_err_t bootloader_main()
 {
+    esp_err_t ret;
+
+#ifdef CONFIG_BOOTLOADER_DISABLE_JTAG_IO
+    /* Set GPIO 12-15 to be normal GPIO  */
+    PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDI_U, FUNC_GPIO12);
+    PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTCK_U, FUNC_GPIO13);
+    PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTMS_U, FUNC_GPIO14);
+    PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDO_U, FUNC_GPIO15);
+
+    /* Set GPIO 12-15 to be input mode  */
+    GPIO_REG_WRITE(GPIO_ENABLE_W1TC_ADDRESS, BIT12 | BIT13 | BIT14 | BIT15);
+#endif
+
     uart_console_configure();
+
+    if ((ret = bootloader_flash_xmc_startup()) != ESP_OK) {
+        ESP_LOGE(TAG, "failed when running XMC startup flow, reboot!");
+        return ESP_FAIL;
+    }
 
     esp_image_header_t fhdr;
     if (bootloader_flash_read(ESP_BOOTLOADER_OFFSET, &fhdr, sizeof(esp_image_header_t), true) != ESP_OK) {

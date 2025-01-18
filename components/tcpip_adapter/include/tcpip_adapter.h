@@ -127,11 +127,12 @@ typedef struct {
 #define ESP_ERR_TCPIP_ADAPTER_NO_MEM                ESP_ERR_TCPIP_ADAPTER_BASE + 0x06
 #define ESP_ERR_TCPIP_ADAPTER_DHCP_NOT_STOPPED      ESP_ERR_TCPIP_ADAPTER_BASE + 0x07
 
-/* TODO: add Ethernet interface */
+/* @brief On-chip network interfaces */
 typedef enum {
-    TCPIP_ADAPTER_IF_STA = 0,     /**< TCP-IP adatpter station interface */
-    TCPIP_ADAPTER_IF_AP,          /**< TCP-IP adatpter soft-AP interface */
-    TCPIP_ADAPTER_IF_ETH,         /**< TCP-IP adatpter ethernet interface */
+    TCPIP_ADAPTER_IF_STA = 0,     /**< Wi-Fi STA (station) interface */
+    TCPIP_ADAPTER_IF_AP,          /**< Wi-Fi soft-AP interface */
+    TCPIP_ADAPTER_IF_ETH,         /**< Ethernet interface */
+    TCPIP_ADAPTER_IF_TEST,        /**< tcpip stack test interface */
     TCPIP_ADAPTER_IF_MAX
 } tcpip_adapter_if_t;
 
@@ -167,12 +168,42 @@ typedef enum{
 } tcpip_adapter_option_mode_t;
 
 typedef enum{
+    TCPIP_ADAPTER_SUBNET_MASK                   = 1,    /**< network mask */
     TCPIP_ADAPTER_DOMAIN_NAME_SERVER            = 6,    /**< domain name server */
     TCPIP_ADAPTER_ROUTER_SOLICITATION_ADDRESS   = 32,   /**< solicitation router address */
     TCPIP_ADAPTER_REQUESTED_IP_ADDRESS          = 50,   /**< request IP address pool */
     TCPIP_ADAPTER_IP_ADDRESS_LEASE_TIME         = 51,   /**< request IP address lease time */
     TCPIP_ADAPTER_IP_REQUEST_RETRY_TIME         = 52,   /**< request IP address retry counter */
 } tcpip_adapter_option_id_t;
+
+/** @brief IP event base declaration */
+ESP_EVENT_DECLARE_BASE(IP_EVENT);
+
+/** IP event declarations */
+typedef enum {
+    IP_EVENT_STA_GOT_IP,               /*!< station got IP from connected AP */
+    IP_EVENT_STA_LOST_IP,              /*!< station lost IP and the IP is reset to 0 */
+    IP_EVENT_AP_STAIPASSIGNED,         /*!< soft-AP assign an IP to a connected station */
+    IP_EVENT_GOT_IP6,                  /*!< station or ap or ethernet interface v6IP addr is preferred */
+} ip_event_t;
+
+/** Event structure for IP_EVENT_AP_STAIPASSIGNED event */
+typedef struct {
+    ip4_addr_t ip; /*!< IP address which was assigned to the station */
+} ip_event_ap_staipassigned_t;
+
+/** Event structure for IP_EVENT_STA_GOT_IP, IP_EVENT_ETH_GOT_IP events  */
+typedef struct {
+    tcpip_adapter_if_t if_index;        /*!< Interface for which the event is received */
+    tcpip_adapter_ip_info_t ip_info;    /*!< IP address, netmask, gatway IP address */
+    bool ip_changed;                    /*!< Whether the assigned IP has changed or not */
+} ip_event_got_ip_t;
+
+/** Event structure for IP_EVENT_GOT_IP6 event */
+typedef struct {
+    tcpip_adapter_if_t if_index;        /*!< Interface for which the event is received */
+    tcpip_adapter_ip6_info_t ip6_info;  /*!< IPv6 address of the interface */
+} ip_event_got_ip6_t;
 
 struct tcpip_adapter_api_msg_s;
 typedef int (*tcpip_adapter_api_fn)(struct tcpip_adapter_api_msg_s *msg);
@@ -399,6 +430,17 @@ esp_err_t tcpip_adapter_create_ip6_linklocal(tcpip_adapter_if_t tcpip_if);
  *         ESP_ERR_TCPIP_ADAPTER_INVALID_PARAMS
  */
 esp_err_t tcpip_adapter_get_ip6_linklocal(tcpip_adapter_if_t tcpip_if, ip6_addr_t *if_ip6);
+
+/**
+ * @brief get interface's global IPv6 information
+ *
+ * @param[in]  tcpip_if: the interface which we want to set IP information
+ * @param[in]  if_ip6: If successful, IPv6 information will be returned in this argument.
+ *
+ * @return ESP_OK
+ *         ESP_ERR_TCPIP_ADAPTER_INVALID_PARAMS
+ */
+esp_err_t tcpip_adapter_get_ip6_global(tcpip_adapter_if_t tcpip_if, ip6_addr_t *if_ip6);
 #endif
 
 #if 0
@@ -614,6 +656,31 @@ esp_err_t tcpip_adapter_get_netif(tcpip_adapter_if_t tcpip_if, void ** netif);
  *          false: tcpip_if id DOWN
  */
 bool tcpip_adapter_is_netif_up(tcpip_adapter_if_t tcpip_if);
+
+/**
+ * @brief  Install default event handlers for Wi-Fi interfaces (station and AP)
+ * @return
+ *      - ESP_OK on success
+ *      - one of the errors from esp_event on failure
+ */
+esp_err_t tcpip_adapter_set_default_wifi_handlers();
+
+/**
+ * @brief  Uninstall default event handlers for Wi-Fi interfaces (station and AP)
+ * @return
+ *      - ESP_OK on success
+ *      - one of the errors from esp_event on failure
+ */
+esp_err_t tcpip_adapter_clear_default_wifi_handlers();
+
+/**
+ * @brief  Search nefit index through netif interface
+ * @param[in]   tcpip_if Interface to search for netif index
+ * @return
+ *      - netif_index on success
+ *      - -1 if an invalid parameter is supplied
+ */
+int tcpip_adapter_get_netif_index(tcpip_adapter_if_t tcpip_if);
 
 #ifdef __cplusplus
 }

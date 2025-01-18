@@ -13,10 +13,10 @@
 // limitations under the License.
 #include "nvs_types.hpp"
 
-#if defined(ESP_PLATFORM)
-#include <rom/crc.h>
-#else
+#if defined(LINUX_TARGET)
 #include "crc.h"
+#else
+#include <esp_crc.h>
 #endif
 
 namespace nvs
@@ -39,6 +39,7 @@ uint32_t Item::calculateCrc32WithoutValue() const
     result = crc32_le(result, p + offsetof(Item, nsIndex),
                       offsetof(Item, datatype) - offsetof(Item, nsIndex));
     result = crc32_le(result, p + offsetof(Item, key), sizeof(key));
+    result = crc32_le(result, p + offsetof(Item, chunkIndex), sizeof(chunkIndex));
     return result;
 }
 

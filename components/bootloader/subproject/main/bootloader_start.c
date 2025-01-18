@@ -22,6 +22,7 @@
 #include "esp_image_format.h"
 #include "esp_spi_flash.h"
 #include "esp_log.h"
+#include "driver/soc.h"
 
 static const char* TAG = "boot";
 
@@ -30,10 +31,23 @@ static int selected_boot_partition(const bootloader_state_t *bs);
 
 void call_start_cpu(void)
 {
+    esp_irqflag_t irq;
+
+    irq = soc_save_local_irq();
+    ESP_LOGD(TAG, "CPU local irq: 0x%x", irq);
+
+#ifdef CONFIG_BOOTLOADER_FAST_BOOT
+    REG_SET_BIT(DPORT_CTL_REG, DPORT_CTL_DOUBLE_CLK);
+#endif
+
     // 1. Hardware initialization
     if(bootloader_init() != ESP_OK){
         return;
     }
+
+#ifdef CONFIG_BOOTLOADER_FAST_BOOT
+    bootloader_utility_fast_boot_image();
+#endif
 
     // 2. Select image to boot
     esp_image_metadata_t image_data;

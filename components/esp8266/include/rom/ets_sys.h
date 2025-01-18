@@ -60,6 +60,16 @@ void vPortETSIntrUnlock(void);
 #define MAC2STR(a) (a)[0], (a)[1], (a)[2], (a)[3], (a)[4], (a)[5]
 #define MACSTR "%02x:%02x:%02x:%02x:%02x:%02x"
 
+typedef uint32_t ETSSignal;
+typedef uint32_t ETSParam;
+
+typedef struct ETSEventTag ETSEvent;    /**< Event transmit/receive in ets*/
+
+struct ETSEventTag {
+    ETSSignal sig;  /**< Event signal, in same task, different Event with different signal*/
+    ETSParam  par;  /**< Event parameter, sometimes without usage, then will be set as 0*/
+};
+
 /**
   * @brief  Delay function, maximum value: 65535 us.
   *
@@ -173,6 +183,16 @@ void os_timer_arm(os_timer_t *ptimer, uint32_t msec, bool repeat_flag);
   * @return null
   */
 void os_timer_disarm(os_timer_t *ptimer);
+
+/* redefine esp-idf name to esp8266 */
+#define ets_delay_us      os_delay_us
+#define ETSTimer          os_timer_t
+#define ETSTimerFunc      os_timer_func_t
+#define ets_timer_disarm  os_timer_disarm
+#define ets_timer_setfn   os_timer_setfn
+#define ets_timer_arm     os_timer_arm
+
+void ets_timer_done(os_timer_t *ptimer);
 
 /**
   * @}

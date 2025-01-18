@@ -17,6 +17,7 @@
 #include <string.h>
 
 #include "rom/ets_sys.h"
+#include "rom/uart.h"
 
 #include "esp_err.h"
 #include "esp_phy_init.h"
@@ -27,8 +28,10 @@
 #include "nvs_flash.h"
 #include "sdkconfig.h"
 
-#include "internal/phy_init_data.h"
+#include "esp_private/phy_init_data.h"
 #include "phy.h"
+
+#include "driver/rtc.h"
 
 static const char* TAG = "phy_init";
 
@@ -68,14 +71,10 @@ esp_err_t esp_phy_rf_init(const esp_phy_init_data_t* init_data, esp_phy_calibrat
 {
     esp_err_t status = ESP_OK;
     uint8_t sta_mac[6];
-    uint8_t* local_init_data = calloc(1, 256);
-#ifdef CONFIG_CONSOLE_UART_BAUDRATE
-    const uint32_t uart_baudrate = CONFIG_CONSOLE_UART_BAUDRATE;
-#else
-    const uint32_t uart_baudrate = 74880; // ROM default baudrate
-#endif
+    uint8_t *local_init_data = calloc(1, 256);
 
     memcpy(local_init_data, init_data->params, 128);
+    memcpy(local_init_data + 128, calibration_data->rf_cal_data, 128);
 
     extern uint32_t* phy_rx_gain_dc_table;
     phy_rx_gain_dc_table = calibration_data->rx_gain_dc_table;
@@ -85,13 +84,30 @@ esp_err_t esp_phy_rf_init(const esp_phy_init_data_t* init_data, esp_phy_calibrat
     phy_afterwake_set_rfoption(1);
 
     if (!cal_data_check) {
+        phy_set_powerup_option(1);
         write_data_to_rtc(calibration_data->rf_cal_data);
+    } else {
+        phy_set_powerup_option(3);
     }
 
     esp_efuse_mac_get_default(sta_mac);
-    chip_init(local_init_data, sta_mac, uart_baudrate);
-    ESP_LOGI(TAG, "phy ver: %d_%d", (READ_PERI_REG(0x6000107C) >> 16) & 0xFFF, READ_PERI_REG(0x6000107C) >> 28);
-    get_data_from_rtc((uint8_t*)calibration_data);
+
+    /**
+     * The API "register_chipv6_phy" will modify the APB frequency to 80MHz,
+     * so UARTs must be flush here, then reconfigurate the UART frequency dividor
+     */
+    uart_tx_wait_idle(0);
+    uart_tx_wait_idle(1);
+
+    int ret = register_chipv6_phy(local_init_data);
+    if (ret) {
+        ESP_LOGI(TAG, "phy register error, ret:%d", ret);
+    }
+
+    phy_disable_agc();
+
+    ESP_LOGI(TAG, "phy ver: %d_%d", (READ_PERI_REG(0x6000107C)>>16)&0xFFF, READ_PERI_REG(0x6000107C)>>28);
+    get_data_from_rtc((uint8_t *)calibration_data);
 
     memcpy(rx_gain_dc_table, calibration_data->rx_gain_dc_table, 4 * 125);
     phy_rx_gain_dc_table = rx_gain_dc_table;
@@ -188,15 +204,15 @@ static const char* PHY_NAMESPACE = "phy";
 static const char* PHY_CAL_DATA_KEY = "cal_data";
 static const char* PHY_RX_GAIN_DC_TABLE_KEY = "dc_table";
 
-static esp_err_t load_cal_data_from_nvs_handle(nvs_handle handle,
+static esp_err_t load_cal_data_from_nvs_handle(nvs_handle_t handle,
         esp_phy_calibration_data_t* out_cal_data);
 
-static esp_err_t store_cal_data_to_nvs_handle(nvs_handle handle,
+static esp_err_t store_cal_data_to_nvs_handle(nvs_handle_t handle,
         const esp_phy_calibration_data_t* cal_data);
 
 esp_err_t esp_phy_load_cal_data_from_nvs(esp_phy_calibration_data_t* out_cal_data)
 {
-    nvs_handle handle;
+    nvs_handle_t handle;
     esp_err_t err = nvs_open(PHY_NAMESPACE, NVS_READONLY, &handle);
 
     if (err == ESP_ERR_NVS_NOT_INITIALIZED) {
@@ -214,7 +230,7 @@ esp_err_t esp_phy_load_cal_data_from_nvs(esp_phy_calibration_data_t* out_cal_dat
 
 esp_err_t esp_phy_store_cal_data_to_nvs(const esp_phy_calibration_data_t* cal_data)
 {
-    nvs_handle handle;
+    nvs_handle_t handle;
     esp_err_t err = nvs_open(PHY_NAMESPACE, NVS_READWRITE, &handle);
 
     if (err != ESP_OK) {
@@ -227,7 +243,7 @@ esp_err_t esp_phy_store_cal_data_to_nvs(const esp_phy_calibration_data_t* cal_da
     }
 }
 
-static esp_err_t load_cal_data_from_nvs_handle(nvs_handle handle,
+static esp_err_t load_cal_data_from_nvs_handle(nvs_handle_t handle,
         esp_phy_calibration_data_t* out_cal_data)
 {
     esp_err_t err;
@@ -262,7 +278,7 @@ static esp_err_t load_cal_data_from_nvs_handle(nvs_handle handle,
     return ESP_OK;
 }
 
-static esp_err_t store_cal_data_to_nvs_handle(nvs_handle handle,
+static esp_err_t store_cal_data_to_nvs_handle(nvs_handle_t handle,
         const esp_phy_calibration_data_t* cal_data)
 {
     esp_err_t err;
@@ -359,4 +375,42 @@ void esp_wifi_set_max_tx_power_via_vdd33(uint16_t vdd33)
 {
     extern void phy_vdd33_set_tpw(uint16_t vdd33);
     phy_vdd33_set_tpw(vdd33);
+}
+
+/**
+ * @brief Just for compiling
+ */
+int phy_printf(const char *fmt, ...)
+{
+    return 0;
+}
+
+void esp_phy_init_clk(void)
+{
+    uint8_t buf[128];
+    const esp_phy_init_data_t *init_data;
+#ifdef CONFIG_CONSOLE_UART_BAUDRATE
+    const uint32_t uart_baudrate = CONFIG_CONSOLE_UART_BAUDRATE;
+#else
+    const uint32_t uart_baudrate = 74880; // ROM default baudrate
+#endif
+    extern int rtc_init(void);
+
+    init_data = esp_phy_get_init_data();
+    if (init_data == NULL) {
+        ESP_LOGE(TAG, "failed to obtain PHY init data");
+        abort();
+    }
+    memcpy(buf, init_data->params, 128);
+
+    uart_tx_wait_idle(0);
+    uart_div_modify(0, UART_CLK_FREQ / uart_baudrate);
+
+    uart_tx_wait_idle(1);
+    uart_div_modify(1, UART_CLK_FREQ / uart_baudrate);
+
+    rtc_init();
+    rtc_init_clk(buf);
+
+    esp_phy_release_init_data(init_data);
 }

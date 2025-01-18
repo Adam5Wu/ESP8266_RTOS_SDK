@@ -1,8 +1,15 @@
 #ifndef _ROM_FUNCTIONS_H
 #define _ROM_FUNCTIONS_H
 
+#include "sdkconfig.h"
 #include <stdint.h>
 #include <stdarg.h>
+
+#ifdef CONFIG_SOC_FULL_ICACHE
+#define SOC_CACHE_SIZE 1 // 32KB
+#else
+#define SOC_CACHE_SIZE 0 // 16KB
+#endif
 
 #define ROM_FLASH_BUF_DECLARE(__name, __size) uint8_t __name[__size] __attribute__((aligned(4)))
 
@@ -41,5 +48,9 @@ int SPIEraseSector(uint32_t sector_num);
 
 void Cache_Read_Disable();
 void Cache_Read_Enable(uint8_t map, uint8_t p, uint8_t v);
+
+void rom_software_reboot(void);
+
+void rom_i2c_writeReg(uint8_t block, uint8_t host_id, uint8_t reg_add, uint8_t data);
 
 #endif

@@ -23,13 +23,15 @@
  */
 #include <string.h>
 #include <stdlib.h>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/event_groups.h"
-#include "esp_wifi.h"
-#include "esp_event_loop.h"
-#include "esp_log.h"
 #include "esp_system.h"
+#include "esp_log.h"
+#include "esp_netif.h"
+#include "esp_event.h"
+#include "protocol_examples_common.h"
+#include "nvs.h"
 #include "nvs_flash.h"
 
 #include "lwip/err.h"
@@ -38,28 +40,7 @@
 #include "lwip/netdb.h"
 #include "lwip/dns.h"
 
-#if CONFIG_SSL_USING_WOLFSSL
-#include "lwip/apps/sntp.h"
-#endif
-
 #include "esp_tls.h"
-
-/* The examples use simple WiFi configuration that you can set via
-   'make menuconfig'.
-
-   If you'd rather not, just change the below entries to strings with
-   the config you want - ie #define EXAMPLE_WIFI_SSID "mywifissid"
-*/
-#define EXAMPLE_WIFI_SSID CONFIG_WIFI_SSID
-#define EXAMPLE_WIFI_PASS CONFIG_WIFI_PASSWORD
-
-/* FreeRTOS event group to signal when we are connected & ready to make a request */
-static EventGroupHandle_t wifi_event_group;
-
-/* The event group allows multiple bits for each event,
-   but we only care about one event - are we connected
-   to the AP with an IP? */
-const int CONNECTED_BIT = BIT0;
 
 /* Constants that aren't configurable in menuconfig */
 #define WEB_SERVER "www.howsmyssl.com"
@@ -85,111 +66,19 @@ static const char *REQUEST = "GET " WEB_URL " HTTP/1.0\r\n"
 */
 extern const uint8_t server_root_cert_pem_start[] asm("_binary_server_root_cert_pem_start");
 extern const uint8_t server_root_cert_pem_end[]   asm("_binary_server_root_cert_pem_end");
-    
-static esp_err_t event_handler(void *ctx, system_event_t *event)
-{
-    /* For accessing reason codes in case of disconnection */
-    system_event_info_t *info = &event->event_info;
-
-    switch(event->event_id) {
-    case SYSTEM_EVENT_STA_START:
-        esp_wifi_connect();
-        break;
-    case SYSTEM_EVENT_STA_GOT_IP:
-        xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);
-        break;
-    case SYSTEM_EVENT_STA_DISCONNECTED:
-        ESP_LOGE(TAG, "Disconnect reason : %d", info->disconnected.reason);
-        if (info->disconnected.reason == WIFI_REASON_BASIC_RATE_NOT_SUPPORT) {
-            /*Switch to 802.11 bgn mode */
-            esp_wifi_set_protocol(ESP_IF_WIFI_STA, WIFI_PROTOCAL_11B | WIFI_PROTOCAL_11G | WIFI_PROTOCAL_11N);
-        }
-        esp_wifi_connect();
-        xEventGroupClearBits(wifi_event_group, CONNECTED_BIT);
-        break;
-    default:
-        break;
-    }
-    return ESP_OK;
-}
-
-static void initialise_wifi(void)
-{
-    tcpip_adapter_init();
-    wifi_event_group = xEventGroupCreate();
-    ESP_ERROR_CHECK( esp_event_loop_init(event_handler, NULL) );
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK( esp_wifi_init(&cfg) );
-    ESP_ERROR_CHECK( esp_wifi_set_storage(WIFI_STORAGE_RAM) );
-    wifi_config_t wifi_config = {
-        .sta = {
-            .ssid = EXAMPLE_WIFI_SSID,
-            .password = EXAMPLE_WIFI_PASS,
-        },
-    };
-    ESP_LOGI(TAG, "Setting WiFi configuration SSID %s...", wifi_config.sta.ssid);
-    ESP_ERROR_CHECK( esp_wifi_set_mode(WIFI_MODE_STA) );
-    ESP_ERROR_CHECK( esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config) );
-    ESP_ERROR_CHECK( esp_wifi_start() );
-}
-
-#if CONFIG_SSL_USING_WOLFSSL
-static void get_time()
-{
-    struct timeval now;
-    int sntp_retry_cnt = 0;
-    int sntp_retry_time = 0;
-
-    sntp_setoperatingmode(0);
-    sntp_setservername(0, "pool.ntp.org");
-    sntp_init();
-
-    while (1) {
-        for (int32_t i = 0; (i < (SNTP_RECV_TIMEOUT / 100)) && now.tv_sec < 1525952900; i++) {
-            vTaskDelay(100 / portTICK_RATE_MS);
-            gettimeofday(&now, NULL);
-        }
-
-        if (now.tv_sec < 1525952900) {
-            sntp_retry_time = SNTP_RECV_TIMEOUT << sntp_retry_cnt;
-
-            if (SNTP_RECV_TIMEOUT << (sntp_retry_cnt + 1) < SNTP_RETRY_TIMEOUT_MAX) {
-                sntp_retry_cnt ++;
-            }
-
-            printf("SNTP get time failed, retry after %d ms\n", sntp_retry_time);
-            vTaskDelay(sntp_retry_time / portTICK_RATE_MS);
-        } else {
-            printf("SNTP get time success\n");
-            break;
-        }
-    }
-}
-#endif
 
 static void https_get_task(void *pvParameters)
 {
     char buf[512];
     int ret, len;
 
-#if CONFIG_SSL_USING_WOLFSSL
-    /* CA date verification need system time */
-    get_time();
-#endif
-
     while(1) {
-        /* Wait for the callback to set the CONNECTED_BIT in the
-           event group.
-        */
-        xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT,
-                            false, true, portMAX_DELAY);
-        ESP_LOGI(TAG, "Connected to AP");
         esp_tls_cfg_t cfg = {
             .cacert_pem_buf  = server_root_cert_pem_start,
             .cacert_pem_bytes = server_root_cert_pem_end - server_root_cert_pem_start,
         };
         
-        struct esp_tls *tls = esp_tls_conn_new(WEB_SERVER, strlen(WEB_SERVER), WEB_PORT, &cfg);
+        struct esp_tls *tls = esp_tls_conn_http_new(WEB_URL, &cfg);
         
         if(tls != NULL) {
             ESP_LOGI(TAG, "Connection established...");
@@ -206,12 +95,7 @@ static void https_get_task(void *pvParameters)
             if (ret >= 0) {
                 ESP_LOGI(TAG, "%d bytes written", ret);
                 written_bytes += ret;
-            } else if
-#if CONFIG_SSL_USING_MBEDTLS
-            (ret != MBEDTLS_ERR_SSL_WANT_READ  && ret != MBEDTLS_ERR_SSL_WANT_WRITE)
-#else
-            (ret != WOLFSSL_ERROR_WANT_READ  && ret != WOLFSSL_ERROR_WANT_WRITE)
-#endif
+            } else if (ret != ESP_TLS_ERR_SSL_WANT_READ  && ret != ESP_TLS_ERR_SSL_WANT_WRITE)
             {
                 ESP_LOGE(TAG, "esp_tls_conn_write  returned 0x%x", ret);
                 goto exit;
@@ -226,12 +110,7 @@ static void https_get_task(void *pvParameters)
             bzero(buf, sizeof(buf));
             ret = esp_tls_conn_read(tls, (char *)buf, len);
 
-            if
-#if CONFIG_SSL_USING_MBEDTLS
-            (ret == MBEDTLS_ERR_SSL_WANT_WRITE  || ret == MBEDTLS_ERR_SSL_WANT_READ)
-#else
-            (ret == WOLFSSL_ERROR_WANT_READ  && ret == WOLFSSL_ERROR_WANT_WRITE)
-#endif
+            if (ret == ESP_TLS_ERR_SSL_WANT_READ  || ret == ESP_TLS_ERR_SSL_WANT_WRITE)
                 continue;
             
             if(ret < 0)
@@ -271,7 +150,11 @@ static void https_get_task(void *pvParameters)
 
 void app_main()
 {
-    ESP_ERROR_CHECK( nvs_flash_init() );
-    initialise_wifi();
+    ESP_ERROR_CHECK(nvs_flash_init());
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+    ESP_ERROR_CHECK(example_connect());
+
     xTaskCreate(&https_get_task, "https_get_task", 8192, NULL, 5, NULL);
 }

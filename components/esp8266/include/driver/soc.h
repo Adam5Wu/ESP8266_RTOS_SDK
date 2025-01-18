@@ -26,26 +26,16 @@ extern "C" {
 typedef uint32_t esp_tick_t;
 typedef uint32_t esp_irqflag_t;
 
-static inline esp_tick_t soc_get_ticks(void)
-{
-    esp_tick_t ticks;
-
-    __asm__ __volatile__(
-            "rsr    %0, ccount\n"
-            : "=a"(ticks)
-            :
-            : "memory"
-    );
-
-    return ticks;
-}
-
 static inline esp_irqflag_t soc_save_local_irq(void)
 {
     esp_irqflag_t flag;
 
     __asm__ __volatile__(
+#ifdef BOOTLOADER_BUILD
+            "rsil   %0, 3\n"
+#else
             "rsil   %0, 1\n"
+#endif
             : "=a"(flag)
             :
             : "memory"
@@ -102,6 +92,16 @@ static inline uint32_t soc_get_ccount(void)
     return ticks;
 }
 
+static inline void soc_set_ccount(uint32_t ticks)
+{
+    __asm__ __volatile__(
+            "wsr    %0, ccount\n"
+            :
+            : "a"(ticks)
+            : "memory"
+    );
+}
+
 static inline void soc_clear_int_mask(uint32_t mask)
 {
     __asm__ __volatile__(
@@ -136,6 +136,21 @@ static inline void soc_wait_int(void)
             :
             : "memory"
     );
+}
+
+static inline uint32_t soc_debug_reason(void)
+{
+    uint32_t tmp;
+
+    __asm__ __volatile__(
+            "movi %0, 0\n"
+            "wsr  %0, dbreakc0\n"
+            "rsr.debugcause %0\n"
+            : "=r"(tmp)
+            :
+            : "memory");
+
+    return tmp;
 }
 
 #ifdef __cplusplus

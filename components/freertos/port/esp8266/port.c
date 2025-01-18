@@ -29,6 +29,7 @@
 /* Scheduler includes. */
 
 #include <stdint.h>
+#include <string.h>
 
 #include <xtensa/config/core.h>
 #include <xtensa/tie/xt_interrupt.h>
@@ -41,6 +42,8 @@
 
 #include "esp_attr.h"
 #include "esp_libc.h"
+#include "esp_task_wdt.h"
+#include "esp_sleep.h"
 
 #include "esp8266/eagle_soc.h"
 #include "rom/ets_sys.h"
@@ -51,24 +54,29 @@
 #define PORT_ASSERT(x)      do { if (!(x)) {ets_printf("%s %u\n", "rtos_port", __LINE__); while(1){}; }} while (0)
 
 extern uint8_t NMIIrqIsOn;
-static int SWReq = 0;
 
 uint32_t cpu_sr;
 
 uint32_t _xt_tick_divisor;
 
-int __g_is_task_overflow;
-
 /* Each task maintains its own interrupt status in the critical nesting
 variable. */
 static uint32_t uxCriticalNesting = 0;
 
-esp_tick_t g_cpu_ticks = 0;
-uint64_t g_os_ticks = 0;
+uint32_t g_esp_boot_ccount;
+uint64_t g_esp_os_ticks;
+uint64_t g_esp_os_us;
+uint64_t g_esp_os_cpu_clk;
+
+static uint32_t s_switch_ctx_flag;
 
 void vPortEnterCritical(void);
 void vPortExitCritical(void);
 
+void IRAM_ATTR portYIELD_FROM_ISR(void)
+{
+    s_switch_ctx_flag = 1;
+}
 
 uint8_t *__cpu_init_stk(uint8_t *stack_top, void (*_entry)(void *), void *param, void (*_exit)(void))
 {
@@ -76,7 +84,7 @@ uint8_t *__cpu_init_stk(uint8_t *stack_top, void (*_entry)(void *), void *param,
     uint32_t *sp, *tp, *stk = (uint32_t *)stack_top;
 
     /* Create interrupt stack frame aligned to 16 byte boundary */
-    sp = (uint32_t *)(((INT32U)(stk + 1) - XT_CP_SIZE - XT_STK_FRMSZ) & ~0xf);
+    sp = (uint32_t *)(((uint32_t)(stk + 1) - XT_CP_SIZE - XT_STK_FRMSZ) & ~0xf);
 
     /* Clear the entire frame (do not use memset() because we don't depend on C library) */
     for (tp = sp; tp <= stk; ++tp) {
@@ -86,7 +94,7 @@ uint8_t *__cpu_init_stk(uint8_t *stack_top, void (*_entry)(void *), void *param,
     /* Explicitly initialize certain saved registers */
     SET_STKREG(XT_STK_PC,   _entry);                        /* task entrypoint                  */
     SET_STKREG(XT_STK_A0,   _exit);                         /* to terminate GDB backtrace       */
-    SET_STKREG(XT_STK_A1,   (INT32U)sp + XT_STK_FRMSZ);     /* physical top of stack frame      */
+    SET_STKREG(XT_STK_A1,   (uint32_t)sp + XT_STK_FRMSZ);   /* physical top of stack frame      */
     SET_STKREG(XT_STK_A2,   param);                         /* parameters      */
     SET_STKREG(XT_STK_EXIT, _xt_user_exit);                 /* user exception exit dispatcher   */
 
@@ -110,7 +118,7 @@ void IRAM_ATTR PendSV(int req)
 {
     if (req == 1) {
         vPortEnterCritical();
-        SWReq = 1;
+        s_switch_ctx_flag = 1;
         xthal_set_intset(1 << ETS_SOFT_INUM);
         vPortExitCritical();
     } else if (req == 2) {
@@ -118,39 +126,51 @@ void IRAM_ATTR PendSV(int req)
     }
 }
 
-void TASK_SW_ATTR SoftIsrHdl(void* arg)
+void IRAM_ATTR SoftIsrHdl(void* arg)
 {
     extern int MacIsrSigPostDefHdl(void);
 
-    if (MacIsrSigPostDefHdl() || (SWReq == 1)) {
-        vTaskSwitchContext();
-        SWReq = 0;
+    if (MacIsrSigPostDefHdl()) {
+        portYIELD_FROM_ISR();
     }
 }
 
-void esp_increase_tick_cnt(const TickType_t ticks)
+void IRAM_ATTR esp_increase_tick_cnt(const TickType_t ticks)
 {
-    esp_irqflag_t flag;
-
-    flag = soc_save_local_irq();
-
-    g_cpu_ticks = soc_get_ticks();
-    g_os_ticks += ticks;
-
-    soc_restore_local_irq(flag);
+    g_esp_os_ticks += ticks;
 }
 
-void TASK_SW_ATTR xPortSysTickHandle(void *p)
+void IRAM_ATTR xPortSysTickHandle(void *p)
 {
-    const uint32_t cpu_clk_cnt = soc_get_ccount() + _xt_tick_divisor;
+    uint32_t us;
+    uint32_t ticks;
+    uint32_t ccount;
 
-    soc_set_ccompare(cpu_clk_cnt);
+    /**
+     * System or application may close interrupt too long, such as the operation of read/write/erase flash.
+     * And then the "ccount" value may be overflow.
+     *
+     * So add code here to calibrate system time.
+     */
+    ccount = soc_get_ccount();
+    us = ccount / g_esp_ticks_per_us;
+  
+    g_esp_os_us += us;
+    g_esp_os_cpu_clk += ccount;
 
-    g_cpu_ticks = soc_get_ticks();
-    g_os_ticks++;
+    soc_set_ccount(0);
+    soc_set_ccompare(_xt_tick_divisor);
+
+    ticks = us / 1000 / portTICK_PERIOD_MS;
+
+    if (ticks > 1) {
+        vTaskStepTick(ticks - 1);
+    }
+
+    g_esp_os_ticks++;
 
     if (xTaskIncrementTick() != pdFALSE) {
-        vTaskSwitchContext();
+        portYIELD_FROM_ISR();
     }
 }
 
@@ -186,18 +206,26 @@ portBASE_TYPE xPortStartScheduler(void)
     /* Initialize system tick timer interrupt and schedule the first tick. */
     _xt_tick_divisor = xtbsp_clock_freq_hz() / XT_TICK_PER_SEC;
 
+    g_esp_boot_ccount = soc_get_ccount();
+    soc_set_ccount(0);
     _xt_tick_timer_init();
 
     vTaskSwitchContext();
-
-    /* Get ticks before RTOS starts */
-    g_cpu_ticks = soc_get_ticks();
 
     /* Restore the context of the first task that is going to run. */
     _xt_enter_first_task();
 
     /* Should not get here as the tasks are now running! */
     return pdTRUE;
+}
+
+void vPortInitContextFromOldStack(StackType_t *newStackTop, StackType_t *oldStackTop, UBaseType_t stackSize)
+{
+    uintptr_t *sp;
+
+    memcpy(newStackTop, oldStackTop, stackSize);
+    sp = (uintptr_t *)newStackTop;
+    sp[XT_STK_A1 / sizeof(uintptr_t)] = (uintptr_t)sp + XT_STK_FRMSZ;
 }
 
 void vPortEndScheduler(void)
@@ -245,7 +273,7 @@ void IRAM_ATTR vPortExitCritical(void)
 void show_critical_info(void)
 {
     ets_printf("ShowCritical:%u\n", uxCriticalNesting);
-    ets_printf("SWReq:%u\n", SWReq);
+    ets_printf("s_switch_ctx_flag:%u\n", s_switch_ctx_flag);
 }
 
 #ifdef ESP_DPORT_CLOSE_NMI
@@ -267,23 +295,37 @@ void esp_dport_close_nmi(void)
 void IRAM_ATTR vPortETSIntrLock(void)
 {
     if (NMIIrqIsOn == 0) {
+        uint32_t regval = REG_READ(NMI_INT_ENABLE_REG);
+
         vPortEnterCritical();
+
+        REG_WRITE(NMI_INT_ENABLE_REG, 0);
+
         if (!ESP_NMI_IS_CLOSED()) {
             do {
                 REG_WRITE(INT_ENA_WDEV, WDEV_TSF0_REACH_INT);
             } while(REG_READ(INT_ENA_WDEV) != WDEV_TSF0_REACH_INT);
         }
+
+        REG_WRITE(NMI_INT_ENABLE_REG, regval);
     }
 }
 
 void IRAM_ATTR vPortETSIntrUnlock(void)
 {
     if (NMIIrqIsOn == 0) {
+        uint32_t regval = REG_READ(NMI_INT_ENABLE_REG);
+
+        REG_WRITE(NMI_INT_ENABLE_REG, 0);
+
         if (!ESP_NMI_IS_CLOSED()) {
             extern uint32_t WDEV_INTEREST_EVENT;
 
             REG_WRITE(INT_ENA_WDEV, WDEV_INTEREST_EVENT);
         }
+
+        REG_WRITE(NMI_INT_ENABLE_REG, regval);
+
         vPortExitCritical();
     }
 }
@@ -331,6 +373,11 @@ void IRAM_ATTR _xt_isr_handler(void)
             mask &= ~bit;
         }
     } while (soc_get_int_mask());
+
+    if (s_switch_ctx_flag) {
+        vTaskSwitchContext();
+        s_switch_ctx_flag = 0;
+    }
 }
 
 int xPortInIsrContext(void)
@@ -341,7 +388,6 @@ int xPortInIsrContext(void)
 void __attribute__((weak, noreturn)) vApplicationStackOverflowHook(xTaskHandle xTask, const char *pcTaskName)
 {
     ets_printf("***ERROR*** A stack overflow in task %s has been detected.\r\n", pcTaskName);
-    __g_is_task_overflow = 1;
     abort();
 }
 
@@ -369,13 +415,9 @@ BaseType_t xQueueGenericReceive(QueueHandle_t xQueue, void * const pvBuffer,
 
 void esp_internal_idle_hook(void)
 {
-    extern void pmIdleHook(void);
-    extern void esp_task_wdt_reset(void);
-
     esp_task_wdt_reset();
-    pmIdleHook();
 
-    soc_wait_int();
+    esp_sleep_start();
 }
 
 #ifndef DISABLE_FREERTOS

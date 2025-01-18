@@ -60,6 +60,7 @@ export EXAMPLE_MQTT_BROKER_CERTIFICATE="https://www.espressif.com/"
 export EXAMPLE_MQTT_BROKER_WS="https://www.espressif.com/"
 export EXAMPLE_MQTT_BROKER_WSS="https://www.espressif.com/"
 export EXAMPLE_MQTT_BROKER_SSL="https://www.espressif.com/"
+export EXAMPLE_MQTT_BROKER_TCP="https://www.espressif.com/"
 
 shopt -s lastpipe # Workaround for Bash to use variables in loops (http://mywiki.wooledge.org/BashFAQ/024)
 
@@ -117,13 +118,15 @@ build_example () {
     local EXAMPLE_DIR=$(dirname "${MAKE_FILE}")
     local EXAMPLE_NAME=$(basename "${EXAMPLE_DIR}")
 
-    if [[ -f "example_builds/${ID}/${EXAMPLE_NAME}/build/ci_build_success" ]]; then
-        echo "Project ${EXAMPLE_NAME} has been built and skip building ..."
+    local EXAMPLE_BUILD_DIR="${ID}_${EXAMPLE_NAME}"
+
+    if [[ -f "example_builds/${EXAMPLE_BUILD_DIR}/build/ci_build_success" ]]; then
+        echo "Project ${EXAMPLE_BUILD_DIR} has been built and skip building ..."
     else
-        echo "Building ${EXAMPLE_NAME} as ${ID}..."
-        mkdir -p "example_builds/${ID}"
-        cp -r "${EXAMPLE_DIR}" "example_builds/${ID}"
-        pushd "example_builds/${ID}/${EXAMPLE_NAME}"
+        echo "Building ${EXAMPLE_BUILD_DIR}..."
+        mkdir -p "example_builds/${EXAMPLE_BUILD_DIR}"
+        cp -r "${EXAMPLE_DIR}/"* "example_builds/${EXAMPLE_BUILD_DIR}/"
+        pushd "example_builds/${EXAMPLE_BUILD_DIR}"
             # be stricter in the CI build than the default IDF settings
             export EXTRA_CFLAGS="-Werror -Werror=deprecated-declarations"
             export EXTRA_CXXFLAGS=${EXTRA_CFLAGS}
@@ -139,7 +142,7 @@ build_example () {
             fi
 
             # build non-verbose first
-            local BUILDLOG=${LOG_PATH}/ex_${ID}_log.txt
+            local BUILDLOG=${LOG_PATH}/ex_${EXAMPLE_BUILD_DIR}_log.txt
             touch ${BUILDLOG}
 
             local FLASH_ARGS=build/download.config
@@ -166,7 +169,7 @@ build_example () {
 
 EXAMPLE_NUM=0
 
-EXAMPLE_PATHS=$( find ${IDF_PATH}/examples/ -type f -name Makefile | grep -v "/build_system/cmake/" | sort )
+EXAMPLE_PATHS=$( find ${IDF_PATH}/examples/ -type f -name Makefile | grep -v "/components/" | grep -v "/common_components/" | grep -v "/main/" | grep -v "/build_system/cmake/" | grep -v "/mb_example_common/" | sort )
 for FN in ${EXAMPLE_PATHS}
 do
     if [[ $EXAMPLE_NUM -lt $START_NUM || $EXAMPLE_NUM -ge $END_NUM ]]

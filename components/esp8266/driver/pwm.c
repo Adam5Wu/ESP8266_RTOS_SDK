@@ -55,20 +55,11 @@ static const char *TAG = "pwm";
 #define AHEAD_TICKS3 2
 #define MAX_TICKS    10000000ul
 
-#define WDEVTSF0_TIME_LO     0x3ff21004
-#define WDEVTSF0_TIME_HI     0x3ff21008
-#define WDEVTSFSW0_LO        0x3ff21018
-#define WDEVTSFSW0_HI        0x3ff2101C
-#define WDEVTSF0_TIMER_LO    0x3ff2109c
-#define WDEVTSF0_TIMER_HI    0x3ff210a0
-#define WDEVTSF0TIMER_ENA    0x3ff21098
-#define WDEV_TSF0TIMER_ENA   BIT(31)
-
-#define PWM_VERSION          "PWM v3.2"
+#define PWM_VERSION          "PWM v3.4"
 
 typedef struct {
     uint32_t duty;  /*!< pwm duty for each channel */
-    int16_t phase;  /*!< pwm phase for each channel */
+    float phase;  /*!< pwm phase for each channel */
     uint8_t io_num; /*!< pwm io_num for each channel */
 } pwm_info_t;
 
@@ -122,13 +113,13 @@ static void pwm_phase_init(void)
 
     for (i = 0; i < pwm_obj->channel_num; i++) {
         if (-180 < pwm_obj->pwm_info[i].phase && pwm_obj->pwm_info[i].phase < 0) {
-            time_delay = 0 - ((0 - pwm_obj->pwm_info[i].phase) * pwm_obj->depth / 360);
+            time_delay = (int32_t)(0 - ((0 - pwm_obj->pwm_info[i].phase) * pwm_obj->depth / 360.0));
         } else if (pwm_obj->pwm_info[i].phase == 0) {
             continue;
-        } else if (180 > pwm_obj->pwm_info[i].phase && pwm_obj->pwm_info[i].phase > 0) {
-            time_delay = pwm_obj->pwm_info[i].phase * pwm_obj->depth / 360;
+        } else if (180 >= pwm_obj->pwm_info[i].phase && pwm_obj->pwm_info[i].phase > 0) {
+            time_delay = (int32_t)(pwm_obj->pwm_info[i].phase * pwm_obj->depth / 360.0);
         } else {
-            ESP_LOGE(TAG, "channel[%d]  phase error %d, valid ramge from (-180,180)\n", i, pwm_obj->pwm_info[i].phase);
+            ESP_LOGE(TAG, "channel[%d]  phase error %f, valid ramge from (-180,180]\n", i, pwm_obj->pwm_info[i].phase);
             continue;
         }
 
@@ -161,6 +152,8 @@ static void pwm_insert_sort(void)
 esp_err_t pwm_set_period(uint32_t period)
 {
     PWM_CHECK(period >= 10, "period setting is too short", ESP_ERR_INVALID_ARG);
+
+    pwm_obj->depth = period;    // For ease of conversion, let the depth equal the period
     pwm_obj->period = period;
 
     return ESP_OK;
@@ -231,7 +224,7 @@ esp_err_t pwm_set_period_duties(uint32_t period, uint32_t *duties)
     return ESP_OK;
 }
 
-esp_err_t pwm_set_phase(uint8_t channel_num, int16_t phase)
+esp_err_t pwm_set_phase(uint8_t channel_num, float phase)
 {
     PWM_CHECK(channel_num < pwm_obj->channel_num, "Channel num error", ESP_ERR_INVALID_ARG);
 
@@ -240,7 +233,7 @@ esp_err_t pwm_set_phase(uint8_t channel_num, int16_t phase)
     return ESP_OK;
 }
 
-esp_err_t pwm_set_phases(int16_t *phases)
+esp_err_t pwm_set_phases(float *phases)
 {
     uint8_t i;
     PWM_CHECK(NULL != phases, "Pointer is empty", ESP_ERR_INVALID_ARG);
@@ -253,7 +246,7 @@ esp_err_t pwm_set_phases(int16_t *phases)
     return ESP_OK;
 }
 
-esp_err_t pwm_get_phase(uint8_t channel_num, uint16_t *phase_p)
+esp_err_t pwm_get_phase(uint8_t channel_num, float *phase_p)
 {
     PWM_CHECK(channel_num < pwm_obj->channel_num, "Channel num error", ESP_ERR_INVALID_ARG);
     PWM_CHECK(NULL != phase_p, "Pointer is empty", ESP_ERR_INVALID_ARG);
@@ -266,9 +259,7 @@ esp_err_t pwm_get_phase(uint8_t channel_num, uint16_t *phase_p)
 static void pwm_timer_enable(uint8_t enable)
 {
     if (0 == enable) {
-        ENTER_CRITICAL();
         REG_WRITE(WDEVTSF0TIMER_ENA, REG_READ(WDEVTSF0TIMER_ENA) & (~WDEV_TSF0TIMER_ENA));
-        EXIT_CRITICAL();
     } else {
         REG_WRITE(WDEVTSF0TIMER_ENA, WDEV_TSF0TIMER_ENA);
     }
@@ -317,14 +308,20 @@ static void IRAM_ATTR pwm_timer_intr_handler(void)
         pwm_obj->this_target = AHEAD_TICKS1 + AHEAD_TICKS3;
     }
 
+    REG_WRITE(WDEVSLEEP0_CONF, REG_READ(WDEVSLEEP0_CONF)  & (~WDEV_TSFUP0_ENA));
+    REG_WRITE(WDEVTSF0TIMER_ENA, REG_READ(WDEVTSF0TIMER_ENA) & (~WDEV_TSF0TIMER_ENA));
     REG_WRITE(WDEVTSFSW0_LO, 0);
     //WARNING, pwm_obj->this_target - AHEAD_TICKS1 should be bigger than 2
     REG_WRITE(WDEVTSF0_TIMER_LO, pwm_obj->this_target - AHEAD_TICKS1);
     REG_WRITE(WDEVTSF0TIMER_ENA, WDEV_TSF0TIMER_ENA);
+    REG_WRITE(WDEVSLEEP0_CONF, REG_READ(WDEVSLEEP0_CONF) | WDEV_TSFUP0_ENA);
 }
 
 static void pwm_timer_start(uint32_t period)
 {
+    ENTER_CRITICAL();
+    REG_WRITE(WDEVSLEEP0_CONF, REG_READ(WDEVSLEEP0_CONF)  & (~WDEV_TSFUP0_ENA));
+    REG_WRITE(WDEVTSF0TIMER_ENA, REG_READ(WDEVTSF0TIMER_ENA) & (~WDEV_TSF0TIMER_ENA));
     // suspend all task to void timer interrupt missed
     // TODO, do we need lock interrupt here, I think interrupt context will not take 1ms long
     // time low field to 0
@@ -341,8 +338,11 @@ static void pwm_timer_start(uint32_t period)
     pwm_obj->this_target = US_TO_TICKS(period);
     // WARNING: pwm_obj->this_target should bigger than AHEAD_TICKS1
     REG_WRITE(WDEVTSF0_TIMER_LO, pwm_obj->this_target - AHEAD_TICKS1);
-    // enable timer
+    REG_WRITE(WDEVTSF0TIMER_ENA, WDEV_TSF0TIMER_ENA);
+    REG_WRITE(WDEVSLEEP0_CONF, REG_READ(WDEVSLEEP0_CONF) | WDEV_TSFUP0_ENA);
+    //enable timer
     pwm_timer_enable(1);
+    EXIT_CRITICAL();
 }
 
 static void pwm_timer_register(void (*handle)(void))
@@ -549,12 +549,15 @@ esp_err_t pwm_init(uint32_t period, uint32_t *duties, uint8_t channel_num, const
 
     uint8_t i;
 
+    /*enable tsf0 interrupt for pwm*/
+    REG_WRITE(PERIPHS_DPORT_BASEADDR, (REG_READ(PERIPHS_DPORT_BASEADDR) & ~0x1F) | 0x1);
+    REG_WRITE(INT_ENA_WDEV, REG_READ(INT_ENA_WDEV) | WDEV_TSF0_REACH_INT);
+
     if (ESP_ERR_NO_MEM == pwm_obj_malloc(channel_num)) {
         pwm_obj_free();
         return ESP_ERR_NO_MEM;
     }
 
-    pwm_obj->depth = period;
     pwm_obj->channel_num = channel_num;
 
     for (i = 0; i < channel_num; i++) {
@@ -581,7 +584,9 @@ esp_err_t pwm_stop(uint32_t stop_level_mask)
 {
     int16_t i = 0;
 
+    ENTER_CRITICAL();
     pwm_timer_enable(0);
+    EXIT_CRITICAL();
     uint32_t level_set = REG_READ(PERIPHS_GPIO_BASEADDR + GPIO_OUT_ADDRESS);
 
     for (i = 0; i < pwm_obj->channel_num; i++) {

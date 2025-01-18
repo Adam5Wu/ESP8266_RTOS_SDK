@@ -80,14 +80,14 @@ Add to compile passing.
 #define _INTERRUPT_LEVEL 3
 
 STRUCT_BEGIN
-STRUCT_FIELD (long,4,HESF_,SAR)
-STRUCT_FIELD (long,4,HESF_,EPC1)
-STRUCT_FIELD (long,4,HESF_,EXCCAUSE)
-STRUCT_FIELD (long,4,HESF_,EXCVADDR)
-STRUCT_FIELD (long,4,HESF_,EXCSAVE1)
 STRUCT_FIELD (long,4,HESF_,EPC3)
 STRUCT_FIELD (long,4,HESF_,EPS3)
 STRUCT_AFIELD(long,4,HESF_,AREG, 16)    /* address registers ar0..ar15 */
+STRUCT_FIELD (long,4,HESF_,SAR)
+STRUCT_FIELD (long,4,HESF_,EXCCAUSE)
+STRUCT_FIELD (long,4,HESF_,EPC1)
+STRUCT_FIELD (long,4,HESF_,EXCVADDR)
+STRUCT_FIELD (long,4,HESF_,EXCSAVE1)
 #define HESF_AR(n)  HESF_AREG+((n)*4)
 STRUCT_END(HighPriFrame)
 #define HESF_TOTALSIZE  HighPriFrameSize+32 /* 32 bytes for interrupted code's save areas under SP */
@@ -106,6 +106,7 @@ STRUCT_END(HighPriFrame)
     .section .bss, "aw"
     .align  16
 _chip_nmi_stk:    .space  PRI_N_STACK_SIZE + HESF_TOTALSIZE + PRI_N_STACK_SIZE2 + HESF_TOTALSIZE
+
 
     .global LoadStoreErrorHandlerStack
     .balign 16
@@ -559,14 +560,22 @@ Debug Exception.
     .align      4
     .literal_position
 _DebugExceptionVector:
-    wsr     a0,  EXCSAVE + XCHAL_DEBUGLEVEL         /* save original a0 somewhere */
     wsr     a0,  EXCSAVE_1
     wsr     a1,  EXCSAVE_2
-    call0   _xt_ext_panic                           /* does not return */
-    rfi     XCHAL_DEBUGLEVEL                        /* make a0 point here not later */
+    movi    a0,  1
+    wsr     a0,  EXCCAUSE
+    call0   _xt_debug_exc
 
     .end        literal_prefix
 
+
+    .section    .text
+    .type       _xt_user_exc,@function
+    .align      4
+_xt_debug_exc:
+    rsr     a0,  (EPC + XCHAL_DEBUGLEVEL)
+    wsr     a0,  EPC1
+    call0   _xt_ext_panic                           /* does not return */
 
 /*
 --------------------------------------------------------------------------------

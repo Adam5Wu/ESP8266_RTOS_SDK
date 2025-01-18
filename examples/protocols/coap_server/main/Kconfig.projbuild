@@ -1,15 +1,13 @@
 menu "Example Configuration"
+    config TARGET_MULTICAST_IPV4
+        string "IPv4 multicast address"
+        default "232.10.11.12"
+        help
+            Target IP for the example to listen.
 
-config WIFI_SSID
-    string "WiFi SSID"
-    default "myssid"
-    help
-        SSID (network name) for the example to connect to.
-
-config WIFI_PASSWORD
-    string "WiFi Password"
-    default "mypassword"
-    help
-        WiFi password (WPA or WPA2) for the example to use.
-
+    config TARGET_MULTICAST_IPV6
+        string "IPv6 multicast address"
+        default "ff02::fc"
+        help
+            Target IP for the example to listen.
 endmenu

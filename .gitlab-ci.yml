@@ -7,6 +7,12 @@ variables:
 
   IDF_PATH: "$CI_PROJECT_DIR"
 
+  # Versioned esp-idf-doc env image to use for all document building jobs
+  ESP_IDF_DOC_ENV_IMAGE: "$CI_DOCKER_REGISTRY/esp-idf-doc-env:v8"
+
+  GIT_SUBMODULE_STRATEGY: recursive
+  ESPCI_TOKEN: $GITLAB_KEY
+
 # before each job, we need to check if this job is filtered by bot stage/job filter
 .apply_bot_filter: &apply_bot_filter
   python $APPLY_BOT_FILTER_SCRIPT || exit 0
@@ -23,7 +29,9 @@ before_script:
   before_script: &do_nothing_before
     # apply bot filter in before script
     - *apply_bot_filter
-    - echo "Not setting up GitLab key, not fetching submodules"
+    - echo "Not setting up GitLab key, fetching submodules ..."
+    - git submodule update --init --recursive
+    - tools/idf_tools.py --non-interactive install && eval "$(tools/idf_tools.py --non-interactive export)" || exit 1
     - source tools/ci/configure_ci_environment.sh
 
 .build_template: &build_template
@@ -39,10 +47,11 @@ build_ssc:
       - ./SSC/ssc_bin
     expire_in: 6 mos
   script:
+    - tools/idf_tools.py --non-interactive install && eval "$(tools/idf_tools.py --non-interactive export)" || exit 1
     - git clone $GITLAB_SSH_SERVER/yinling/SSC.git
     - cd SSC
     # try checkout same branch
-    - git checkout "${CI_BUILD_REF_NAME}_8266" || echo "Using default branch..."
+    - git checkout "release/v3.4_8266" || echo "Using default branch..."
     - ./gen_misc_rtos.sh
 
 push_master_to_github:
@@ -76,7 +85,7 @@ push_master_to_github:
 
 build_docs:
   stage: build
-  image: $CI_DOCKER_REGISTRY/esp32-ci-env$BOT_DOCKER_IMAGE_TAG
+  image: $ESP_IDF_DOC_ENV_IMAGE
   tags:
     - build_docs
   artifacts:
@@ -96,13 +105,14 @@ build_docs:
       - $BOT_LABEL_BUILD_DOCS
       - $BOT_LABEL_REGULAR_TEST
   script:
+    - source /opt/pyenv/activate && pyenv global 3.6.10
+    - /opt/pyenv/pyenv-1.2.16/versions/3.6.10/bin/python -m pip install --user -r $CI_PROJECT_DIR/docs/requirements.txt
     - cd docs
     - cd en
     - make gh-linkcheck
     - make html
     - ../check_doc_warnings.sh
 
-    
 .build_examples_make_template: &build_examples_make_template
   <<: *build_template
   # This is a workaround for a rarely encountered issue with building examples in CI.
@@ -112,6 +122,12 @@ build_docs:
     when: always
     paths:
       - $LOG_PATH
+      - ./build_examples/example_builds/*/build/bootloader/*.bin
+      - ./build_examples/example_builds/*/build/partition_table/*.bin
+      - ./build_examples/example_builds/*/build/*.bin
+      - ./build_examples/example_builds/*/build/*.elf
+      - ./build_examples/example_builds/*/build/*.map
+      - ./build_examples/example_builds/*/build/*.config
     expire_in: 2 days
   variables:
     LOG_PATH: "$CI_PROJECT_DIR/log_examples_make"
@@ -121,6 +137,7 @@ build_docs:
       - $BOT_LABEL_BUILD
       - $BOT_LABEL_EXAMPLE_TEST
       - $BOT_LABEL_REGULAR_TEST
+  before_script: *do_nothing_before
   script:
     # it's not possible to build 100% out-of-tree and have the "artifacts"
     # mechanism work, but this is the next best thing
@@ -138,6 +155,14 @@ build_docs:
     when: always
     paths:
       - $LOG_PATH
+      - ./build_examples_cmake/example_builds/*/build/bootloader/*.bin
+      - ./build_examples_cmake/example_builds/*/build/partition_table/*.bin
+      - ./build_examples_cmake/example_builds/*/build/*.bin
+      - ./build_examples_cmake/example_builds/*/build/*.elf
+      - ./build_examples_cmake/example_builds/*/build/*.map
+      - ./build_examples_cmake/example_builds/*/build/*.config
+      - ./build_examples_cmake/example_builds/*/build/flasher_args.json
+      - ./build_examples_cmake/example_builds/*/sdkconfig
     expire_in: 2 days
   variables:
     LOG_PATH: "$CI_PROJECT_DIR/log_examples_cmake"
@@ -147,6 +172,7 @@ build_docs:
       - $BOT_LABEL_BUILD
       - $BOT_LABEL_EXAMPLE_TEST
       - $BOT_LABEL_REGULAR_TEST
+  before_script: *do_nothing_before
   script:
     # it's not possible to build 100% out-of-tree and have the "artifacts"
     # mechanism work, but this is the next best thing

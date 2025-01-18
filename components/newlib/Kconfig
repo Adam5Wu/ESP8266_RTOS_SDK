@@ -1,41 +1,48 @@
 menu "Newlib"
 
-config NEWLIB_ENABLE
-    bool "Enable newlib"
-    default y
-    help
-        If you need use you own C library, make this option disable. The libraries and
-        header files at this component will not be used.
+    choice NEWLIB_STDOUT_LINE_ENDING
+        prompt "Line ending for UART output"
+        default NEWLIB_STDOUT_LINE_ENDING_CRLF
+        help
+            This option allows configuring the desired line endings sent to UART
+            when a newline ('\n', LF) appears on stdout.
+            Three options are possible:
 
-        Note: ABI of the C library of your own must be same as SDK.
+            CRLF: whenever LF is encountered, prepend it with CR
 
-choice NEWLIB_LIBRARY_LEVEL
-    prompt "newlib level"
-    default NEWLIB_LIBRARY_LEVEL_NANO
-    depends on NEWLIB_ENABLE
-    help
-        Choose newlib library level.
+            LF: no modification is applied, stdout is sent as is
 
-config NEWLIB_LIBRARY_LEVEL_NORMAL
-    bool "normal"
-    help
-        If you need 64-bit integer formatting support or C99 features, select this
-        option.
+            CR: each occurence of LF is replaced with CR
 
-config NEWLIB_LIBRARY_LEVEL_NANO
-    bool "nano"
-    help
-        The newlib library which has been compiled with so-called "nano"
-        formatting option. This option doesn't support 64-bit integer formats and C99
-        features, such as positional arguments.
+            This option doesn't affect behavior of the UART driver (drivers/uart.h).
 
-        For more details about "nano" formatting option, please see newlib readme file,
-        search for '--enable-newlib-nano-formatted-io':
-        https://sourceware.org/newlib/README
+        config NEWLIB_STDOUT_LINE_ENDING_CRLF
+            bool "CRLF"
+        config NEWLIB_STDOUT_LINE_ENDING_LF
+            bool "LF"
+        config NEWLIB_STDOUT_LINE_ENDING_CR
+            bool "CR"
+    endchoice
 
-        If you do not need 64-bit integer formatting support or C99 features, select this
-        option.
+    config NEWLIB_NANO_FORMAT
+        bool "Enable 'nano' formatting options for printf/scanf family"
+        default y
+        help
+            ESP32 ROM contains parts of newlib C library, including printf/scanf family
+            of functions. These functions have been compiled with so-called "nano"
+            formatting option. This option doesn't support 64-bit integer formats and C99
+            features, such as positional arguments.
 
-endchoice
+            For more details about "nano" formatting option, please see newlib readme file,
+            search for '--enable-newlib-nano-formatted-io':
+            https://sourceware.org/newlib/README
 
-endmenu
+            If this option is enabled, build system will use functions available in
+            ROM, reducing the application binary size. Functions available in ROM run
+            faster than functions which run from flash. Functions available in ROM can
+            also run when flash instruction cache is disabled.
+
+            If you need 64-bit integer formatting support or C99 features, keep this
+            option disabled.
+
+endmenu # Newlib

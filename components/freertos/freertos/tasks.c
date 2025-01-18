@@ -2522,7 +2522,7 @@ implementations require configUSE_TICKLESS_IDLE to be set to a value other than
 1. */
 #if ( configUSE_TICKLESS_IDLE != 0 )
 
-	void vTaskStepTick( const TickType_t xTicksToJump )
+	void IRAM_ATTR vTaskStepTick( const TickType_t xTicksToJump )
 	{
 		/* Correct the tick count value after a period during which the tick
 		was suppressed.  Note this does *not* call the tick hook function for
@@ -3044,6 +3044,19 @@ BaseType_t xReturn;
 	{
 		( void ) uxListRemove( &( pxUnblockedTCB->xStateListItem ) );
 		prvAddTaskToReadyList( pxUnblockedTCB );
+		#if( configUSE_TICKLESS_IDLE != 0 )
+		{
+			/* If a task is blocked on a kernel object then xNextTaskUnblockTime
+			might be set to the blocked task's time out time.  If the task is
+			unblocked for a reason other than a timeout xNextTaskUnblockTime is
+			normally left unchanged, because it is automatically reset to a new
+			value when the tick count equals xNextTaskUnblockTime.  However if
+			tickless idling is used it might be more important to enter sleep mode
+			at the earliest possible time - so reset xNextTaskUnblockTime here to
+			ensure it is updated at the earliest possible time. */
+			prvResetNextTaskUnblockTime();
+		}
+		#endif
 	}
 	else
 	{
@@ -3067,20 +3080,6 @@ BaseType_t xReturn;
 	{
 		xReturn = pdFALSE;
 	}
-
-	#if( configUSE_TICKLESS_IDLE != 0 )
-	{
-		/* If a task is blocked on a kernel object then xNextTaskUnblockTime
-		might be set to the blocked task's time out time.  If the task is
-		unblocked for a reason other than a timeout xNextTaskUnblockTime is
-		normally left unchanged, because it is automatically reset to a new
-		value when the tick count equals xNextTaskUnblockTime.  However if
-		tickless idling is used it might be more important to enter sleep mode
-		at the earliest possible time - so reset xNextTaskUnblockTime here to
-		ensure it is updated at the earliest possible time. */
-		prvResetNextTaskUnblockTime();
-	}
-	#endif
 
 	return xReturn;
 }
@@ -3481,6 +3480,24 @@ static portTASK_FUNCTION( prvIdleTask, pvParameters )
 		{
 			pxTCB = prvGetTCBFromHandle( xTaskToQuery );
 			pvReturn = pxTCB->pvThreadLocalStoragePointers[ xIndex ];
+		}
+		else
+		{
+			pvReturn = NULL;
+		}
+
+		return pvReturn;
+	}
+
+	void **pvTaskGetThreadLocalStorageBufferPointer( TaskHandle_t xTaskToQuery, BaseType_t xIndex )
+	{
+	void **pvReturn = NULL;
+	TCB_t *pxTCB;
+
+		if( xIndex < configNUM_THREAD_LOCAL_STORAGE_POINTERS )
+		{
+			pxTCB = prvGetTCBFromHandle( xTaskToQuery );
+			pvReturn = &pxTCB->pvThreadLocalStoragePointers[ xIndex ];
 		}
 		else
 		{
@@ -5098,6 +5115,89 @@ const TickType_t xConstTickCount = xTickCount;
 	#endif /* INCLUDE_vTaskSuspend */
 }
 
+#if ( configENABLE_TASK_SNAPSHOT == 1 )
+	static void prvTaskGetSnapshot( TaskSnapshot_t *pxTaskSnapshotArray, UBaseType_t *uxTask, TCB_t *pxTCB )
+	{
+		if (pxTCB == NULL) {
+			return;
+		}
+		pxTaskSnapshotArray[ *uxTask ].pxTCB = pxTCB;
+		pxTaskSnapshotArray[ *uxTask ].pxTopOfStack = (StackType_t *)pxTCB->pxTopOfStack;
+		#if( portSTACK_GROWTH < 0 )
+		{
+			pxTaskSnapshotArray[ *uxTask ].pxEndOfStack = pxTCB->pxEndOfStack;
+		}
+		#else
+		{
+			pxTaskSnapshotArray[ *uxTask ].pxEndOfStack = pxTCB->pxStack;
+		}
+		#endif
+		(*uxTask)++;
+	}
+
+	static void prvTaskGetSnapshotsFromList( TaskSnapshot_t *pxTaskSnapshotArray, UBaseType_t *uxTask, const UBaseType_t uxArraySize, List_t *pxList )
+	{
+		TCB_t *pxNextTCB, *pxFirstTCB;
+
+		if( listCURRENT_LIST_LENGTH( pxList ) > ( UBaseType_t ) 0 )
+		{
+			listGET_OWNER_OF_NEXT_ENTRY( pxFirstTCB, pxList );
+			do
+			{
+				if( *uxTask >= uxArraySize )
+					break;
+
+				listGET_OWNER_OF_NEXT_ENTRY( pxNextTCB, pxList );
+				prvTaskGetSnapshot( pxTaskSnapshotArray, uxTask, pxNextTCB );
+			} while( pxNextTCB != pxFirstTCB );
+		}
+		else
+		{
+			mtCOVERAGE_TEST_MARKER();
+		}
+	}
+
+	UBaseType_t uxTaskGetSnapshotAll( TaskSnapshot_t * const pxTaskSnapshotArray, const UBaseType_t uxArraySize, UBaseType_t * const pxTcbSz )
+	{
+		UBaseType_t uxTask = 0, i = 0;
+
+
+		*pxTcbSz = sizeof(TCB_t);
+		/* Fill in an TaskStatus_t structure with information on each
+		task in the Ready state. */
+		i = configMAX_PRIORITIES;
+		do
+		{
+			i--;
+			prvTaskGetSnapshotsFromList( pxTaskSnapshotArray, &uxTask, uxArraySize, &( pxReadyTasksLists[ i ] ) );
+		} while( i > ( UBaseType_t ) tskIDLE_PRIORITY ); /*lint !e961 MISRA exception as the casts are only redundant for some ports. */
+
+		/* Fill in an TaskStatus_t structure with information on each
+		task in the Blocked state. */
+		prvTaskGetSnapshotsFromList( pxTaskSnapshotArray, &uxTask, uxArraySize, ( List_t * ) pxDelayedTaskList );
+		prvTaskGetSnapshotsFromList( pxTaskSnapshotArray, &uxTask, uxArraySize, ( List_t * ) pxOverflowDelayedTaskList );
+		for (i = 0; i < portNUM_PROCESSORS; i++) {
+			if( uxTask >= uxArraySize )
+				break;
+			prvTaskGetSnapshotsFromList( pxTaskSnapshotArray, &uxTask, uxArraySize, &xPendingReadyList );
+		}
+
+		#if( INCLUDE_vTaskDelete == 1 )
+		{
+			prvTaskGetSnapshotsFromList( pxTaskSnapshotArray, &uxTask, uxArraySize, &xTasksWaitingTermination );
+		}
+		#endif
+
+		#if ( INCLUDE_vTaskSuspend == 1 )
+		{
+			prvTaskGetSnapshotsFromList( pxTaskSnapshotArray, &uxTask, uxArraySize, &xSuspendedTaskList );
+		}
+		#endif
+		return uxTask;
+	}
+
+#endif
+
 /* Code below here allows additional code to be inserted into this source file,
 especially where access to file scope functions and data is needed (for example
 when performing module tests). */
@@ -5120,4 +5220,114 @@ when performing module tests). */
 
 #endif
 
+#if( configENABLE_TASK_MODIFY_STACK_DEPTH == 1 )
+
+#if( INCLUDE_xTimerPendFunctionCall != 1 || configUSE_TIMERS != 1)
+#error "INCLUDE_xTimerPendFunctionCall and configUSE_TIMERS should be enable"
+#endif
+
+	#include "semphr.h"
+
+	struct prvTaskModifyParam {
+		TCB_t *pxTCB;
+		uint32_t newStackDepth;
+		SemaphoreHandle_t sem;
+		BaseType_t uxResult;
+	};
+
+	static void prvTaskModifyStackDepth(void *param, uint32_t null_val)
+	{
+		struct prvTaskModifyParam *pTaskModifyParam = (struct prvTaskModifyParam *)param;
+		StackType_t *pxStack;
+		UBaseType_t oldStackBytes;
+		TCB_t *pxTCB = (TCB_t *)pTaskModifyParam->pxTCB;
+		UBaseType_t newStackBytes = (size_t)pTaskModifyParam->newStackDepth * sizeof(StackType_t);
+		const UBaseType_t unitSize = sizeof(void *);
+
+		oldStackBytes = (size_t)pxTCB->pxEndOfStack - (size_t)pxTCB->pxTopOfStack + unitSize;
+		if (oldStackBytes >= newStackBytes) {
+			pTaskModifyParam->uxResult = pdFAIL;
+			goto exit;
+		}
+
+		pxStack = pvPortMalloc(newStackBytes);
+		if (!pxStack) {
+			pTaskModifyParam->uxResult = pdFAIL;
+			goto exit;
+		}
+		memset(pxStack, tskSTACK_FILL_BYTE, newStackBytes - oldStackBytes);
+		vPortInitContextFromOldStack(&pxStack[newStackBytes - oldStackBytes], (StackType_t *)pxTCB->pxTopOfStack, oldStackBytes);
+
+		vPortFree(pxTCB->pxStack);
+
+		pxTCB->pxStack = pxStack;
+		pxTCB->pxTopOfStack = &pxStack[newStackBytes - oldStackBytes];
+		pxTCB->pxEndOfStack = (StackType_t *)((size_t)pxStack + (size_t)pTaskModifyParam->newStackDepth - unitSize);
+
+		pTaskModifyParam->uxResult = pdPASS;
+
+	exit:
+		if (pTaskModifyParam->sem)
+			xSemaphoreGive(pTaskModifyParam->sem);
+	}
+
+	BaseType_t vTaskModifyStackDepth(TaskHandle_t xTask, const configSTACK_DEPTH_TYPE newStackDepth)
+	{
+		BaseType_t xReturn;
+
+		if (newStackDepth & 0x3) {
+			return pdFAIL;
+		}
+
+		if (prvGetTCBFromHandle(xTask) != pxCurrentTCB) {
+			struct prvTaskModifyParam taskModifyParam;
+
+			taskModifyParam.pxTCB = prvGetTCBFromHandle(xTask);
+			taskModifyParam.newStackDepth = newStackDepth;
+			taskModifyParam.sem = NULL;
+
+			vTaskSuspend(xTask);
+			prvTaskModifyStackDepth(&taskModifyParam, 0);
+			xReturn = taskModifyParam.uxResult;
+			vTaskResume(xTask);
+		} else {
+			SemaphoreHandle_t sem;
+			struct prvTaskModifyParam *taskModifyParam;
+
+			if (xTimerGetTimerDaemonTaskHandle() == xTask) {
+				return pdFAIL;
+			}
+
+			if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING) {
+				return pdFAIL;
+			}
+
+			sem = xSemaphoreCreateBinary();
+			if (!sem) {
+				return pdFAIL;
+			}
+
+			taskModifyParam = pvPortMalloc(sizeof(struct prvTaskModifyParam));
+			if (!taskModifyParam) {
+				vSemaphoreDelete(sem);
+				return pdFAIL;
+			}
+
+			taskModifyParam->pxTCB = prvGetTCBFromHandle(xTask);
+			taskModifyParam->newStackDepth = newStackDepth;
+			taskModifyParam->sem = sem;
+
+			xReturn = xTimerPendFunctionCall(prvTaskModifyStackDepth, taskModifyParam, 0, portMAX_DELAY);
+			if (xReturn == pdPASS) {
+				xSemaphoreTake(sem, portMAX_DELAY);
+				xReturn = taskModifyParam->uxResult;
+			}
+
+			vSemaphoreDelete(sem);
+			vPortFree(taskModifyParam);
+		}
+
+		return xReturn;
+	}
+#endif /* configENABLE_TASK_MODIFY_STACK_DEPTH == 1 */
 

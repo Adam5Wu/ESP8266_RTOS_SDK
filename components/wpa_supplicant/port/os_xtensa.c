@@ -21,26 +21,39 @@
  * this file to work correctly. Note that these implementations are only
  * examples and are not optimized for speed.
  */
-#include <string.h>
-#include "FreeRTOS.h"
 
-void *_xmalloc(size_t n)
+#include "os.h"
+#include <stdlib.h>
+#include <time.h>
+#include <unistd.h>
+#include <sys/time.h>
+#include "esp_system.h"
+#include "utils/common.h"
+
+int os_get_time(struct os_time *t)
 {
-    void *return_addr = (void *)__builtin_return_address(0);
-
-    return _heap_caps_malloc(n, MALLOC_CAP_8BIT, return_addr, 0);
+    struct timeval tv;
+    int ret = gettimeofday(&tv, NULL);
+    t->sec = (os_time_t) tv.tv_sec;
+    t->usec = tv.tv_usec;
+    return ret;
 }
 
-void _xfree(void *ptr)
+unsigned long os_random(void)
 {
-    void *return_addr = (void *)__builtin_return_address(0);
-
-    _heap_caps_free(ptr, return_addr, 0);
+    return esp_random();
 }
 
-void *_xrealloc(void *ptr, size_t n)
+int os_get_random(unsigned char *buf, size_t len)
 {
-    void *return_addr = (void *)__builtin_return_address(0);
+    esp_fill_random(buf, len);
+    return 0;
+}
 
-    return _heap_caps_realloc(ptr, n, MALLOC_CAP_8BIT, return_addr, 0);
+void os_sleep(os_time_t sec, os_time_t usec)
+{
+        if (sec)
+                sleep(sec);
+        if (usec)
+                usleep(usec);
 }

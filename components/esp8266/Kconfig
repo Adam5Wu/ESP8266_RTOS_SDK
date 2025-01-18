@@ -1,8 +1,38 @@
 menu "ESP8266-specific"
 
+config ESP8266_NMI_WDT
+    bool "Enable non-mask watch dog"
+    default y
+    help
+        Important: this non-mask watch dog is registered to non-mask timer0,
+                   so it can not work together with PWM.
+
+        Enable this non-mask watch dog can help users to debug blocking code
+        when CPU is at critical state(disable interrupt).
+
+
+choice ESP8266_XTAL_FREQ_SEL
+    prompt "Main XTAL frequency"
+    default ESP8266_XTAL_FREQ_26
+    help
+        ESP8266 currently supports the following XTAL frequencies:
+
+        - 26 MHz
+        - 40 MHz
+    config ESP8266_XTAL_FREQ_40
+        bool "40 MHz"
+    config ESP8266_XTAL_FREQ_26
+        bool "26 MHz"
+endchoice
+
+config ESP8266_XTAL_FREQ
+    int
+    default 40 if ESP8266_XTAL_FREQ_40
+    default 26 if ESP8266_XTAL_FREQ_26
+
 choice ESP8266_DEFAULT_CPU_FREQ_MHZ
     prompt "CPU frequency"
-    default ESP8266_DEFAULT_CPU_FREQ_80
+    default ESP8266_DEFAULT_CPU_FREQ_160
     help
         CPU frequency to be set on application startup.
 
@@ -16,30 +46,6 @@ config ESP8266_DEFAULT_CPU_FREQ_MHZ
     int
     default 80 if ESP8266_DEFAULT_CPU_FREQ_80
     default 160 if ESP8266_DEFAULT_CPU_FREQ_160
-
-choice NEWLIB_STDOUT_LINE_ENDING
-    prompt "Line ending for UART output"
-    default NEWLIB_STDOUT_LINE_ENDING_CRLF
-    help
-        This option allows configuring the desired line endings sent to UART
-        when a newline ('\n', LF) appears on stdout.
-        Three options are possible:
-
-        CRLF: whenever LF is encountered, prepend it with CR
-
-        LF: no modification is applied, stdout is sent as is
-
-        CR: each occurence of LF is replaced with CR
-
-        This option doesn't affect behavior of the UART driver (drivers/uart.h).
-
-config NEWLIB_STDOUT_LINE_ENDING_CRLF
-    bool "CRLF"
-config NEWLIB_STDOUT_LINE_ENDING_LF
-    bool "LF"
-config NEWLIB_STDOUT_LINE_ENDING_CR
-    bool "CR"
-endchoice
 
 choice ESP_FILENAME_MACRO
     prompt "File name macro text"
@@ -82,6 +88,21 @@ config LINK_ETS_PRINTF_TO_IRAM
 
         Note: Bootloader can't use this function.
 
+config ETS_PRINTF_EXIT_WHEN_FLASH_RW
+    bool "ets_printf exits when flash R/W"
+    default y
+    depends on !LINK_ETS_PRINTF_TO_IRAM
+    help
+        By default option, we link the ets_printf function and its calling functions
+        in SPI Flash. So when the SPI Flash is working in read/write mode, and we
+        call ets_printf in high level interrupt like NMI, this behavior will cause a
+        crash, and the EXCCAUSE=0.
+
+        Enable this option, we link the ets_printf in IRAM, and its calling functions
+        in SPI Flash. In the entry of ets_printf, we check if the SPI Flash is working
+        in read/write mode, and exit if it is. So that ets_printf will not call functions
+        in SPI Flash.
+
 config SOC_FULL_ICACHE
     bool "Enable full cache mode"
     default n
@@ -94,66 +115,11 @@ config SOC_IRAM_SIZE
     default 0x8000 if SOC_FULL_ICACHE
     default 0xC000 if !SOC_FULL_ICACHE
 
-choice CONSOLE_UART
-    prompt "UART for console output"
-    default CONSOLE_UART_DEFAULT
-    help
-        Select whether to use UART for console output (through stdout and stderr).
-
-        - Default is to use UART0.
-        - If "Custom" is selected, UART0 or UART1 can be chosen.
-        - If "None" is selected, there will be no console output on any UART.
-
-config CONSOLE_UART_DEFAULT
-    bool "Default: UART0"
-config CONSOLE_UART_CUSTOM
-    bool "Custom"
-config CONSOLE_UART_NONE
-    bool "None"
-endchoice
-
-choice CONSOLE_UART_NUM
-    prompt "UART peripheral to use for console output (0-1)"
-    depends on CONSOLE_UART_CUSTOM
-    default CONSOLE_UART_CUSTOM_NUM_0
-    help
-        Configrate output console UART for "ets_printf", "printf", "ESP_LOGX" and so on.
-
-config CONSOLE_UART_CUSTOM_NUM_0
-    bool "UART0"
-config CONSOLE_UART_CUSTOM_NUM_1
-    bool "UART1"
-endchoice
-
-config CONSOLE_UART_NUM
-    int
-    default 0 if CONSOLE_UART_DEFAULT || CONSOLE_UART_NONE
-    default 0 if CONSOLE_UART_CUSTOM_NUM_0
-    default 1 if CONSOLE_UART_CUSTOM_NUM_1
-
-config CONSOLE_UART_BAUDRATE
-    int "UART console baud rate"
-    depends on CONSOLE_UART_DEFAULT || CONSOLE_UART_CUSTOM
-    default 74880
-    range 1200 4000000
-
-config UART0_SWAP_IO
-    bool "Swap UART0 I/O pins"
-    default n
-    help
-        Enable this option, UART0's I/O pins are swaped: TXD <-> RTS, RTX <-> CTS.
-
 config DISABLE_ROM_UART_PRINT
     bool "Disable ROM UART print"
     default n
     help
         "Disable main part of ROM UART print when rom bootloader process."
-
-config PANIC_FULL_STACK
-    bool "Output full stack data of task"
-    default n
-    help
-        Output full stack data of task although some stack space is not used.
 
 choice ESP_PANIC
     prompt "Panic handler behaviour"
@@ -178,52 +144,16 @@ config ESP_PANIC_SILENT_REBOOT
     bool "Silent reboot"
     help
         Just resets the processor without outputting anything
+
+config ESP_PANIC_GDBSTUB
+    bool "Invoke GDBStub"
+    select ESP_GDBSTUB_ENABLED
+    help
+        Invoke gdbstub on the serial port, allowing for gdb to attach to it to do a postmortem
+        of the crash.
+
+        The UART's baudrate should be 115200 or others which can be recognized by xtensa GDB.
 endchoice
-
-config MAIN_TASK_STACK_SIZE
-    int "Main task stack size"
-    default 3584
-    help
-        Configure the "main task" stack size. This is the stack of the task
-        which calls app_main(). If app_main() returns then this task is deleted
-        and its stack memory is freed.
-
-config TASK_WDT
-    bool "Initialize Task Watchdog Timer on startup"
-    default y
-    help
-        The Task Watchdog Timer can be used to make sure individual tasks are still
-        running. Enabling this option will cause the Task Watchdog Timer to be
-        initialized automatically at startup. The Task Watchdog timer can be 
-        initialized after startup as well.
-
-config TASK_WDT_PANIC
-    bool "Invoke panic handler on Task Watchdog timeout"
-    default y
-    help
-        If this option is enabled, the Task Watchdog Timer will be configured to
-        trigger the panic handler when it times out. And it may cost some time.
-
-choice TASK_WDT_TIMEOUT_S
-    prompt "Task Watchdog timeout period (seconds)"
-    default TASK_WDT_TIMEOUT_15N
-    help
-        Timeout period configuration for the Task Watchdog Timer in seconds.
-        This is also configurable at run time.
-
-config TASK_WDT_TIMEOUT_13N
-    bool "6.5536s"
-config TASK_WDT_TIMEOUT_14N
-    bool "13.1072s"
-config TASK_WDT_TIMEOUT_15N
-    bool "26.2144s"
-endchoice
-
-config TASK_WDT_TIMEOUT_S
-    int
-    default 13 if TASK_WDT_TIMEOUT_13N
-    default 14 if TASK_WDT_TIMEOUT_14N
-    default 15 if TASK_WDT_TIMEOUT_15N
 
 config RESET_REASON
     bool "Enable reset reason"
@@ -233,18 +163,14 @@ config RESET_REASON
 
 config WIFI_PPT_TASKSTACK_SIZE
     int "ppT task stack size"
-    default 2048
     range 2048 8192
+    default 2048 if !ESP8266_WIFI_ENABLE_WPA3_SAE
+    default 5120 if ESP8266_WIFI_ENABLE_WPA3_SAE
+
     help
         Configure the "ppT task" stack size. This is the stack of the task
         which calls promiscuous callback function. So if user's function is
         complex, the stack must be set larger.
-
-config EVENT_LOOP_STACK_SIZE
-    int "Event loop stack size"
-    default 2048
-    help
-        Configure the Event loop task stack size per application.
 
 config ESP8266_CORE_GLOBAL_DATA_LINK_IRAM
     bool "Link libcore.a internal global data to IRAM"
@@ -253,19 +179,6 @@ config ESP8266_CORE_GLOBAL_DATA_LINK_IRAM
     depends on !SOC_FULL_ICACHE
     help
         Link libcore.a internal global data(.bss .data COMMON) from DRAM to IRAM.
-
-choice CRYSTAL_USED
-    prompt "Crystal used in your module or board"
-    default CRYSTAL_USED_26MHZ
-    help
-        For most modules, 26MHz is the default crystal. If you use special module,
-        you can reconfigure this option.
-
-config CRYSTAL_USED_26MHZ
-    bool "26MHz"
-config CRYSTAL_USED_40MHZ
-    bool "40MHz"
-endchoice
 
 config INIT_OS_BEFORE_START
     bool "Init OS before starting it"
@@ -311,24 +224,44 @@ config ESP8266_BOOT_COPY_APP
         Enable this option, when it is that "OTA1" application is to run after update by OTA,
         bootloader will copy "OTA1" application to "OTA0" partition and run "OTA0".
 
-config ESP_ERR_TO_NAME_LOOKUP
-    bool "Enable lookup of error code strings"
-    default "y"
-    help
-        Functions esp_err_to_name() and esp_err_to_name_r() return string
-        representations of error codes from a pre-generated lookup table.
-        This option can be used to turn off the use of the look-up table in
-        order to save memory but this comes at the price of sacrificing
-        distinguishable (meaningful) output string representations.
+    choice ESP8266_TIME_SYSCALL
+        prompt "Timers used for gettimeofday function"
+        default ESP8266_TIME_SYSCALL_USE_FRC1
+        help
+            This setting defines which hardware timers are used to
+            implement 'gettimeofday' and 'time' functions in C library.
 
+            - If high-resolution timer is used, gettimeofday will
+              provide time at microsecond resolution.
+              Time will not be preserved when going into deep sleep mode.
+            - If no timers are used, gettimeofday and time functions
+              return -1 and set errno to ENOSYS.
+
+        config ESP8266_TIME_SYSCALL_USE_FRC1
+            bool "High-resolution timer"
+        config ESP8266_TIME_SYSCALL_USE_NONE
+            bool "None"
+    endchoice
 endmenu
 
-menu WIFI
+menu "Power Management"
+    config PM_ENABLE
+        bool "Support for power management"
+        default n
+        help
+            If enabled, application is compiled with support for power management.
+            This option has run-time overhead (increased interrupt latency,
+            longer time to enter idle state), and it also reduces accuracy of
+            RTOS ticks and timers used for timekeeping.
+            Enable this option if application uses power management APIs.
+endmenu
+
+menu Wi-Fi
 
 config SCAN_AP_MAX
     int "Max scan AP number"
-    range 1 64
-    default 32
+    range 1 100
+    default 99
     help
         Function "esp_wifi_scan_get_ap_num" return value will be less than this. It is said that user cannot
         scan more than this.
@@ -336,11 +269,98 @@ config SCAN_AP_MAX
         User can use own function "esp_wifi_scan_get_ap_num_max" to determin how many AP to scan , too.
 
 config WIFI_TX_RATE_SEQUENCE_FROM_HIGH
-    bool "Set wifi tx rate from 54M to 1M"
+    bool "Set WiFi TX rate from 54M to 1M"
     default y
     help
-        If this option is enabled, Wifi will try to send packets first from high rate(54M). If it fails, it will 
+        If this option is enabled, WiFi will try to send packets first from high rate(54M). If it fails, it will
         try at low rate until the transmission is successful.
+
+config ESP8266_WIFI_QOS_ENABLED
+    bool "WiFi QoS"
+    default n
+    help
+        Select this option to enable QoS feature
+
+config ESP8266_WIFI_AMPDU_RX_ENABLED
+    bool "WiFi AMPDU RX"
+    default n
+    help
+        Select this option to enable AMPDU RX feature
+
+config ESP8266_WIFI_RX_BA_WIN_SIZE
+    int "WiFi AMPDU RX BA window size"
+    depends on ESP8266_WIFI_AMPDU_RX_ENABLED
+    range 0 16
+    default 6
+    help
+        Set the size of WiFi Block Ack RX window. Generally a bigger value means higher throughput and better
+        compatibility but more memory.
+
+config ESP8266_WIFI_AMSDU_ENABLED
+    bool "WiFi AMSDU RX"
+    default n
+    help
+        Select this option to enable AMSDU feature
+
+config ESP8266_WIFI_RX_BUFFER_NUM
+    int "Max number of WiFi RX buffers"
+    range 14 28
+    default 16
+    help
+        Set the number of WiFi RX buffers. Each buffer takes approximately ESP8266_WIFI_RX_BUFFER_LEN bytes of RAM.
+
+        WiFi hardware use these buffers to receive all 802.11 frames.
+        A higher number may allow higher throughput but increases memory use. If ESP8266_WIFI_AMPDU_RX_ENABLED
+        is enabled, this value is recommended to set equal or bigger than 8*1024/ESP8266_WIFI_RX_BUFFER_LEN in order
+        to achieve better throughput and compatibility with both stations and APs.
+        Most of time we should NOT change the default value unless special reason, e.g. test the maximum UDP RX
+        throughput with iperf etc. For iperf test in shieldbox, the recommended value is 26.
+
+config ESP8266_WIFI_LEFT_CONTINUOUS_RX_BUFFER_NUM
+    int "The min number of WiFi continuous RX buffer"
+    range 0 16
+    default 16
+    help
+        Set the number of WiFi continuous RX buffer num.
+        The smaller the value, the easier RX hang will appear. Most of time we should NOT change the default
+        value unless special reason.
+
+config ESP8266_WIFI_RX_PKT_NUM
+    int "Max number of WiFi RX packets"
+    range 4 16
+    default 7
+    help
+        Set the max number of signle WiFi packet. 
+
+config ESP8266_WIFI_TX_PKT_NUM
+    int "Max number of WiFi TX packets"
+    range 4 16
+    default 6
+    help
+        Set the number of WiFi TX packets. Each buffer takes approximately 1.6KB of RAM.
+        For some applications especially UDP applications, the upper layer can deliver frames faster than WiFi
+        layer can transmit. In these cases, we may run out of TX packets.
+
+config ESP8266_WIFI_NVS_ENABLED
+    bool "WiFi NVS flash"
+    default y
+    help
+        Select this option to enable WiFi NVS flash
+
+config ESP8266_WIFI_CONNECT_OPEN_ROUTER_WHEN_PWD_IS_SET
+    bool "Connect open router when wifi password is set"
+    default y
+    help
+        When this option is enabled, ESP8266 will connect to open router even if wifi password is set, otherwise 
+        ESP8266 will not connect to open router when wifi password is set.
+
+config ESP8266_WIFI_ENABLE_WPA3_SAE
+    bool "Enable WPA3-Personal"
+    default y
+    help
+        Select this option to allow the device to establish a WPA3-Personal connection with eligible AP's.
+        PMF (Protected Management Frames) is a prerequisite feature for a WPA3 connection, it needs to be
+        explicitly configured before attempting connection. Please refer to the Wi-Fi Driver API Guide for details.
 
 config ESP8266_WIFI_DEBUG_LOG_ENABLE
     bool "Enable WiFi debug log"
@@ -463,6 +483,34 @@ config ESP8266_WIFI_DEBUG_LOG_SUBMODULE_WPS
     help
         When this option is enabled, log for wps module will be enabled.
 
+config ESP8266_WIFI_DEBUG_LOG_SUBMODULE_AMPDU
+    depends on ESP8266_WIFI_DEBUG_LOG_SUBMODULE
+    bool "ampdu"
+    default n
+    help
+        When this option is enabled, log for ampdu module will be enabled.
+
+config ESP8266_WIFI_DEBUG_LOG_SUBMODULE_AMSDU
+    depends on ESP8266_WIFI_DEBUG_LOG_SUBMODULE
+    bool "amsdu"
+    default n
+    help
+        When this option is enabled, log for amsdu module will be enabled.
+
+config ESP8266_WIFI_DEBUG_LOG_SUBMODULE_FRAG
+    depends on ESP8266_WIFI_DEBUG_LOG_SUBMODULE
+    bool "fragment"
+    default n
+    help
+        When this option is enabled, log for frag module will be enabled.
+
+config ESP8266_WIFI_DEBUG_LOG_SUBMODULE_WPA2
+    depends on ESP8266_WIFI_DEBUG_LOG_SUBMODULE
+    bool "wpa2_enterprise"
+    default n
+    help
+        When this option is enabled, log for wpa2_enterprise module will be enabled.
+
 endmenu
 
 menu PHY
@@ -472,9 +520,12 @@ config ESP_PHY_CALIBRATION_AND_DATA_STORAGE
     default y
     help
         If this option is enabled, NVS will be initialized and calibration data will be loaded from there.
-        PHY calibration will be skipped on deep sleep wakeup. If calibration data is not found, full calibration
-        will be performed and stored in NVS. Normally, only partial calibration will be performed. 
-        If this option is disabled, full calibration will be performed.
+        If calibration data is not found, full calibration will be performed and stored in NVS. Normally,
+        only partial calibration will be performed. If this option is disabled, full calibration will be performed.
+
+        Full calibration needs 170 - 180ms.
+        Partial calibration needs 35 - 40ms.
+        No calibration needs 3.260 - 3.264ms.
 
         If it's easy that your board calibrate bad data, choose 'n'.
         Two cases for example, you should choose 'n':
@@ -518,4 +569,13 @@ config ESP8266_PHY_MAX_WIFI_TX_POWER
         data rates may be lower than this setting.
 
 endmenu  # PHY
+
+menu HSPI
+config ESP8266_HSPI_HIGH_THROUGHPUT
+    bool "Do some optimization to improve throughput"
+    default n
+    help
+        If enable this configuration, some spi api will be placed into iram.
+        And it will reduce iram memory.
+endmenu  # Driver
 

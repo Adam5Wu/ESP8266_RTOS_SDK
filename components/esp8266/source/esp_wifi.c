@@ -12,16 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <stdio.h>
+#include <string.h>
 #include "sdkconfig.h"
 #include "esp_libc.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
-#include "internal/esp_wifi_internal.h"
+#include "esp_log.h"
+#include "esp_private/wifi.h"
 #include "phy.h"
+#include "esp_supplicant/esp_wpa.h"
+#include "esp_aio.h"
+
+#define TAG "wifi_init"
 
 const size_t _g_esp_wifi_ppt_task_stk_size = CONFIG_WIFI_PPT_TASKSTACK_SIZE;
 
-esp_err_t esp_wifi_init_internal(const wifi_init_config_t *config);
+#if CONFIG_ESP8266_WIFI_CONNECT_OPEN_ROUTER_WHEN_PWD_IS_SET
+const bool _g_esp_wifi_connect_open_router_when_pwd_is_set = true;
+#else
+const bool _g_esp_wifi_connect_open_router_when_pwd_is_set = false;
+#endif
+
+#define  EP_OFFSET 36
+int ieee80211_output_pbuf(esp_aio_t *aio);
+
+esp_err_t mac_init(void);
+
+ESP_EVENT_DEFINE_BASE(WIFI_EVENT);
 
 static void esp_wifi_set_debug_log()
 {
@@ -77,12 +95,37 @@ static void esp_wifi_set_debug_log()
 #if CONFIG_ESP8266_WIFI_DEBUG_LOG_SUBMODULE_WPS
     wifi_log_submodule |= WIFI_LOG_SUBMODULE_WPS;
 #endif
+#if CONFIG_ESP8266_WIFI_DEBUG_LOG_SUBMODULE_AMPDU
+    wifi_log_submodule |= WIFI_LOG_SUBMODULE_AMPDU;
+#endif
+#if CONFIG_ESP8266_WIFI_DEBUG_LOG_SUBMODULE_AMSDU
+    wifi_log_submodule |= WIFI_LOG_SUBMODULE_AMSDU;
+#endif
+#if CONFIG_ESP8266_WIFI_DEBUG_LOG_SUBMODULE_FRAG
+    wifi_log_submodule |= WIFI_LOG_SUBMODULE_FRAG;
+#endif
+#if CONFIG_ESP8266_WIFI_DEBUG_LOG_SUBMODULE_WPA2
+    wifi_log_submodule |= WIFI_LOG_SUBMODULE_WPA2;
+#endif
     esp_wifi_internal_set_log_level(wifi_log_level);
     esp_wifi_internal_set_log_mod(wifi_log_submodule);
 #else
     esp_wifi_internal_set_log_level(WIFI_LOG_ERROR);
     esp_wifi_internal_set_log_mod(WIFI_LOG_SUBMODULE_NULL);
 #endif /* CONFIG_ESP8266_WIFI_DEBUG_LOG_ENABLE*/
+}
+
+esp_err_t esp_wifi_deinit(void)
+{
+    esp_err_t err = ESP_OK;
+
+    esp_supplicant_deinit();
+    err = esp_wifi_deinit_internal();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to deinit Wi-Fi driver (0x%x)", err);
+        return err;
+    }
+    return err;
 }
 
 /**
@@ -106,11 +149,30 @@ static void esp_wifi_set_debug_log()
   */
 esp_err_t esp_wifi_init(const wifi_init_config_t *config)
 {
-    esp_event_set_default_wifi_handlers();
+    mac_init();
+
+    esp_wifi_set_rx_pbuf_mem_type(WIFI_RX_PBUF_DRAM);
+
     esp_err_t result = esp_wifi_init_internal(config);
     if (result == ESP_OK) {
         esp_wifi_set_debug_log();
+        result = esp_supplicant_init();
+        if (result != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to init supplicant (0x%x)", result);
+            esp_err_t deinit_ret = esp_wifi_deinit();
+            if (deinit_ret != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to deinit Wi-Fi (0x%x)", deinit_ret);
+            }
+
+            return result;
+        }
     }
+
+    result = tcpip_adapter_set_default_wifi_handlers();
+    if (result != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to set default Wi-Fi event handlers (0x%x)", result);
+    }
+
     return result;
 }
 
@@ -136,3 +198,42 @@ bool IRAM_ATTR esp_wifi_try_rate_from_high(void) {
 #endif
     return false;
 }
+
+int wifi_internal_send_cb(esp_aio_t* aio)
+{
+    char* pb = (char*)aio->arg;
+
+    if (pb) {
+        os_free(pb);
+        pb = NULL;
+    }
+
+    return ESP_OK;
+}
+
+int esp_wifi_internal_tx(wifi_interface_t wifi_if, void *buffer, uint16_t len)
+{
+    esp_aio_t aio;
+    esp_err_t ret = ESP_OK;
+    uint8_t *dram_buffer = (uint8_t *)heap_caps_malloc(len + EP_OFFSET, MALLOC_CAP_8BIT);
+    if (!dram_buffer) {
+        return ESP_ERR_NO_MEM;
+    }
+    dram_buffer = ((uint8_t *)dram_buffer + EP_OFFSET);
+    memcpy(dram_buffer, buffer, len);
+
+    aio.arg = (char *)dram_buffer - EP_OFFSET;
+    aio.cb = wifi_internal_send_cb;
+    aio.fd = wifi_if;
+    aio.pbuf = (char *)dram_buffer;
+    aio.len = len;
+    aio.ret = 0;
+    ret = ieee80211_output_pbuf(&aio);
+
+    if(ret != 0) {
+        os_free(aio.arg);
+    }
+
+    return ret;
+}
+

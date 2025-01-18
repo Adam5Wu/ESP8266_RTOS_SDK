@@ -1,5 +1,5 @@
-SUPPORTED_TOOLCHAIN_COMMIT_DESC := 1.22.0-92-g8facf4c
-SUPPORTED_TOOLCHAIN_GCC_VERSIONS := 5.2.0
+SUPPORTED_TOOLCHAIN_COMMIT_DESC := esp-2020r3-49-gd5524c1
+SUPPORTED_TOOLCHAIN_GCC_VERSIONS := 8.4.0
 
 ifdef CONFIG_ESP8266_LEGACY
 
@@ -40,9 +40,9 @@ ESPTOOL_ALL_FLASH_ARGS += $(PHY_DATA_OFFSET) $(PHY_INIT_DATA_BIN)
 
 ESP8266_COMPONENT_PATH := $(COMPONENT_PATH)
 
-$(PHY_INIT_DATA_OBJ): $(ESP8266_COMPONENT_PATH)/include/internal/phy_init_data.h $(BUILD_DIR_BASE)/include/sdkconfig.h
+$(PHY_INIT_DATA_OBJ): $(ESP8266_COMPONENT_PATH)/include/esp_private/phy_init_data.h $(BUILD_DIR_BASE)/include/sdkconfig.h
 	$(summary) CC $(notdir $@)
-	printf "#include \"internal/phy_init_data.h\"\n" | $(CC) -I $(BUILD_DIR_BASE)/include -I $(ESP8266_COMPONENT_PATH) -I $(ESP8266_COMPONENT_PATH)/include -c -o $@ -xc -
+	printf "#include \"esp_private/phy_init_data.h\"\n" | $(CC) -I $(BUILD_DIR_BASE)/include -I $(ESP8266_COMPONENT_PATH) -I $(ESP8266_COMPONENT_PATH)/include -I $(ESP8266_COMPONENT_PATH)/../esp_common/include -c -o $@ -xc -
 
 $(PHY_INIT_DATA_BIN): $(PHY_INIT_DATA_OBJ)
 	$(summary) BIN $(notdir $@)
@@ -62,6 +62,15 @@ flash: phy_init_data
 
 endif # CONFIG_ESP_PHY_INIT_DATA_IN_PARTITION
 
+endif
+
+ifndef IS_BOOTLOADER_BUILD
+LINKER_SCRIPT_TEMPLATE := $(COMPONENT_PATH)/ld/esp8266.project.ld.in
+LINKER_SCRIPT_OUTPUT_DIR := $(abspath $(BUILD_DIR_BASE)/esp8266)
+
+# Target to generate linker script generator from fragments presented by each of
+# the components
+$(eval $(call ldgen_process_template,$(LINKER_SCRIPT_TEMPLATE),$(LINKER_SCRIPT_OUTPUT_DIR)/esp8266.project.ld))
 endif
 
 # global CFLAGS for ESP8266
@@ -112,13 +121,14 @@ app2-flash-all: app2
 	@$(ESPTOOLPY_WRITE_FLASH) $(patsubst $(APP_OFFSET),$(APP2_OFFSET),$(ESPTOOL_ALL_FLASH_ARGS))
 
 $(OTA1_BIN): all_binaries
+	@cp $(RAW_BIN) $(RAW_BIN).old
 	@cp $(RAW_BIN) $(OTA1_BIN)
 	@echo [GEN] $(OTA1_BIN)
 
 $(OTA2_BIN): $(OTA1_BIN)
 ifdef __COMBILE_OTA_BIN
 	@rm -f ./build/esp8266/esp8266_out.ld
-	@export CFLAGS= && export CXXFLAGS= && make APP_OFFSET=$(APP2_OFFSET) APP_SIZE=$(APP2_SIZE)
+	@export CFLAGS= && export CXXFLAGS= && make $(APP_BIN) APP_OFFSET=$(APP2_OFFSET) APP_SIZE=$(APP2_SIZE)
 endif
 	@cp $(RAW_BIN) $(OTA2_BIN)
 	@echo [GEN] $(OTA2_BIN)
@@ -143,6 +153,8 @@ ifdef CONFIG_ESP8266_OTA_FROM_OLD
 ota: $(OTA_V2_TO_V3_BIN)
 else
 ota: $(OTA_BIN)
+	@cp $(RAW_BIN).old $(RAW_BIN)
+	@rm $(RAW_BIN).old
 endif
 
 ota-clean:

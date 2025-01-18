@@ -21,17 +21,13 @@
 
 #include "sdkconfig.h"
 
+#include "esp_idf_version.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#if CONFIG_CRYSTAL_USED_26MHZ
-#define CRYSTAL_USED 26
-#endif
-
-#if CONFIG_CRYSTAL_USED_40MHZ
-#define CRYSTAL_USED 40
-#endif
+#define CRYSTAL_USED CONFIG_ESP8266_XTAL_FREQ
 
 typedef enum {
     ESP_MAC_WIFI_STA,
@@ -54,6 +50,7 @@ typedef enum {
     ESP_RST_DEEPSLEEP,      //!< Reset after exiting deep sleep mode
     ESP_RST_BROWNOUT,       //!< Brownout reset (software or hardware)
     ESP_RST_SDIO,           //!< Reset over SDIO
+    ESP_RST_FAST_SW,        //!< Fast reboot
 } esp_reset_reason_t;
 
 /**
@@ -123,9 +120,9 @@ esp_err_t esp_derive_local_mac(uint8_t* local_mac, const uint8_t* universal_mac)
  * @brief CPU frequency values
  */
 typedef enum {
-    RTC_CPU_FREQ_80M = 1,       //!< 80 MHz
-    RTC_CPU_FREQ_160M = 2,      //!< 160 MHz
-} rtc_cpu_freq_t;
+    ESP_CPU_FREQ_80M = 1,       //!< 80 MHz
+    ESP_CPU_FREQ_160M = 2,      //!< 160 MHz
+} esp_cpu_freq_t;
 
 /**
  * @brief Switch CPU frequency
@@ -137,7 +134,7 @@ typedef enum {
  *
  * @param cpu_freq  new CPU frequency
  */
-void rtc_clk_cpu_freq_set(rtc_cpu_freq_t cpu_freq);
+void esp_set_cpu_freq(esp_cpu_freq_t cpu_freq);
 
 /**
   * @brief  Reset to default settings.
@@ -182,11 +179,21 @@ uint32_t esp_get_minimum_free_heap_size( void );
 uint32_t esp_random(void);
 
 /**
- * Get IDF version
+ * @brief Fill a buffer with random bytes from hardware RNG
  *
- * @return constant string from IDF_VER
+ * @note This function has the same restrictions regarding available entropy as esp_random()
+ *
+ * @param buf Pointer to buffer to fill with random numbers.
+ * @param len Length of buffer in bytes
  */
-const char* esp_get_idf_version(void);
+void esp_fill_random(void *buf, size_t len);
+
+/**
+ * @brief Initialize MAC address
+ * 
+ * @return 0 if sucess or others failed
+ */
+esp_err_t esp_mac_init(void);
 
 typedef enum {
     FLASH_SIZE_4M_MAP_256_256 = 0,  /**<  Flash size : 4Mbits. Map : 256KBytes + 256KBytes */

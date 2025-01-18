@@ -17,9 +17,9 @@
 
 #include "esp_log.h"
 #include "esp_system.h"
-#include "internal/esp_system_internal.h"
+#include "esp_private/esp_system_internal.h"
 
-#include "crc.h"
+#include "rom/crc.h"
 
 #include "esp8266/eagle_soc.h"
 #include "esp8266/efuse_register.h"
@@ -32,6 +32,12 @@
 static const char* TAG = "system_api";
 
 static uint8_t base_mac_addr[6] = { 0 };
+uint32_t g_esp_ticks_per_us = 80;
+
+// Bootloader can get this information
+const __attribute__((section(".SystemInfoVector.text"))) esp_sys_info_t g_esp_sys_info = {
+    .version = ESP_IDF_VERSION
+};
 
 esp_err_t esp_base_mac_addr_set(uint8_t *mac)
 {
@@ -50,7 +56,7 @@ esp_err_t esp_base_mac_addr_get(uint8_t *mac)
     uint8_t null_mac[6] = {0};
 
     if (memcmp(base_mac_addr, null_mac, 6) == 0) {
-        ESP_LOGI(TAG, "Base MAC address is not set, read default base MAC address from BLK0 of EFUSE");
+        ESP_LOGI(TAG, "Base MAC address is not set, read default base MAC address from EFUSE");
         return ESP_ERR_INVALID_MAC;
     }
 
@@ -130,7 +136,7 @@ static const char *BACKUP_MAC_DATA_KEY = "backup_mac_data";
 static esp_err_t load_backup_mac_data(uint8_t *mac)
 {
     esp_err_t err;
-    nvs_handle handle;
+    nvs_handle_t handle;
     uint32_t efuse[4];
     uint8_t efuse_crc = 0;
     uint8_t calc_crc = 0;
@@ -215,7 +221,7 @@ static esp_err_t load_backup_mac_data(uint8_t *mac)
 static esp_err_t store_backup_mac_data()
 {
     esp_err_t err;
-    nvs_handle handle;
+    nvs_handle_t handle;
     uint32_t efuse[4];
     efuse[0] = REG_READ(EFUSE_DATA0_REG);
     efuse[1] = REG_READ(EFUSE_DATA1_REG);
@@ -307,6 +313,34 @@ esp_err_t esp_read_mac(uint8_t* mac, esp_mac_type_t type)
     return ESP_OK;
 }
 
+esp_err_t esp_mac_init(void)
+{
+    esp_err_t ret;
+    uint8_t efuse_mac[6];
+
+    if ((ret = nvs_flash_init()) != ESP_OK) {
+        ESP_LOGE(TAG, "Init NVS error=%d", ret);
+        return ESP_ERR_INVALID_MAC;
+    }
+
+    if (load_backup_mac_data(efuse_mac) == ESP_OK) {
+        ESP_LOGD(TAG, "Load MAC from NVS error=%d", ret);
+        return ESP_OK;
+    }
+
+    if ((ret = esp_efuse_mac_get_default(efuse_mac)) != ESP_OK) {
+        ESP_LOGE(TAG, "Get mac address error=%d", ret);
+        return ESP_ERR_INVALID_MAC;
+    }
+
+    if ((ret = store_backup_mac_data()) != ESP_OK) {
+        ESP_LOGE(TAG, "Store mac address error=%d", ret);
+        return ESP_ERR_INVALID_MAC;
+    }
+
+    return ESP_OK;
+}
+
 /**
  * Get IDF version
  */
@@ -361,3 +395,18 @@ uint32_t esp_get_old_sysconf_addr(void)
 {
     return rtc_sys_info.old_sysconf_addr;
 }
+
+void os_update_cpu_frequency(uint32_t ticks_per_us)
+{
+    extern uint32_t _xt_tick_divisor;
+
+    if (REG_READ(DPORT_CTL_REG) & DPORT_CTL_DOUBLE_CLK) {
+        g_esp_ticks_per_us = CPU_CLK_FREQ * 2 / 1000000;
+        _xt_tick_divisor = (CPU_CLK_FREQ * 2 / CONFIG_FREERTOS_HZ);
+    } else {
+        g_esp_ticks_per_us = CPU_CLK_FREQ / 1000000;;
+        _xt_tick_divisor = (CPU_CLK_FREQ / CONFIG_FREERTOS_HZ);
+    }
+}
+
+void ets_update_cpu_frequency(uint32_t ticks_per_us) __attribute__((alias("os_update_cpu_frequency")));

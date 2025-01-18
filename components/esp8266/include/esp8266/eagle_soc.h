@@ -25,7 +25,9 @@
 #ifndef _EAGLE_SOC_H_
 #define _EAGLE_SOC_H_
 
+#include "sdkconfig.h"
 #include <stdint.h>
+#include <stddef.h>
 #include "driver/soc.h"
 
 /* IO definitions (access restrictions to peripheral registers) */
@@ -94,6 +96,18 @@
 #define APB_CLK_FREQ                CPU_CLK_FREQ
 #define UART_CLK_FREQ               APB_CLK_FREQ
 #define TIMER_CLK_FREQ              (APB_CLK_FREQ >> 8) // divided by 256
+
+#define FREQ_1MHZ                   (1000 * 1000)
+#define FREQ_1KHZ                   (1000)
+
+#define CPU_FREQ_160MHZ             (160 * 1000 * 1000)
+#define CPU_FREQ_80MHz              (80 * 1000 * 1000)
+
+#define CPU_160M_TICKS_PRT_MS       (CPU_FREQ_160MHZ / FREQ_1KHZ)
+#define CPU_80M_TICKS_PRT_MS        (CPU_FREQ_80MHz / FREQ_1KHZ)
+
+#define CPU_160M_TICKS_PRT_US       (CPU_FREQ_160MHZ / FREQ_1MHZ)
+#define CPU_80M_TICKS_PRT_US        (CPU_FREQ_80MHz / FREQ_1MHZ)
 //}}
 
 //Peripheral device base address define{{
@@ -117,14 +131,31 @@
 //}}
 
 //Interrupt remap control registers define{{
+#define NMI_INT_ENABLE_REG          (PERIPHS_DPORT_BASEADDR)
 #define EDGE_INT_ENABLE_REG         (PERIPHS_DPORT_BASEADDR + 0x04)
 #define WDT_EDGE_INT_ENABLE()       SET_PERI_REG_MASK(EDGE_INT_ENABLE_REG, BIT0)
 #define TM1_EDGE_INT_ENABLE()       SET_PERI_REG_MASK(EDGE_INT_ENABLE_REG, BIT1)
 #define TM1_EDGE_INT_DISABLE()      CLEAR_PERI_REG_MASK(EDGE_INT_ENABLE_REG, BIT1)
 //}}
 
+#define DPORT_CTL_REG               (PERIPHS_DPORT_BASEADDR + 0x14)  
+#define DPORT_CTL_DOUBLE_CLK        BIT0
+
 #define INT_ENA_WDEV                0x3ff20c18
 #define WDEV_TSF0_REACH_INT         (BIT(27))
+
+#define WDEV_COUNT_REG              (0x3ff20c00)
+
+#define WDEVTSF0_TIME_LO            0x3ff21004
+#define WDEVTSF0_TIME_HI            0x3ff21008
+#define WDEVSLEEP0_CONF             0x3ff21014
+#define WDEVTSFSW0_LO               0x3ff21018
+#define WDEVTSFSW0_HI               0x3ff2101C
+#define WDEVTSF0_TIMER_LO           0x3ff2109c
+#define WDEVTSF0_TIMER_HI           0x3ff210a0
+#define WDEVTSF0TIMER_ENA           0x3ff21098
+#define WDEV_TSF0TIMER_ENA          BIT(31)
+#define WDEV_TSFUP0_ENA             BIT(31)
 
 //Watch dog reg {{
 #define PERIPHS_WDT_BASEADDR        0x60000900
@@ -169,16 +200,21 @@
 #define PAD_XPD_DCDC_CONF               (REG_RTC_BASE + 0x0A0)
 //}}
 
+#define WDEV_RAND                        (WDEV_COUNT_REG + 0x244)
+
 //CACHE{{
 #define CACHE_FLASH_CTRL_REG            (0x3ff00000 + 0x0c)
 #define CACHE_READ_EN_BIT               BIT8
 //}}
 
+#define ESP_CACHE1_ADDR_MAX             (0x100000)
+#define ESP_CACHE2_ADDR_MAX             (0x200000)
+
 #define DRAM_BASE                       (0x3FFE8000)
 #define DRAM_SIZE                       (96 * 1024)
 
 #define IRAM_BASE                       (0x40100000)
-#define IRAM_SIZE                       (48 * 1024)
+#define IRAM_SIZE                       (CONFIG_SOC_IRAM_SIZE)
 
 #define FLASH_BASE                      (0x40200000)
 #define FLASH_SIZE                      (1 * 1024 * 1024)
@@ -189,9 +225,13 @@
 #define RTC_USER_BASE                   (0x60001200)
 #define RTC_USER_SIZE                   (0x200)
 
+#define ROM_BASE                        (0x40000000)
+#define ROM_SIZE                        (0x10000)
+
 #define IS_DRAM(a)                      ((size_t)(a) >= DRAM_BASE && (size_t)(a) < (DRAM_BASE + DRAM_SIZE))
 #define IS_IRAM(a)                      ((size_t)(a) >= IRAM_BASE && (size_t)(a) < (IRAM_BASE + IRAM_SIZE))
 #define IS_FLASH(a)                     ((size_t)(a) >= FLASH_BASE && (size_t)(a) < (FLASH_BASE + FLASH_SIZE))
 #define IS_USR_RTC(a)                   ((size_t)(a) >= RTC_USER_BASE && (size_t)(a) < (RTC_USER_BASE + RTC_USER_SIZE))
+#define IS_ROM(a)                       ((size_t)(a) >= ROM_BASE && (size_t)(a) < (ROM_BASE + ROM_SIZE))
 
 #endif //_EAGLE_SOC_H_

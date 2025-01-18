@@ -43,7 +43,7 @@ void __wifi_task_delete(void *task)
 
 void __wifi_task_yield_from_isr(void)
 {
-    portYIELD();
+    portYIELD_FROM_ISR();
 }
 
 void __wifi_task_delay(uint32_t tick)
@@ -124,6 +124,11 @@ int __wifi_queue_recv(void *queue, void *item, uint32_t block_time_tick)
     return ret == pdPASS ? true : false;
 }
 
+uint32_t __wifi_queue_msg_num(void *queue)
+{
+    return (uint32_t)uxQueueMessagesWaiting((const QueueHandle_t)queue);
+}
+
 void *__wifi_timer_create(const char *name, uint32_t period_ticks, bool auto_load, void *arg, void (*cb)(void *timer))
 {
     return xTimerCreate(name, period_ticks, auto_load, arg, (tmrTIMER_CALLBACK)cb);
@@ -144,4 +149,28 @@ void *__wifi_task_top_sp(void)
     extern uint32_t **pxCurrentTCB;
 
     return pxCurrentTCB[0];
+}
+
+void* __wifi_semphr_create(uint32_t max, uint32_t init)
+{
+    return (void*)xSemaphoreCreateCounting(max, init);
+}
+
+void __wifi_semphr_delete(void* semphr)
+{
+    vSemaphoreDelete(semphr);
+}
+
+int32_t __wifi_semphr_take(void* semphr, uint32_t block_time_tick)
+{
+    if (block_time_tick == OSI_FUNCS_TIME_BLOCKING) {
+        return (int32_t)xSemaphoreTake(semphr, portMAX_DELAY);
+    } else {
+        return (int32_t)xSemaphoreTake(semphr, block_time_tick);
+    }
+}
+
+int32_t __wifi_semphr_give(void* semphr)
+{
+    return (int32_t)xSemaphoreGive(semphr);
 }

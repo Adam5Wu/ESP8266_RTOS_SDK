@@ -42,14 +42,10 @@ extern "C" {
 #include    "xtensa_rtos.h"
 
 #if defined(configUSE_NEWLIB_REENTRANT) && configUSE_NEWLIB_REENTRANT == 1
-#if defined(CONFIG_NEWLIB_LIBRARY_LEVEL_NORMAL) || defined(CONFIG_NEWLIB_LIBRARY_LEVEL_NANO)
 #include "esp_newlib.h"
-
-#define _impure_ptr _global_impure_ptr
 
 #undef _REENT_INIT_PTR
 #define _REENT_INIT_PTR(p) esp_reent_init(p)
-#endif
 #endif
 
 /*-----------------------------------------------------------
@@ -63,22 +59,25 @@ extern "C" {
  */
 
 /* Type definitions. */
-#define portCHAR        char
+#define portCHAR        int8_t
 #define portFLOAT       float
 #define portDOUBLE      double
-#define portLONG        long
-#define portSHORT       short
-#define portSTACK_TYPE  unsigned char
-#define portBASE_TYPE   long
+#define portLONG        int32_t
+#define portSHORT       int16_t
+#define portSTACK_TYPE  uint8_t
+#define portBASE_TYPE   int
 
-#define BaseType_t      portBASE_TYPE
-#define TickType_t      unsigned portLONG
-#define UBaseType_t     unsigned portBASE_TYPE
-#define StackType_t     portSTACK_TYPE
+typedef portSTACK_TYPE          StackType_t;
+typedef portBASE_TYPE           BaseType_t;
+typedef unsigned portBASE_TYPE  UBaseType_t;
 
-typedef unsigned portLONG portTickType;
-typedef unsigned int INT32U;
-#define portMAX_DELAY ( portTickType ) 0xffffffff
+#if( configUSE_16_BIT_TICKS == 1 )
+    typedef uint16_t TickType_t;
+    #define portMAX_DELAY ( TickType_t ) 0xffff
+#else
+    typedef uint32_t TickType_t;
+    #define portMAX_DELAY ( TickType_t ) 0xffffffffUL
+#endif
 /*-----------------------------------------------------------*/
 
 /* Architecture specifics. */
@@ -108,6 +107,7 @@ extern void vTaskSwitchContext( void );				\
 	}												\
 }
 
+void portYIELD_FROM_ISR(void);
 
 /*-----------------------------------------------------------*/
 extern unsigned cpu_sr;
@@ -131,6 +131,7 @@ void PortEnableInt_NoNest( void );
 #define portEXIT_CRITICAL()                 vPortExitCritical()
 
 #define xPortGetCoreID()                    0
+#define xTaskGetCurrentTaskHandleForCPU(_cpu)   xTaskGetCurrentTaskHandle()
 
 // no need to disable/enable lvl1 isr again in ISR
 //#define  portSET_INTERRUPT_MASK_FROM_ISR()		PortDisableInt_NoNest()
@@ -207,6 +208,15 @@ void esp_increase_tick_cnt(const TickType_t ticks);
 
 extern void esp_vApplicationIdleHook( void );
 extern void esp_vApplicationTickHook( void );
+
+extern uint32_t g_esp_ticks_per_us;
+
+/*
+ * @brief Get FreeRTOS system idle ticks
+ *
+ * @return idle ticks
+ */
+TickType_t prvGetExpectedIdleTime(void);
 
 #ifdef __cplusplus
 }

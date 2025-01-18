@@ -14,6 +14,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "sdkconfig.h"
 
@@ -23,17 +24,23 @@
 #include "esp8266/uart_register.h"
 #include "esp8266/rom_functions.h"
 
-#ifndef CONFIG_CONSOLE_UART_NONE
+#ifdef CONFIG_ETS_PRINTF_EXIT_WHEN_FLASH_RW
+#define ETS_PRINTF_ATTR IRAM_ATTR
+#else
+#define ETS_PRINTF_ATTR
+#endif
+
+#ifndef CONFIG_ESP_CONSOLE_UART_NONE
 static void uart_putc(int c)
 {
     while (1) {
-        uint32_t fifo_cnt = READ_PERI_REG(UART_STATUS(CONFIG_CONSOLE_UART_NUM)) & (UART_TXFIFO_CNT << UART_TXFIFO_CNT_S);
+        uint32_t fifo_cnt = READ_PERI_REG(UART_STATUS(CONFIG_ESP_CONSOLE_UART_NUM)) & (UART_TXFIFO_CNT << UART_TXFIFO_CNT_S);
 
         if ((fifo_cnt >> UART_TXFIFO_CNT_S & UART_TXFIFO_CNT) < 126)
             break;
     }
 
-    WRITE_PERI_REG(UART_FIFO(CONFIG_CONSOLE_UART_NUM) , c);
+    WRITE_PERI_REG(UART_FIFO(CONFIG_ESP_CONSOLE_UART_NUM) , c);
 }
 #else
 #define uart_putc(_c) { }
@@ -62,6 +69,7 @@ int __attribute__ ((weak)) ets_putc(int c)
 #define ALTERNATE   0x08
 #define OUPUT_INT   0x10
 #define START       0x20
+#define END         0x40
 
 #define VINT_STR_MAX 10
 
@@ -73,7 +81,7 @@ typedef union _val_cache {
 } val_cache_t;
 
 typedef struct _val_attr {
-    int8_t          type;
+    uint8_t         type;
     uint8_t         state;
     uint8_t         fillbytes;
     uint8_t         precision;
@@ -182,23 +190,10 @@ int ets_vprintf(const char *fmt, va_list va)
 
         fmt = ps;
 
-        attr.state = 0;
-        attr.type = -1;
-        attr.fillbytes = 0;
-        attr.precision = 0;
+        memset(&attr, 0, sizeof(val_attr_t));
 
         for (; ;) {
             switch (*++ps) {
-                case 'd':
-                case 'i':
-                case 'u':
-                case 'x':
-                case 'c':
-                case 's':
-                case 'p':
-                case '\0':
-                    attr.type = *ps++;
-                    break;
                 case '#':
                     attr.state |= ALTERNATE;
                     ps++;
@@ -220,14 +215,15 @@ int ets_vprintf(const char *fmt, va_list va)
                     attr.state |= FILL_LEFT;
                     break;
                 default:
-                    attr.type = -2;
+                    attr.type = *ps++;
+                    attr.state |= END;
                     break;
             }
 
-            attr.state |= START;
-
-            if (attr.type != -1)
+            if (attr.state & END)
                 break;
+            
+            attr.state |= START;
         }
 
         switch (attr.type) {
@@ -260,7 +256,13 @@ int ets_vprintf(const char *fmt, va_list va)
                 ets_printf_buf("0x", 2);
                 attr.value.valcp = va_arg(va, const char *);
                 ets_printf_int(&attr, 16);
+                break;
+            case '%':
+                ets_putc('%');
+                break;
             default:
+                ets_putc('%');
+                ps = fmt + 1;
                 break;
         }
 
@@ -289,10 +291,18 @@ int ets_vprintf(const char *fmt, va_list ap)
  *                            "%s": 172 Bytes
  *      "%p", "%d, "%i, "%u", "%x": 215 Bytes
  */
-int ets_printf(const char *fmt, ...)
+int ETS_PRINTF_ATTR ets_printf(const char *fmt, ...)
 {
     va_list ap;
     int ret;
+
+#ifdef CONFIG_ETS_PRINTF_EXIT_WHEN_FLASH_RW
+    extern uint8_t FlashIsOnGoing;
+
+    if (FlashIsOnGoing) {
+        return -1;
+    }
+#endif
 
     va_start(ap, fmt);
     ret = ets_vprintf(fmt, ap);
