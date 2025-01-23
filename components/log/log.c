@@ -84,7 +84,7 @@ typedef struct uncached_tag_entry_{
     char tag[0];    // beginning of a zero-terminated string
 } uncached_tag_entry_t;
 
-static esp_log_level_t s_global_tag_level = ESP_LOG_VERBOSE;
+static esp_log_level_t s_global_tag_level = CONFIG_LOG_DEFAULT_LEVEL;
 static SLIST_HEAD(log_tags_head , uncached_tag_entry_) s_log_uncached_tags = SLIST_HEAD_INITIALIZER(s_log_uncached_tags);
 static uncached_tag_entry_t *s_uncached_tag_entry_prev;
 #endif /* CONFIG_LOG_SET_LEVEL */
