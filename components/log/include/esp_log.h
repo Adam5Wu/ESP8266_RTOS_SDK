@@ -316,12 +316,13 @@ void esp_early_log_write(esp_log_level_t level, const char* tag, const char* for
         else                                { esp_log_write(ESP_LOG_INFO,       tag, format, ##__VA_ARGS__); } \
     } while(0)
 
-/** runtime macro to output logs at a specified level. Also check the level with ``LOG_LOCAL_LEVEL``.
+/** runtime macro to output logs at a specified level.
+ * Disables logging (at compile time) if it is above ``CONFIG_LOG_MAXIMUM_LEVEL``.
  *
  * @see ``printf``, ``ESP_LOG_LEVEL``
  */
 #define ESP_LOG_LEVEL_LOCAL(level, tag, format, ...) do {               \
-        if ( LOG_LOCAL_LEVEL >= level ) ESP_LOG_LEVEL(level, tag, format, ##__VA_ARGS__); \
+        if ( CONFIG_LOG_MAXIMUM_LEVEL >= level ) ESP_LOG_LEVEL(level, tag, format, ##__VA_ARGS__); \
     } while(0)
 
 #ifdef __cplusplus
