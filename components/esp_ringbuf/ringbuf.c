@@ -1063,7 +1063,11 @@ BaseType_t xRingbufferAddToQueueSetRead(RingbufHandle_t xRingbuffer, QueueSetHan
     xReturn = xQueueAddToSet(pxRingbuffer->xItemsBufferedSemaphore, xQueueSet);
     if (xHoldSemaphore == pdTRUE) {
         //Return semaphore if temporarily held
+#ifdef NDEBUG
+        xSemaphoreGive(pxRingbuffer->xItemsBufferedSemaphore);
+#else
         configASSERT(xSemaphoreGive(pxRingbuffer->xItemsBufferedSemaphore) == pdTRUE);
+#endif
     }
     taskEXIT_CRITICAL();
     return xReturn;
@@ -1089,7 +1093,11 @@ BaseType_t xRingbufferRemoveFromQueueSetRead(RingbufHandle_t xRingbuffer, QueueS
     xReturn = xQueueRemoveFromSet(pxRingbuffer->xItemsBufferedSemaphore, xQueueSet);
     if (xHoldSemaphore == pdTRUE) {
         //Return semaphore if temporarily held
+#ifdef NDEBUG
+        xSemaphoreGive(pxRingbuffer->xItemsBufferedSemaphore);
+#else
         configASSERT(xSemaphoreGive(pxRingbuffer->xItemsBufferedSemaphore) == pdTRUE);
+#endif
     }
     taskEXIT_CRITICAL();
     return xReturn;
@@ -1157,7 +1165,11 @@ BaseType_t xRingbufferAddToQueueSetWrite(RingbufHandle_t xRingbuffer, QueueSetHa
     xReturn = xQueueAddToSet(pxRingbuffer->xFreeSpaceSemaphore, xQueueSet);
     if (xHoldSemaphore == pdTRUE) {
         //Return semaphore is temporarily held
+#ifdef NDEBUG
+        xSemaphoreGive(pxRingbuffer->xFreeSpaceSemaphore);
+#else
         configASSERT(xSemaphoreGive(pxRingbuffer->xFreeSpaceSemaphore) == pdTRUE);
+#endif
     }
     portEXIT_CRITICAL();
     return xReturn;
@@ -1176,7 +1188,11 @@ BaseType_t xRingbufferRemoveFromQueueSetWrite(RingbufHandle_t xRingbuffer, Queue
     xReturn = xQueueRemoveFromSet(pxRingbuffer->xFreeSpaceSemaphore, xQueueSet);
     if (xHoldSemaphore == pdTRUE) {
         //Return semaphore is temporarily held
+#ifdef NDEBUG
+        xSemaphoreGive(pxRingbuffer->xFreeSpaceSemaphore);
+#else
         configASSERT(xSemaphoreGive(pxRingbuffer->xFreeSpaceSemaphore) == pdTRUE);
+#endif
     }
     portEXIT_CRITICAL();
     return xReturn;
