@@ -63,6 +63,10 @@ int __attribute__ ((weak)) ets_putc(int c)
 
 #if defined(CONFIG_USING_NEW_ETS_VPRINTF) && !defined(BOOTLOADER_BUILD)
 
+#ifdef CONFIG_DISABLE_ROM_UART_PRINT
+#define ets_vprintf(...) 0
+#else
+
 #define FILL_0      0x01
 #define FILL_LEFT   0x02
 #define POINTOR     0x04
@@ -271,6 +275,8 @@ int ets_vprintf(const char *fmt, va_list va)
 
     return 0;
 }
+
+#endif
 
 #else /* defined(CONFIG_USING_NEW_ETS_VPRINTF) && !defined(BOOTLOADER_BUILD) */
 
