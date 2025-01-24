@@ -35,8 +35,17 @@
 #define WIFI_PROV_MGR_VERSION      "v1.1"
 #define MAX_SCAN_RESULTS           CONFIG_WIFI_PROV_SCAN_MAX_ENTRIES
 
+#ifdef NDEBUG
+#define ACQUIRE_LOCK(mux) xSemaphoreTake(mux, portMAX_DELAY)
+#else
 #define ACQUIRE_LOCK(mux)     assert(xSemaphoreTake(mux, portMAX_DELAY) == pdTRUE)
+#endif
+
+#ifdef NDEBUG
+#define RELEASE_LOCK(mux) xSemaphoreGive(mux);
+#else
 #define RELEASE_LOCK(mux)     assert(xSemaphoreGive(mux) == pdTRUE)
+#endif
 
 static const char *TAG = "wifi_prov_mgr";
 
@@ -621,8 +630,12 @@ static bool wifi_prov_mgr_stop_service(bool blocking)
          * released - some duration after - returning from a call to
          * wifi_prov_mgr_stop_provisioning(), like when it is called
          * inside a protocomm handler */
+#ifdef NDEBUG
+        xTaskCreate(prov_stop_task, "prov_stop_task", 4096, (void *)1, tskIDLE_PRIORITY, NULL);
+#else
         assert(xTaskCreate(prov_stop_task, "prov_stop_task", 4096, (void *)1,
                            tskIDLE_PRIORITY, NULL) == pdPASS);
+#endif
         ESP_LOGD(TAG, "Provisioning scheduled for stopping");
     }
     return true;
