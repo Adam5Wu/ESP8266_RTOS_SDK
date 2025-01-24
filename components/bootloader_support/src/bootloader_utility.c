@@ -156,6 +156,9 @@ bool bootloader_utility_load_partition_table(bootloader_state_t* bs)
             case PART_SUBTYPE_DATA_SPIFFS:
                 partition_usage = "SPIFFS";
                 break;
+	    case PART_SUBTYPE_DATA_LITTLEFS:
+	        partition_usage = "LittleFS";
+	        break;
             default:
                 partition_usage = "Other data";
                 break;
@@ -609,6 +612,9 @@ bool bootloader_utility_load_partition_table(bootloader_state_t* bs)
             case PART_SUBTYPE_DATA_SPIFFS:
                 partition_usage = "SPIFFS";
                 break;
+	    case PART_SUBTYPE_DATA_LITTLEFS:
+	        partition_usage = "LittleFS";
+	        break;
             default:
                 partition_usage = "Other data";
                 break;
