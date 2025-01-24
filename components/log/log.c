@@ -314,4 +314,94 @@ putchar_like_t esp_log_set_putchar(putchar_like_t func)
 
     return tmp;
 }
+
+#define _BUF_ROW 16
+static char _HEXMAP[] = {'0', '1', '2', '3', '4', '5', '6', '7',
+                         '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
+
+static inline void _HEX_PRINT_BYTE(char *buf, uint8_t val) {
+  buf[0] = _HEXMAP[val >> 4];
+  buf[1] = _HEXMAP[val & 0xf];
+}
+
+void esp_log_buffer_hex_internal(const char *tag, const void *buffer, uint16_t buff_len,
+                                 esp_log_level_t level) {
+  size_t i = 0;
+  char print_buf[_BUF_ROW * 2 + 1];
+  __attribute__((__aligned__(sizeof(uint32_t)))) uint8_t access_buf[_BUF_ROW];
+  for (; i + _BUF_ROW < buff_len; i += _BUF_ROW) {
+    memcpy(access_buf, (uint8_t *)buffer + i, _BUF_ROW);
+    for (uint8_t x = 0; x < _BUF_ROW; x++) {
+      _HEX_PRINT_BYTE(print_buf + x * 2, access_buf[x]);
+    }
+    esp_log_write(level, tag, print_buf);
+  }
+  uint8_t tail_len = buff_len - i;
+  memcpy(access_buf, (uint8_t *)buffer + i, tail_len);
+  for (uint8_t x = 0; x < tail_len; x++) {
+    _HEX_PRINT_BYTE(print_buf + x * 2, access_buf[x]);
+  }
+  print_buf[tail_len * 2] = '\0';
+  esp_log_write(level, tag, print_buf);
+}
+
+static void normalize_print_buf(char *buf, uint8_t len, char fallback) {
+  for (uint8_t x = 0; x < len; x++) {
+    if (buf[x] > 126 || buf[x] < 32) buf[x] = fallback;
+  }
+}
+
+void esp_log_buffer_char_internal(const char *tag, const void *buffer, uint16_t buff_len,
+                                  esp_log_level_t level) {
+  size_t i = 0;
+  char print_buf[_BUF_ROW * 1 + 1] = {0};
+  for (; i + _BUF_ROW < buff_len; i += _BUF_ROW) {
+    memcpy(print_buf, (char *)buffer + i, _BUF_ROW);
+    normalize_print_buf(print_buf, _BUF_ROW, '_');
+    esp_log_write(level, tag, "%s", print_buf);
+  }
+  uint8_t tail_len = buff_len - i;
+  memcpy(print_buf, (char *)buffer + i, tail_len);
+  normalize_print_buf(print_buf, tail_len, '_');
+  print_buf[tail_len] = '\0';
+  esp_log_write(level, tag, "%s", print_buf);
+}
+
+#define MIN(a, b) (a < b) ? a : b
+
+void esp_log_buffer_hexdump_internal(const char *tag, const void *buffer, uint16_t buff_len,
+                                     esp_log_level_t level) {
+  __attribute__((__aligned__(sizeof(uint32_t)))) char print_buf[80];
+  // 0         1         2         3         4         5         6         7
+  // 01234567890123456789012345678901234567890123456789012345678901234567890123456789
+  // 0x0000 | AA BB CC DD 11 22 33 44  AA BB CC DD 11 22 33 44 | 0123456789ABCDEF |\0
+  // ==----===--=--=--=--=--=--=--=--==--=--=--=--=--=--=--=--===^---------------===
+  memset(print_buf, ' ', sizeof(print_buf));
+  print_buf[0] = '0';
+  print_buf[1] = 'x';
+  print_buf[7] = print_buf[58] = print_buf[77] = '|';
+  print_buf[78] = '\0';
+
+  // Important: the start of the char contents is 4 byte aligned.
+  uint8_t *access_buf = (uint8_t *)print_buf + 60;
+  for (size_t i = 0; i < buff_len; i += _BUF_ROW) {
+    _HEX_PRINT_BYTE(print_buf + 2, i >> 8);
+    _HEX_PRINT_BYTE(print_buf + 4, i & 0xff);
+    uint8_t copy_len = MIN(buff_len - i, _BUF_ROW);
+    memcpy(access_buf, (uint8_t *)buffer + i, copy_len);
+    for (uint8_t x = 0; x < _BUF_ROW; x++) {
+      uint8_t padlen = (x < _BUF_ROW / 2) ? 0 : 1;
+      if (x < copy_len) {
+        _HEX_PRINT_BYTE(print_buf + 9 + x * 3 + padlen, access_buf[x]);
+      } else {
+        print_buf[9 + x * 3 + padlen] = print_buf[9 + x * 3 + 1 + padlen] = ' ';
+      }
+    }
+    // memcpy(print_buf + 60, access_buf, copy_len);
+    normalize_print_buf(print_buf + 60, copy_len, '_');
+    memset(print_buf + 60 + copy_len, ' ', _BUF_ROW - copy_len);
+    esp_log_write(level, tag, "%s", print_buf);
+  }
+}
+
 #endif
