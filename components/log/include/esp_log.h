@@ -126,6 +126,13 @@ void esp_early_log_write(esp_log_level_t level, const char* tag, const char* for
 
 #include "esp_log_internal.h"
 
+#ifdef NDEBUG
+#if CONFIG_LOG_MAXIMUM_LEVEL > ESP_LOG_INFO
+#undef CONFIG_LOG_MAXIMUM_LEVEL
+#define CONFIG_LOG_MAXIMUM_LEVEL ESP_LOG_INFO
+#endif
+#endif
+
 #ifndef LOG_LOCAL_LEVEL
 #ifndef BOOTLOADER_BUILD
 #define LOG_LOCAL_LEVEL  CONFIG_LOG_MAXIMUM_LEVEL
