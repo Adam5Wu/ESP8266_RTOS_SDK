@@ -156,11 +156,12 @@ bool  wpa_deattach(void)
 
 void  wpa_sta_connect(uint8_t *bssid)
 {
-
-    int ret = 0;
     wpa_config_profile();
-    ret = wpa_config_bss(bssid);
-    WPA_ASSERT(ret == 0);
+#ifdef NDEBUG
+    wpa_config_bss(bssid);
+#else
+    WPA_ASSERT(wpa_config_bss(bssid) == 0);
+#endif
 }
 
 int wpa_parse_wpa_ie_wrapper(const u8 *wpa_ie, size_t wpa_ie_len, wifi_wpa_ie_t *data)
