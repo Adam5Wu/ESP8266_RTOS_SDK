@@ -70,7 +70,7 @@ uint32_t IRAM_ATTR esp_log_early_timestamp()
     const uint32_t ms = 0;
 #endif
 
-    return soc_get_ccount() / ticks_per_ms + ms;
+    return (soc_get_ccount() / ticks_per_ms + ms) % 10000000;
 }
 
 #ifndef BOOTLOADER_BUILD
@@ -222,7 +222,7 @@ void IRAM_ATTR esp_early_log_write(esp_log_level_t level, const char *tag, const
         ets_printf(LOG_COLOR_HEAD, color);
 #endif
 
-    if (ets_printf("%c (%5d) %-10s: ", prefix, esp_log_early_timestamp(), tag) < 0)
+    if (ets_printf("%c (%7d) %-12.12s: ", prefix, esp_log_early_timestamp(), tag) < 0)
         goto out;
 
     va_start(va, fmt);
@@ -267,7 +267,7 @@ void esp_log_write(esp_log_level_t level, const char *tag,  const char *fmt, ...
     }
 #endif
     prefix = level >= ESP_LOG_MAX ? 'N' : s_log_prefix[level];
-    ret = asprintf(&pbuf, "%c (%5d) %-10s: ", prefix, esp_log_early_timestamp(), tag);
+    ret = asprintf(&pbuf, "%c (%7d) %-12.12s: ", prefix, esp_log_early_timestamp(), tag);
     if (ret < 0)
         goto out;
     ret = esp_log_write_str(pbuf);
