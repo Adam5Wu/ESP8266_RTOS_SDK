@@ -61,18 +61,16 @@ uint32_t IRAM_ATTR esp_log_early_timestamp()
 {
 #ifndef BOOTLOADER_BUILD
     //extern volatile uint64_t g_esp_os_us;
-	extern int64_t esp_timer_get_time(void);
+	  extern int64_t esp_timer_get_time(void);
     extern uint32_t g_esp_boot_ccount;
 
     const uint32_t ms = esp_timer_get_time() / 1000 + g_esp_boot_ccount / ((CRYSTAL_USED * 2) * 1000);
-    return ms;
+    return ms % 10000000;
 #else
     const uint32_t ticks_per_ms = ((CRYSTAL_USED * 2) * 1000);
     const uint32_t ms = 0;
-    return soc_get_ccount() / ticks_per_ms + ms;
+    return (soc_get_ccount() / ticks_per_ms + ms) % 10000000;
 #endif
-
-
 }
 
 #ifndef BOOTLOADER_BUILD
@@ -224,7 +222,7 @@ void IRAM_ATTR esp_early_log_write(esp_log_level_t level, const char *tag, const
         ets_printf(LOG_COLOR_HEAD, color);
 #endif
 
-    if (ets_printf("%c (%d) %s: ", prefix, esp_log_early_timestamp(), tag) < 0)
+    if (ets_printf("%c (%7d) %-12.12s: ", prefix, esp_log_early_timestamp(), tag) < 0)
         goto out;
 
     va_start(va, fmt);
@@ -269,7 +267,7 @@ void esp_log_write(esp_log_level_t level, const char *tag,  const char *fmt, ...
     }
 #endif
     prefix = level >= ESP_LOG_MAX ? 'N' : s_log_prefix[level];
-    ret = asprintf(&pbuf, "%c (%d) %s: ", prefix, esp_log_early_timestamp(), tag);
+    ret = asprintf(&pbuf, "%c (%7d) %-12.12s: ", prefix, esp_log_early_timestamp(), tag);
     if (ret < 0)
         goto out;
     ret = esp_log_write_str(pbuf);
