@@ -241,6 +241,7 @@ esp_err_t protocomm_httpd_start(protocomm_t *pc, const protocomm_httpd_config_t 
     pc->add_endpoint    = protocomm_httpd_add_endpoint;
     pc->remove_endpoint = protocomm_httpd_remove_endpoint;
     pc_httpd = pc;
+    session_id = PROTOCOMM_NO_SESSION_ID;
     return ESP_OK;
 }
 
