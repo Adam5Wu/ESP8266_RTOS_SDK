@@ -271,6 +271,38 @@ static void file_cleanup(vfs_fat_ctx_t* ctx, int fd)
     memset(&ctx->files[fd], 0, sizeof(FIL));
 }
 
+esp_err_t esp_vfs_fat_info(const char* base_path, size_t* out_total_bytes, size_t* out_free_bytes) {
+  size_t ctx = find_context_index_by_path(base_path);
+  if (ctx == FF_VOLUMES) {
+    return ESP_ERR_INVALID_STATE;
+  }
+  char* path = s_fat_ctxs[ctx]->fat_drive;
+
+  FATFS* fs;
+  DWORD free_clusters;
+  int res = f_getfree(path, &free_clusters, &fs);
+  if (res != FR_OK) {
+    ESP_LOGE(TAG, "Failed to get number of free clusters (%d)", res);
+    errno = fresult_to_errno(res);
+    return ESP_FAIL;
+  }
+  uint64_t total_sectors = ((size_t)(fs->n_fatent - 2)) * fs->csize;
+  uint64_t free_sectors = ((size_t)free_clusters) * fs->csize;
+  WORD sector_size = FF_MIN_SS;  // 512
+#if FF_MAX_SS != FF_MIN_SS
+  sector_size = fs->ssize;
+#endif
+
+  // Assuming the total size is < 4GiB, should be true for SPI Flash
+  if (out_total_bytes != NULL) {
+    *out_total_bytes = total_sectors * sector_size;
+  }
+  if (out_free_bytes != NULL) {
+    *out_free_bytes = free_sectors * sector_size;
+  }
+  return ESP_OK;
+}
+
 /**
  * @brief Prepend drive letters to path names
  * This function returns new path path pointers, pointing to a temporary buffer
