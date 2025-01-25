@@ -314,4 +314,89 @@ putchar_like_t esp_log_set_putchar(putchar_like_t func)
 
     return tmp;
 }
+
+void esp_log_buffer_hex_internal(const char *tag, const void *buffer, uint16_t buff_len,
+                                 esp_log_level_t level) {
+  size_t i = 0;
+  char print_buf[16 * 2 + 1];
+  for (; i + 16 < buff_len; i += 16) {
+    for (uint8_t x = 0; x < 16; x++) {
+      snprintf(print_buf + x * 2, 3, "%02X", ((uint8_t *)buffer)[i + x]);
+    }
+    esp_log_write(level, tag, print_buf);
+  }
+  for (uint8_t x = 0; i + x < buff_len; x++) {
+    snprintf(print_buf + x * 2, 3, "%02X", ((uint8_t *)buffer)[i + x]);
+  }
+  esp_log_write(level, tag, print_buf);
+}
+
+static void normalize_print_buf(char *buf, uint8_t len, char fallback) {
+  for (uint8_t x = 0; x < len; x++) {
+    if (buf[x] > 126 || buf[x] < 32) buf[x] = fallback;
+  }
+}
+
+void esp_log_buffer_char_internal(const char *tag, const void *buffer, uint16_t buff_len,
+                                  esp_log_level_t level) {
+  size_t i = 0;
+  char print_buf[16 * 1 + 1] = {0};
+  for (; i + 16 < buff_len; i += 16) {
+    memcpy(print_buf, (char *)buffer + i, 16);
+    normalize_print_buf(print_buf, 16, '_');
+    esp_log_write(level, tag, print_buf);
+  }
+  uint8_t tail_len = buff_len - i;
+  memcpy(print_buf, (char *)buffer + i, tail_len);
+  normalize_print_buf(print_buf, tail_len, '_');
+  print_buf[tail_len] = '\0';
+  esp_log_write(level, tag, print_buf);
+}
+
+void esp_log_buffer_hexdump_internal(const char *tag, const void *buffer, uint16_t buff_len,
+                                     esp_log_level_t level) {
+  size_t i = 0;
+  char print_buf[8 * 3 + 1 + 8 * 3 + 2 + 16 + 2 + 1] = {0};
+  // 0         1         2         3         4         5         6
+  // 0123456789012345678901234567890123456789012345678901234567890123456789
+  // AA BB CC DD 11 22 33 44  AA BB CC DD 11 22 33 44 | ABCD1234ABCD1234 |\0
+  // --------------------------------------------------^----------------^^
+  print_buf[50] = print_buf[67] = ' ';
+  print_buf[68] = '|';
+
+  for (; i + 16 < buff_len; i += 16) {
+    for (uint8_t x = 0; x < 8; x++) {
+      snprintf(print_buf + x * 3, 4, "%02X ", ((uint8_t *)buffer)[i + x]);
+    }
+    print_buf[24] = ' ';
+    for (uint8_t x = 8; x < 16; x++) {
+      snprintf(print_buf + 1 + x * 3, 4, "%02X ", ((uint8_t *)buffer)[i + x]);
+    }
+    print_buf[49] = '|';
+    memcpy(print_buf + 51, (char *)buffer + i, 16);
+    normalize_print_buf(print_buf + 51, 16, '_');
+    esp_log_write(level, tag, print_buf);
+  }
+  uint8_t tail_len = buff_len - i;
+  memcpy(print_buf + 51, (char *)buffer + i, tail_len);
+  memset(print_buf + 51 + tail_len, ' ', 16 - tail_len);
+  normalize_print_buf(print_buf + 51, tail_len, '_');
+
+  memset(print_buf, ' ', 48);
+  uint8_t hex_base = 0;
+  if (tail_len - i > 8) {
+    for (uint8_t x = 0; x < 8; x++) {
+      snprintf(print_buf + x * 3, 4, "%02X ", ((uint8_t *)buffer)[i + x]);
+    }
+    i += 8;
+    print_buf[24] = ' ';
+    hex_base = 25;
+  }
+  for (uint8_t x = 0; i + x < buff_len; x++) {
+    snprintf(print_buf + hex_base + x * 3, 4, "%02X ", ((uint8_t *)buffer)[i + x]);
+  }
+  print_buf[hex_base + (buff_len - i) * 3] = ' ';
+  esp_log_write(level, tag, print_buf);
+}
+
 #endif
