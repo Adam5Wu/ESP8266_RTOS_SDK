@@ -49,6 +49,7 @@ initializer that should be kept in sync
         .global_transport_ctx_free_fn = NULL,           \
         .open_fn = NULL,                                \
         .close_fn = NULL,                               \
+        .uri_match_fn = NULL,                           \
 }
 
 #define ESP_ERR_HTTPD_BASE              (0x8000)                    /*!< Starting number of HTTPD error codes */
