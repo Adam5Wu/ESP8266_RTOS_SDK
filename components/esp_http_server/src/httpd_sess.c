@@ -78,7 +78,11 @@ esp_err_t httpd_sess_new(struct httpd_data *hd, int newfd)
             /* Call user-defined session opening function */
             if (hd->config.open_fn) {
                 esp_err_t ret = hd->config.open_fn(hd, hd->hd_sd[i].fd);
-                if (ret != ESP_OK) return ret;
+                if (ret != ESP_OK) {
+                    httpd_sess_delete(hd, hd->hd_sd[i].fd);
+                    ESP_LOGD(TAG, LOG_FMT("open_fn failed for fd = %d"), newfd);
+                    return ret;
+                }
             }
             return ESP_OK;
         }
@@ -193,7 +197,7 @@ void httpd_sess_set_descriptors(struct httpd_data *hd,
 /** Check if a FD is valid */
 static int fd_is_valid(int fd)
 {
-    return fcntl(fd, F_GETFD, 0) != -1 || errno != EBADF;
+    return fcntl(fd, F_GETFD, 0) != -1;
 }
 
 static inline uint64_t httpd_sess_get_lru_counter()
