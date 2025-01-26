@@ -855,8 +855,9 @@ esp_err_t httpd_query_key_value(const char *qry_str, const char *key, char *val,
     }
 
     const char *qry_ptr = qry_str;
+    const size_t key_len = strlen(key);
 
-    while (strlen(qry_ptr)) {
+    while (*qry_ptr) {
         /* Search for the '=' character. Else, it would mean
          * that the parameter is invalid */
         const char *val_ptr = strchr(qry_ptr, '=');
@@ -868,8 +869,7 @@ esp_err_t httpd_query_key_value(const char *qry_str, const char *key, char *val,
         /* If the key, does not match, continue searching.
          * Compare lengths first as key from url is not
          * null terminated (has '=' in the end) */
-        if ((offset != strlen(key)) ||
-            (strncasecmp(qry_ptr, key, offset))) {
+        if ((offset != key_len) || (strncasecmp(qry_ptr, key, offset))) {
             /* Get the name=val string. Multiple name=value pairs
              * are separated by '&' */
             qry_ptr = strchr(val_ptr, '&');
@@ -898,7 +898,7 @@ esp_err_t httpd_query_key_value(const char *qry_str, const char *key, char *val,
 
         /* If buffer length is smaller than needed, return truncation error */
         if (copy_len < val_len) {
-          return ESP_ERR_HTTPD_RESULT_TRUNC;
+            return ESP_ERR_HTTPD_RESULT_TRUNC;
         }
         return ESP_OK;
     }
@@ -983,6 +983,7 @@ size_t httpd_req_get_hdr_value_len(httpd_req_t *r, const char *field)
     struct httpd_req_aux *ra = r->aux;
     const char   *hdr_ptr = ra->scratch;         /*!< Request headers are kept in scratch buffer */
     unsigned      count   = ra->req_hdrs_count;  /*!< Count set during parsing  */
+    const size_t field_len = strlen(field);
 
     while (count--) {
         /* Search for the ':' character. Else, it would mean
@@ -997,8 +998,8 @@ size_t httpd_req_get_hdr_value_len(httpd_req_t *r, const char *field)
          * Compare lengths first as field from header is not
          * null terminated (has ':' in the end).
          */
-        if ((val_ptr - hdr_ptr != strlen(field)) ||
-            (strncasecmp(hdr_ptr, field, strlen(field)))) {
+        if ((val_ptr - hdr_ptr != field_len) ||
+            (strncasecmp(hdr_ptr, field, field_len))) {
             if (count) {
                 /* Jump to end of header field-value string */
                 hdr_ptr = 1 + strchr(hdr_ptr, '\0');
@@ -1038,7 +1039,7 @@ esp_err_t httpd_req_get_hdr_value_str(httpd_req_t *r, const char *field, char *v
     struct httpd_req_aux *ra = r->aux;
     const char   *hdr_ptr = ra->scratch;         /*!< Request headers are kept in scratch buffer */
     unsigned     count    = ra->req_hdrs_count;  /*!< Count set during parsing  */
-    const size_t buf_len  = val_size;
+    const size_t field_len = strlen(field);
 
     while (count--) {
         /* Search for the ':' character. Else, it would mean
@@ -1053,8 +1054,8 @@ esp_err_t httpd_req_get_hdr_value_str(httpd_req_t *r, const char *field, char *v
          * Compare lengths first as field from header is not
          * null terminated (has ':' in the end).
          */
-        if ((val_ptr - hdr_ptr != strlen(field)) ||
-            (strncasecmp(hdr_ptr, field, strlen(field)))) {
+        if ((val_ptr - hdr_ptr != field_len) ||
+            (strncasecmp(hdr_ptr, field, field_len))) {
             if (count) {
                 /* Jump to end of header field-value string */
                 hdr_ptr = 1 + strchr(hdr_ptr, '\0');
@@ -1098,10 +1099,11 @@ esp_err_t static httpd_cookie_key_value(const char *cookie_str, const char *key,
     }
 
     const char *cookie_ptr = cookie_str;
+    const size_t key_len = strlen(key);
 
-    while (strlen(cookie_ptr)) {
+    while (*cookie_ptr) {
         /* Search for the '=' character. Else, it would mean
-         * that the parameter is invalid */
+        * that the parameter is invalid */
         const char *val_ptr = strchr(cookie_ptr, '=');
         if (!val_ptr) {
             break;
@@ -1111,7 +1113,7 @@ esp_err_t static httpd_cookie_key_value(const char *cookie_str, const char *key,
         /* If the key, does not match, continue searching.
          * Compare lengths first as key from cookie string is not
          * null terminated (has '=' in the end) */
-        if ((offset != strlen(key)) || (strncasecmp(cookie_ptr, key, offset) != 0)) {
+        if ((offset != key_len) || (strncasecmp(cookie_ptr, key, offset) != 0)) {
             /* Get the name=val string. Multiple name=value pairs
              * are separated by '; ' */
             cookie_ptr = strchr(val_ptr, ' ');
@@ -1143,7 +1145,7 @@ esp_err_t static httpd_cookie_key_value(const char *cookie_str, const char *key,
 
         /* If buffer length is smaller than needed, return truncation error */
         if (copy_len < val_len) {
-          return ESP_ERR_HTTPD_RESULT_TRUNC;
+            return ESP_ERR_HTTPD_RESULT_TRUNC;
         }
         return ESP_OK;
     }
