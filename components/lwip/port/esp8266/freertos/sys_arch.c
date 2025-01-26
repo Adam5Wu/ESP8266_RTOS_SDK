@@ -78,9 +78,12 @@ sys_mutex_new(sys_mutex_t *pxMutex)
 void
 sys_mutex_lock(sys_mutex_t *pxMutex)
 {
+#ifdef NDEBUG
+  xSemaphoreTake(*pxMutex, portMAX_DELAY);
+#else
   BaseType_t ret = xSemaphoreTake(*pxMutex, portMAX_DELAY);
-
   LWIP_ASSERT("failed to take the mutex", ret == pdTRUE);
+#endif
 }
 
 /**
@@ -91,9 +94,12 @@ sys_mutex_lock(sys_mutex_t *pxMutex)
 void
 sys_mutex_unlock(sys_mutex_t *pxMutex)
 {
+#ifdef NDEBUG
+  xSemaphoreGive(*pxMutex);
+#else
   BaseType_t ret = xSemaphoreGive(*pxMutex);
-
   LWIP_ASSERT("failed to give the mutex", ret == pdTRUE);
+#endif
 }
 
 /**
@@ -131,8 +137,12 @@ sys_sem_new(sys_sem_t *sem, u8_t count)
   }
 
   if (count == 1) {
+#ifdef NDEBUG
+      xSemaphoreGive(*sem);
+#else
       BaseType_t ret = xSemaphoreGive(*sem);
       LWIP_ASSERT("sys_sem_new: initial give failed", ret == pdTRUE);
+#endif
   }
 
   return ERR_OK;
@@ -146,10 +156,14 @@ sys_sem_new(sys_sem_t *sem, u8_t count)
 void
 sys_sem_signal(sys_sem_t *sem)
 {
+#ifdef NDEBUG
+  xSemaphoreGive(*sem);
+#else
   BaseType_t ret = xSemaphoreGive(*sem);
   /* queue full is OK, this is a signal only... */
   LWIP_ASSERT("sys_sem_signal: sane return value",
              (ret == pdTRUE) || (ret == errQUEUE_FULL));
+#endif
 }
 
 /*-----------------------------------------------------------------------------------*/
@@ -244,8 +258,12 @@ sys_mbox_new(sys_mbox_t *mbox, int size)
 void
 sys_mbox_post(sys_mbox_t *mbox, void *msg)
 {
+#ifdef NDEBUG
+  xQueueSendToBack((*mbox)->os_mbox, &msg, portMAX_DELAY);
+#else
   BaseType_t ret = xQueueSendToBack((*mbox)->os_mbox, &msg, portMAX_DELAY);
   LWIP_ASSERT("mbox post failed", ret == pdTRUE);
+#endif
 }
 
 /**
@@ -379,8 +397,10 @@ sys_mbox_free(sys_mbox_t *mbox)
   if ((NULL == mbox) || (NULL == *mbox)) {
     return;
   }
+#ifndef NDEBUG
   UBaseType_t msgs_waiting = uxQueueMessagesWaiting((*mbox)->os_mbox);
   LWIP_ASSERT("mbox quence not empty", msgs_waiting == 0);
+#endif
 
   vQueueDelete((*mbox)->os_mbox);
   free(*mbox);

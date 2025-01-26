@@ -230,6 +230,18 @@ esp_err_t esp_vfs_fat_rawflash_mount(const char* base_path,
  */
  esp_err_t esp_vfs_fat_rawflash_unmount(const char* base_path, const char* partition_label);
 
+ /**
+  * @brief Get information for FATFS partition
+  *
+  * @param base_path  Base path of the partition examined (e.g. "/spiflash")
+  * @param[out] out_total_bytes  Size of the file system
+  * @param[out] out_free_bytes   Free bytes available in the file system
+  * @return
+  *      - ESP_OK on success
+  *      - ESP_ERR_INVALID_STATE if partition not found
+  *      - ESP_FAIL if another FRESULT error (saved in errno)
+  */
+ esp_err_t esp_vfs_fat_info(const char* base_path, size_t* out_total_bytes, size_t* out_free_bytes);
 
 #ifdef __cplusplus
 }

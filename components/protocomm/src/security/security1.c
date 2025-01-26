@@ -84,7 +84,7 @@ static esp_err_t handle_session_command1(uint32_t session_id,
     int mbed_err;
 
     if (cur_session->state != SESSION_STATE_CMD1) {
-        ESP_LOGE(TAG, "Invalid state of session %d (expected %d)", SESSION_STATE_CMD1, cur_session->state);
+        ESP_LOGE(TAG, "Invalid state of session %d (expected %d)", cur_session->state, SESSION_STATE_CMD1);
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -176,6 +176,8 @@ static esp_err_t handle_session_command1(uint32_t session_id,
     return ESP_OK;
 }
 
+static esp_err_t sec1_new_session(uint32_t session_id);
+
 static esp_err_t handle_session_command0(uint32_t session_id,
                                          SessionData *req, SessionData *resp,
                                          const protocomm_security_pop_t *pop)
@@ -186,8 +188,9 @@ static esp_err_t handle_session_command0(uint32_t session_id,
     int mbed_err;
 
     if (cur_session->state != SESSION_STATE_CMD0) {
-        ESP_LOGE(TAG, "Invalid state of session %d (expected %d)", SESSION_STATE_CMD0, cur_session->state);
-        return ESP_ERR_INVALID_STATE;
+        ESP_LOGE(TAG, "Invalid state of session %d (expected %d). Restarting session.",
+                 cur_session->state, SESSION_STATE_CMD0);
+        sec1_new_session(session_id);
     }
 
     if (in->sc0->client_pubkey.len != PUBLIC_KEY_LEN) {
@@ -207,6 +210,7 @@ static esp_err_t handle_session_command0(uint32_t session_id,
     }
 
     mbedtls_ecdh_init(ctx_server);
+    mbedtls_ecdh_setup(ctx_server, MBEDTLS_ECP_DP_CURVE25519);
     mbedtls_ctr_drbg_init(ctr_drbg);
     mbedtls_entropy_init(entropy);
 

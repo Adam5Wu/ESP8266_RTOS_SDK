@@ -1918,13 +1918,16 @@ repeated_field_pack_to_buffer(const ProtobufCFieldDescriptor *field,
 		uint8_t scratch[MAX_UINT64_ENCODED_SIZE * 2];
 		size_t rv = tag_pack(field->id, scratch);
 		size_t payload_len = get_packed_payload_length(field, count, array);
-		size_t tmp;
 
 		scratch[0] |= PROTOBUF_C_WIRE_TYPE_LENGTH_PREFIXED;
 		rv += uint32_pack(payload_len, scratch + rv);
 		buffer->append(buffer, rv, scratch);
-		tmp = pack_buffer_packed_payload(field, count, array, buffer);
+#ifdef NDEBUG
+		pack_buffer_packed_payload(field, count, array, buffer);
+#else
+		size_t tmp = pack_buffer_packed_payload(field, count, array, buffer);
 		assert(tmp == payload_len);
+#endif
 		return rv + payload_len;
 	} else {
 		size_t siz;

@@ -544,7 +544,6 @@ esp_err_t httpd_start(httpd_handle_t *handle, const httpd_config_t *config)
 
     *handle = (httpd_handle_t)hd;
     esp_http_server_dispatch_event(HTTP_SERVER_EVENT_START, NULL, 0);
-
     return ESP_OK;
 }
 

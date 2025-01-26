@@ -69,10 +69,18 @@ static void user_init_entry(void *param)
         func[0]();
 
     esp_phy_init_clk();
+#ifdef NDEBUG
+    base_gpio_init();
+#else
     assert(base_gpio_init() == 0);
+#endif
 
     if (esp_reset_reason_early() != ESP_RST_FAST_SW) {
+#ifdef NDEBUG
+        esp_mac_init();
+#else
         assert(esp_mac_init() == ESP_OK);
+#endif
     }
 
 #if CONFIG_RESET_REASON
@@ -83,7 +91,11 @@ static void user_init_entry(void *param)
     esp_task_wdt_init();
 #endif
 
+#ifdef NDEBUG
+    esp_pthread_init();
+#else
     assert(esp_pthread_init() == 0);
+#endif
 
 #ifdef CONFIG_BOOTLOADER_FAST_BOOT
     REG_CLR_BIT(DPORT_CTL_REG, DPORT_CTL_DOUBLE_CLK);
@@ -94,7 +106,11 @@ static void user_init_entry(void *param)
 #endif
 
 #ifdef CONFIG_ENABLE_TH25Q16HB_PATCH_0
+#ifdef NDEBUG
+    th25q16hb_apply_patch_0();
+#else
     assert(th25q16hb_apply_patch_0() == 0);
+#endif
 #endif
 
     app_main();
@@ -164,12 +180,24 @@ void call_start_cpu(size_t start_addr)
 
 #ifdef CONFIG_INIT_OS_BEFORE_START
     extern int __esp_os_init(void);
+#ifdef NDEBUG
+    __esp_os_init();
+#else
     assert(__esp_os_init() == 0);
 #endif
+#endif
 
+#ifdef NDEBUG
+    esp_newlib_init();
+#else
     assert(esp_newlib_init() == 0);
+#endif
 
+#ifdef NDEBUG
+    xTaskCreate(user_init_entry, "uiT", ESP_TASK_MAIN_STACK, NULL, ESP_TASK_MAIN_PRIO, NULL);
+#else
     assert(xTaskCreate(user_init_entry, "uiT", ESP_TASK_MAIN_STACK, NULL, ESP_TASK_MAIN_PRIO, NULL) == pdPASS);
+#endif
 
     vTaskStartScheduler();
 }

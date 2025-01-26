@@ -35,8 +35,17 @@
 #define WIFI_PROV_MGR_VERSION      "v1.1"
 #define MAX_SCAN_RESULTS           CONFIG_WIFI_PROV_SCAN_MAX_ENTRIES
 
+#ifdef NDEBUG
+#define ACQUIRE_LOCK(mux) xSemaphoreTake(mux, portMAX_DELAY)
+#else
 #define ACQUIRE_LOCK(mux)     assert(xSemaphoreTake(mux, portMAX_DELAY) == pdTRUE)
+#endif
+
+#ifdef NDEBUG
+#define RELEASE_LOCK(mux) xSemaphoreGive(mux);
+#else
 #define RELEASE_LOCK(mux)     assert(xSemaphoreGive(mux) == pdTRUE)
+#endif
 
 static const char *TAG = "wifi_prov_mgr";
 
@@ -323,6 +332,7 @@ static esp_err_t wifi_prov_mgr_start_service(const char *service_name, const cha
     }
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to set security endpoint");
+        protocomm_unset_version(prov_ctx->pc, "proto-ver");
         scheme->prov_stop(prov_ctx->pc);
         protocomm_delete(prov_ctx->pc);
         return ret;
@@ -332,6 +342,8 @@ static esp_err_t wifi_prov_mgr_start_service(const char *service_name, const cha
     ret = get_wifi_prov_handlers(prov_ctx->wifi_prov_handlers);
     if (ret != ESP_OK) {
         ESP_LOGD(TAG, "Failed to allocate memory for provisioning handlers");
+        protocomm_unset_security(prov_ctx->pc, "prov-session");
+        protocomm_unset_version(prov_ctx->pc, "proto-ver");
         scheme->prov_stop(prov_ctx->pc);
         protocomm_delete(prov_ctx->pc);
         return ESP_ERR_NO_MEM;
@@ -344,6 +356,8 @@ static esp_err_t wifi_prov_mgr_start_service(const char *service_name, const cha
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to set provisioning endpoint");
         free(prov_ctx->wifi_prov_handlers);
+        protocomm_unset_security(prov_ctx->pc, "prov-session");
+        protocomm_unset_version(prov_ctx->pc, "proto-ver");
         scheme->prov_stop(prov_ctx->pc);
         protocomm_delete(prov_ctx->pc);
         return ret;
@@ -354,6 +368,9 @@ static esp_err_t wifi_prov_mgr_start_service(const char *service_name, const cha
     if (ret != ESP_OK) {
         ESP_LOGD(TAG, "Failed to allocate memory for Wi-Fi scan handlers");
         free(prov_ctx->wifi_prov_handlers);
+        protocomm_remove_endpoint(prov_ctx->pc, "prov-config");
+        protocomm_unset_security(prov_ctx->pc, "prov-session");
+        protocomm_unset_version(prov_ctx->pc, "proto-ver");
         scheme->prov_stop(prov_ctx->pc);
         protocomm_delete(prov_ctx->pc);
         return ESP_ERR_NO_MEM;
@@ -367,6 +384,9 @@ static esp_err_t wifi_prov_mgr_start_service(const char *service_name, const cha
         ESP_LOGE(TAG, "Failed to set Wi-Fi scan endpoint");
         free(prov_ctx->wifi_scan_handlers);
         free(prov_ctx->wifi_prov_handlers);
+        protocomm_remove_endpoint(prov_ctx->pc, "prov-config");
+        protocomm_unset_security(prov_ctx->pc, "prov-session");
+        protocomm_unset_version(prov_ctx->pc, "proto-ver");
         scheme->prov_stop(prov_ctx->pc);
         protocomm_delete(prov_ctx->pc);
         return ret;
@@ -379,6 +399,10 @@ static esp_err_t wifi_prov_mgr_start_service(const char *service_name, const cha
         ESP_LOGE(TAG, "Failed to register WiFi event handler");
         free(prov_ctx->wifi_scan_handlers);
         free(prov_ctx->wifi_prov_handlers);
+        protocomm_remove_endpoint(prov_ctx->pc, "prov-scan");
+        protocomm_remove_endpoint(prov_ctx->pc, "prov-config");
+        protocomm_unset_security(prov_ctx->pc, "prov-session");
+        protocomm_unset_version(prov_ctx->pc, "proto-ver");
         scheme->prov_stop(prov_ctx->pc);
         protocomm_delete(prov_ctx->pc);
         return ret;
@@ -392,6 +416,10 @@ static esp_err_t wifi_prov_mgr_start_service(const char *service_name, const cha
                                      wifi_prov_mgr_event_handler_internal);
         free(prov_ctx->wifi_scan_handlers);
         free(prov_ctx->wifi_prov_handlers);
+        protocomm_remove_endpoint(prov_ctx->pc, "prov-scan");
+        protocomm_remove_endpoint(prov_ctx->pc, "prov-config");
+        protocomm_unset_security(prov_ctx->pc, "prov-session");
+        protocomm_unset_version(prov_ctx->pc, "proto-ver");
         scheme->prov_stop(prov_ctx->pc);
         protocomm_delete(prov_ctx->pc);
         return ret;
@@ -480,6 +508,11 @@ static void prov_stop_task(void *arg)
      * and then the provisioning is stopped. Generally 1000ms is enough. */
     uint32_t cleanup_delay = prov_ctx->cleanup_delay > 100 ? prov_ctx->cleanup_delay : 100;
     vTaskDelay(cleanup_delay / portTICK_PERIOD_MS);
+
+    protocomm_remove_endpoint(prov_ctx->pc, "prov-scan");
+    protocomm_remove_endpoint(prov_ctx->pc, "prov-config");
+    protocomm_unset_security(prov_ctx->pc, "prov-session");
+    protocomm_unset_version(prov_ctx->pc, "proto-ver");
 
     /* All the extra application added endpoints are also
      * removed automatically when prov_stop is called */
@@ -621,8 +654,12 @@ static bool wifi_prov_mgr_stop_service(bool blocking)
          * released - some duration after - returning from a call to
          * wifi_prov_mgr_stop_provisioning(), like when it is called
          * inside a protocomm handler */
+#ifdef NDEBUG
+        xTaskCreate(prov_stop_task, "prov_stop_task", 4096, (void *)1, tskIDLE_PRIORITY, NULL);
+#else
         assert(xTaskCreate(prov_stop_task, "prov_stop_task", 4096, (void *)1,
                            tskIDLE_PRIORITY, NULL) == pdPASS);
+#endif
         ESP_LOGD(TAG, "Provisioning scheduled for stopping");
     }
     return true;
