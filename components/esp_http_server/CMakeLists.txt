@@ -5,9 +5,10 @@ set(COMPONENT_SRCS "src/httpd_main.c"
                    "src/httpd_sess.c"
                    "src/httpd_txrx.c"
                    "src/httpd_uri.c"
+                   "src/httpd_ws.c"
                    "src/util/ctrl_sock.c")
 
-set(COMPONENT_PRIV_REQUIRES lwip)
+set(COMPONENT_PRIV_REQUIRES lwip mbedtls)
 set(COMPONENT_REQUIRES http_parser)
 
 register_component()
