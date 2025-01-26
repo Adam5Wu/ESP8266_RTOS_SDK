@@ -1,16 +1,8 @@
-// Copyright 2018 Espressif Systems (Shanghai) PTE LTD
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+/*
+ * SPDX-FileCopyrightText: 2018-2024 Espressif Systems (Shanghai) CO LTD
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
 
 #include <string.h>
 #include <unistd.h>
@@ -18,25 +10,48 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-
+#include "sdkconfig.h"
+#include "esp_log.h"
 #include "ctrl_sock.h"
+
+#if CONFIG_IDF_TARGET_LINUX
+#define IPV4_ENABLED      1
+#define IPV6_ENABLED      1
+#define LOOPBACK_ENABLED  1
+#else   // CONFIG_IDF_TARGET_LINUX
+#define IPV4_ENABLED      1
+#define IPV6_ENABLED      CONFIG_LWIP_IPV6
+#define LOOPBACK_ENABLED  CONFIG_LWIP_NETIF_LOOPBACK
+#endif  // !CONFIG_IDF_TARGET_LINUX
 
 /* Control socket, because in some network stacks select can't be woken up any
  * other way
  */
 int cs_create_ctrl_sock(int port)
 {
+#if !LOOPBACK_ENABLED
+    ESP_LOGE("esp_http_server", "Please enable LWIP_NETIF_LOOPBACK for %s API", __func__);
+    return -1;
+#endif
+
     int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (fd < 0) {
         return -1;
     }
 
     int ret;
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    inet_aton("127.0.0.1", &addr.sin_addr);
+    struct sockaddr_storage addr = {};
+#if IPV4_ENABLED
+    struct sockaddr_in *addr4 = (struct sockaddr_in *)&addr;
+    addr4->sin_family = AF_INET;
+    addr4->sin_port = htons(port);
+    inet_aton("127.0.0.1", &addr4->sin_addr);
+#else
+    struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *)&addr;
+    addr6->sin6_family = AF_INET6;
+    addr6->sin6_port = htons(port);
+    inet6_aton("::1", &addr6->sin6_addr);
+#endif
     ret = bind(fd, (struct sockaddr *)&addr, sizeof(addr));
     if (ret < 0) {
         close(fd);
@@ -53,10 +68,18 @@ void cs_free_ctrl_sock(int fd)
 int cs_send_to_ctrl_sock(int send_fd, int port, void *data, unsigned int data_len)
 {
     int ret;
-    struct sockaddr_in to_addr;
-    to_addr.sin_family = AF_INET;
-    to_addr.sin_port = htons(port);
-    inet_aton("127.0.0.1", &to_addr.sin_addr);
+    struct sockaddr_storage to_addr = {};
+#if IPV4_ENABLED
+    struct sockaddr_in *addr4 = (struct sockaddr_in *)&to_addr;
+    addr4->sin_family = AF_INET;
+    addr4->sin_port = htons(port);
+    inet_aton("127.0.0.1", &addr4->sin_addr);
+#else
+    struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *)&to_addr;
+    addr6->sin6_family = AF_INET6;
+    addr6->sin6_port = htons(port);
+    inet6_aton("::1", &addr6->sin6_addr);
+#endif
     ret = sendto(send_fd, data, data_len, 0, (struct sockaddr *)&to_addr, sizeof(to_addr));
 
     if (ret < 0) {
