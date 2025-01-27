@@ -497,10 +497,11 @@ esp_err_t httpd_start(httpd_handle_t *handle, const httpd_config_t *config)
      * So the total number of required sockets is max_open_sockets + 3
      */
     if (HTTPD_MAX_SOCKETS < config->max_open_sockets + 3) {
-        ESP_LOGE(TAG, "Config option max_open_sockets is too large (max allowed %d, 3 sockets used by HTTP server internally)\n\t"
-                 "Either decrease this or configure LWIP_MAX_SOCKETS to a larger value",
-                 HTTPD_MAX_SOCKETS - 3);
-        return ESP_ERR_INVALID_ARG;
+      ESP_LOGE(TAG,
+               "Config option max_open_sockets is too large: "
+               "%d (LWIP_MAX_SOCKETS) - 3 (internally used by HTTP server) = %d < %d",
+               HTTPD_MAX_SOCKETS, HTTPD_MAX_SOCKETS - 3, config->max_open_sockets);
+      return ESP_ERR_INVALID_ARG;
     }
 
     struct httpd_data *hd = httpd_create(config);
