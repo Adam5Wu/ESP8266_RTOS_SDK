@@ -1,12 +1,19 @@
 
 /*
  * MDNS Server Networking
- * 
+ *
  */
 #include <string.h>
-#include "mdns_networking.h"
 #include "esp_log.h"
-
+#include "lwip/ip_addr.h"
+#include "lwip/pbuf.h"
+#include "lwip/igmp.h"
+#include "lwip/udp.h"
+#include "lwip/mld6.h"
+#include "lwip/priv/tcpip_priv.h"
+#include "esp_system.h"
+#include "esp_event.h"
+#include "mdns_networking.h"
 
 extern mdns_server_t * _mdns_server;
 
@@ -23,7 +30,7 @@ static void _udp_recv(void *arg, struct udp_pcb *upcb, struct pbuf *pb, const ip
 /**
  * @brief  Low level UDP PCB Initialize
  */
-static esp_err_t _udp_pcb_main_init()
+static esp_err_t _udp_pcb_main_init(void)
 {
     if(_pcb_main) {
         return ESP_OK;
@@ -37,9 +44,9 @@ static esp_err_t _udp_pcb_main_init()
         _pcb_main = NULL;
         return ESP_ERR_INVALID_STATE;
     }
-    _pcb_main->mcast_ttl = 1;
+    _pcb_main->mcast_ttl = 255;
     _pcb_main->remote_port = MDNS_SERVICE_PORT;
-    ip_addr_copy(_pcb_main->remote_ip, ip_addr_any_type);
+    ip_addr_copy(_pcb_main->remote_ip, *(IP_ANY_TYPE));
     udp_recv(_pcb_main, &_udp_recv, _mdns_server);
     return ESP_OK;
 }
@@ -47,7 +54,7 @@ static esp_err_t _udp_pcb_main_init()
 /**
  * @brief  Low level UDP PCB Free
  */
-static void _udp_pcb_main_deinit()
+static void _udp_pcb_main_deinit(void)
 {
     if(_pcb_main){
         udp_recv(_pcb_main, NULL, NULL);
@@ -77,19 +84,21 @@ static esp_err_t _udp_join_group(tcpip_adapter_if_t tcpip_if, mdns_ip_protocol_t
     netif = (struct netif *)nif;
 
     if (ip_protocol == MDNS_IP_PROTOCOL_V4) {
-        ip_addr_t multicast_addr;
-        IP_ADDR4(&multicast_addr, 224, 0, 0, 251);
+        ip4_addr_t multicast_addr;
+        IP4_ADDR(&multicast_addr, 224, 0, 0, 251);
 
         if(join){
-            if (igmp_joingroup_netif(netif, (const struct ip4_addr *)&multicast_addr.u_addr.ip4)) {
+            if (igmp_joingroup_netif(netif, &multicast_addr)) {
                 return ESP_ERR_INVALID_STATE;
             }
         } else {
-            if (igmp_leavegroup_netif(netif, (const struct ip4_addr *)&multicast_addr.u_addr.ip4)) {
+            if (igmp_leavegroup_netif(netif, &multicast_addr)) {
                 return ESP_ERR_INVALID_STATE;
             }
         }
-    } else {
+    }
+#if CONFIG_LWIP_IPV6
+    else {
         ip_addr_t multicast_addr = IPADDR6_INIT(0x000002ff, 0, 0, 0xfb000000);
 
         if(join){
@@ -102,6 +111,7 @@ static esp_err_t _udp_join_group(tcpip_adapter_if_t tcpip_if, mdns_ip_protocol_t
             }
         }
     }
+#endif
     return ESP_OK;
 }
 
@@ -129,19 +139,29 @@ static void _udp_recv(void *arg, struct udp_pcb *upcb, struct pbuf *pb, const ip
         packet->tcpip_if = TCPIP_ADAPTER_IF_MAX;
         packet->pb = this_pb;
         packet->src_port = rport;
-        memcpy(&packet->src, raddr, sizeof(ip_addr_t));
+#if CONFIG_LWIP_IPV6
+        packet->src.type = raddr->type;
+        memcpy(&packet->src.u_addr, &raddr->u_addr, sizeof(raddr->u_addr));
+#else
+        packet->src.type = IPADDR_TYPE_V4;
+        memcpy(&packet->src.u_addr.ip4, &raddr->addr, sizeof(ip_addr_t));
+#endif
         packet->dest.type = packet->src.type;
 
         if (packet->src.type == IPADDR_TYPE_V4) {
             packet->ip_protocol = MDNS_IP_PROTOCOL_V4;
             struct ip_hdr * iphdr = (struct ip_hdr *)(((uint8_t *)(packet->pb->payload)) - UDP_HLEN - IP_HLEN);
             packet->dest.u_addr.ip4.addr = iphdr->dest.addr;
-        } else {
+            packet->multicast = ip4_addr_ismulticast(&(packet->dest.u_addr.ip4));
+        }
+#if CONFIG_LWIP_IPV6
+        else {
             packet->ip_protocol = MDNS_IP_PROTOCOL_V6;
             struct ip6_hdr * ip6hdr = (struct ip6_hdr *)(((uint8_t *)(packet->pb->payload)) - UDP_HLEN - IP6_HLEN);
             memcpy(&packet->dest.u_addr.ip6.addr, (uint8_t *)ip6hdr->dest.addr, 16);
+            packet->multicast = ip6_addr_ismulticast(&(packet->dest.u_addr.ip6));
         }
-        packet->multicast = ip_addr_ismulticast(&(packet->dest));
+#endif
 
         //lwip does not return the proper pcb if you have more than one for the same multicast address (but different interfaces)
         struct netif * netif = NULL;
@@ -153,8 +173,11 @@ static void _udp_recv(void *arg, struct udp_pcb *upcb, struct pbuf *pb, const ip
             netif = (struct netif *)nif;
             if (pcb && netif && netif == ip_current_input_netif ()) {
                 if (packet->src.type == IPADDR_TYPE_V4) {
+#if CONFIG_LWIP_IPV6
                     if ((packet->src.u_addr.ip4.addr & netif->netmask.u_addr.ip4.addr) != (netif->ip_addr.u_addr.ip4.addr & netif->netmask.u_addr.ip4.addr)) {
-                        //packet source is not in the same subnet
+#else
+                    if ((packet->src.u_addr.ip4.addr & netif->netmask.addr) != (netif->ip_addr.addr & netif->netmask.addr)) {
+#endif                  //packet source is not in the same subnet
                         pcb = NULL;
                         break;
                     }
@@ -177,7 +200,7 @@ static void _udp_recv(void *arg, struct udp_pcb *upcb, struct pbuf *pb, const ip
 /**
  * @brief  Check if any of the interfaces is up
  */
-static bool _udp_pcb_is_in_use(){
+static bool _udp_pcb_is_in_use(void){
     int i, p;
     for (i=0; i<TCPIP_ADAPTER_IF_MAX; i++) {
         for (p=0; p<MDNS_IP_PROTOCOL_MAX; p++) {
@@ -302,8 +325,8 @@ static err_t _mdns_udp_pcb_write_api(struct tcpip_api_call_data *api_call_msg)
     esp_err_t err = tcpip_adapter_get_netif(msg->tcpip_if, &nif);
     if (err) {
         pbuf_free(msg->pbt);
-        msg->err = err;
-        return err;
+        msg->err = ERR_IF;
+        return ERR_IF;
     }
     err = udp_sendto_if (_pcb->pcb, msg->pbt, msg->ip, msg->port, (struct netif *)nif);
     pbuf_free(msg->pbt);
@@ -332,4 +355,20 @@ size_t _mdns_udp_pcb_write(tcpip_adapter_if_t tcpip_if, mdns_ip_protocol_t ip_pr
         return 0;
     }
     return len;
+}
+
+void* _mdns_get_packet_data(mdns_rx_packet_t *packet)
+{
+    return packet->pb->payload;
+}
+
+size_t _mdns_get_packet_len(mdns_rx_packet_t *packet)
+{
+    return packet->pb->len;
+}
+
+void _mdns_packet_free(mdns_rx_packet_t *packet)
+{
+    pbuf_free(packet->pb);
+    free(packet);
 }
