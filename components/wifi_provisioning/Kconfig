@@ -3,7 +3,6 @@ menu "Wi-Fi Provisioning Manager"
     config ENABLE_UNIFIED_PROVISIONING
         bool "Enable Unified Provisioning"
         default n
-        select ENABLE_MDNS
         help
             This enables Unified Provisioning feature along with required components like Wifi-Provisioning, Protocomm and their mbedtls dependencies.
 
