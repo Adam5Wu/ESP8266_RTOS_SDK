@@ -153,8 +153,7 @@ static esp_err_t protocomm_httpd_add_endpoint(const char *ep_name,
 
     /* Register URI handler */
     esp_err_t err;
-    httpd_handle_t *server = (httpd_handle_t *) pc_httpd->priv;
-    if ((err = httpd_register_uri_handler(*server, &config_handler)) != ESP_OK) {
+    if ((err = httpd_register_uri_handler((httpd_handle_t)pc_httpd->priv, &config_handler)) != ESP_OK) {
         ESP_LOGE(TAG, "Uri handler register failed: %d", err);
         free(ep_uri);
         return ESP_FAIL;
@@ -182,8 +181,7 @@ static esp_err_t protocomm_httpd_remove_endpoint(const char *ep_name)
 
     /* Unregister URI handler */
     esp_err_t err;
-    httpd_handle_t *server = (httpd_handle_t *) pc_httpd->priv;
-    if ((err = httpd_unregister_uri_handler(*server, ep_uri, HTTP_POST)) != ESP_OK) {
+    if ((err = httpd_unregister_uri_handler((httpd_handle_t)pc_httpd->priv, ep_uri, HTTP_POST)) != ESP_OK) {
         ESP_LOGE(TAG, "Uri handler de-register failed: %d", err);
         free(ep_uri);
         return ESP_FAIL;
@@ -208,6 +206,7 @@ esp_err_t protocomm_httpd_start(protocomm_t *pc, const protocomm_httpd_config_t 
         return ESP_ERR_NOT_SUPPORTED;
     }
 
+    // Private data will hold a HTTP server handle
     if (config->ext_handle_provided) {
         if (config->data.handle) {
             pc->priv = config->data.handle;
@@ -216,13 +215,6 @@ esp_err_t protocomm_httpd_start(protocomm_t *pc, const protocomm_httpd_config_t 
             return ESP_ERR_INVALID_ARG;
         }
     } else {
-        /* Private data will point to the HTTP server handle */
-        pc->priv = calloc(1, sizeof(httpd_handle_t));
-        if (!pc->priv) {
-            ESP_LOGE(TAG, "Malloc failed for HTTP server handle");
-            return ESP_ERR_NO_MEM;
-        }
-
         /* Configure the HTTP server */
         httpd_config_t server_config   = HTTPD_DEFAULT_CONFIG();
         server_config.server_port      = config->data.config.port;
@@ -232,7 +224,7 @@ esp_err_t protocomm_httpd_start(protocomm_t *pc, const protocomm_httpd_config_t 
         server_config.max_open_sockets = 1;
 
         esp_err_t err;
-        if ((err = httpd_start((httpd_handle_t *)pc->priv, &server_config)) != ESP_OK) {
+        if ((err = httpd_start((httpd_handle_t *)&pc->priv, &server_config)) != ESP_OK) {
             ESP_LOGE(TAG, "Failed to start http server: %d", err);
             free(pc->priv);
             return err;
@@ -241,6 +233,7 @@ esp_err_t protocomm_httpd_start(protocomm_t *pc, const protocomm_httpd_config_t 
     pc->add_endpoint    = protocomm_httpd_add_endpoint;
     pc->remove_endpoint = protocomm_httpd_remove_endpoint;
     pc_httpd = pc;
+    session_id = PROTOCOMM_NO_SESSION_ID;
     return ESP_OK;
 }
 
@@ -248,9 +241,7 @@ esp_err_t protocomm_httpd_stop(protocomm_t *pc)
 {
     if ((pc != NULL) && (pc == pc_httpd)) {
         if (!pc_ext_httpd_handle_provided) {
-            httpd_handle_t *server_handle = (httpd_handle_t *) pc_httpd->priv;
-            httpd_stop(*server_handle);
-            free(server_handle);
+            httpd_stop((httpd_handle_t)pc_httpd->priv);
         } else {
             pc_ext_httpd_handle_provided = false;
         }

@@ -258,10 +258,13 @@ esp_err_t gpio_set_direction(gpio_num_t gpio_num, gpio_mode_t mode)
         gpio_output_disable(gpio_num);
     }
 
-    if ((mode & GPIO_MODE_DEF_OD) && !RTC_GPIO_IS_VALID_GPIO(gpio_num)) {
-        GPIO.pin[gpio_num].driver = 1;
-    } else {
-        GPIO.pin[gpio_num].driver = 0;
+    if (!RTC_GPIO_IS_VALID_GPIO(gpio_num))
+    {
+        if ((mode & GPIO_MODE_DEF_OD)) {
+            GPIO.pin[gpio_num].driver = 1;
+        } else {
+            GPIO.pin[gpio_num].driver = 0;
+        }
     }
 
     return ESP_OK;
@@ -334,8 +337,8 @@ esp_err_t gpio_config(const gpio_config_t *gpio_cfg)
             // It should be noted that GPIO0, 2, 4, and 5 need to set the func register to 0,
             // and the other GPIO needs to be set to 3 so that IO can be GPIO function.
             if ((0x1 << io_num) & (GPIO_Pin_0 | GPIO_Pin_2 | GPIO_Pin_4 | GPIO_Pin_5)) {
-                pin_reg.rtc_pin.func_low_bit = 0;
-                pin_reg.rtc_pin.func_high_bit = 0;
+                pin_reg.func_low_bit = 0;
+                pin_reg.func_high_bit = 0;
             } else {
                 pin_reg.func_low_bit = 3;
                 pin_reg.func_high_bit = 0;
