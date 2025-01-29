@@ -110,7 +110,7 @@ typedef void* httpd_handle_t;
  */
 typedef enum http_method httpd_method_t;
 
-#define HTTP_ANY INT_MAX
+#define HTTP_ANY (httpd_method_t)INT_MAX
 
 /**
  * @brief  Prototype for freeing context data (if any)

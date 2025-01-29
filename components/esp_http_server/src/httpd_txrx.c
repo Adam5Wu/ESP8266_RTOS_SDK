@@ -448,7 +448,7 @@ esp_err_t httpd_resp_send_err(httpd_req_t *req, httpd_err_code_t error, const ch
 
     /* If user has provided custom message, override default message */
     msg = usr_msg ? usr_msg : msg;
-    ESP_LOGW(TAG, LOG_FMT("%s - %s"), status, msg);
+    ESP_LOGI(TAG, LOG_FMT("%s - %s"), status, msg);
 
     /* Set error code in HTTP response */
     httpd_resp_set_status(req, status);
@@ -489,7 +489,7 @@ esp_err_t httpd_resp_send_err(httpd_req_t *req, httpd_err_code_t error, const ch
 
 esp_err_t httpd_resp_send_custom_err(httpd_req_t *req, const char *status, const char *msg)
 {
-    ESP_LOGW(TAG, LOG_FMT("%s - %s"), status, msg);
+    ESP_LOGI(TAG, LOG_FMT("%s - %s"), status, msg);
 
     /* Set error code in HTTP response */
     httpd_resp_set_status(req, status);
