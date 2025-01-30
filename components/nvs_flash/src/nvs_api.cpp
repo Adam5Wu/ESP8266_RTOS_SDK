@@ -66,9 +66,9 @@ using namespace nvs;
 
 static intrusive_list<NVSHandleEntry> s_nvs_handles;
 
-static nvs::Storage* lookup_storage_from_name(const char *name)
+inline static nvs::Storage* lookup_storage_from_name(const char *name)
 {
-    return NVSPartitionManager::get_instance()->lookup_storage_from_name(name);
+    return NVSPartitionManager::get_instance()->lookup_storage_from_name((name == nullptr) ? NVS_DEFAULT_PART_NAME : name);
 }
 
 extern "C" void nvs_dump(const char *partName)
@@ -193,7 +193,7 @@ extern "C" esp_err_t nvs_flash_erase_partition(const char *part_name)
     Lock lock;
 
     // if the partition is initialized, uninitialize it first
-    if (NVSPartitionManager::get_instance()->lookup_storage_from_name(part_name)) {
+    if (lookup_storage_from_name(part_name)) {
         esp_err_t err = close_handles_and_deinit(part_name);
 
         // only hypothetical/future case, deinit_partition() only fails if partition is uninitialized
@@ -221,7 +221,7 @@ extern "C" esp_err_t nvs_flash_erase_partition_ptr(const esp_partition_t *partit
     }
 
     // if the partition is initialized, uninitialize it first
-    if (NVSPartitionManager::get_instance()->lookup_storage_from_name(partition->label)) {
+    if (lookup_storage_from_name(partition->label)) {
         const esp_err_t err = close_handles_and_deinit(partition->label);
 
         // only hypothetical/future case, deinit_partition() only fails if partition is uninitialized
@@ -527,7 +527,7 @@ extern "C" esp_err_t nvs_get_stats(const char* part_name, nvs_stats_t* nvs_stats
     nvs_stats->total_entries    = 0;
     nvs_stats->namespace_count  = 0;
 
-    pStorage = lookup_storage_from_name((part_name == nullptr) ? NVS_DEFAULT_PART_NAME : part_name);
+    pStorage = lookup_storage_from_name(part_name);
     if (pStorage == nullptr) {
         return ESP_ERR_NVS_NOT_INITIALIZED;
     }
