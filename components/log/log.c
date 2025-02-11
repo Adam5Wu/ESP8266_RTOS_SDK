@@ -315,19 +315,33 @@ putchar_like_t esp_log_set_putchar(putchar_like_t func)
     return tmp;
 }
 
+#define _BUF_ROW 16
+static char _HEXMAP[] = {'0', '1', '2', '3', '4', '5', '6', '7',
+                         '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
+
+static inline void _HEX_PRINT_BYTE(char *buf, uint8_t val) {
+  buf[0] = _HEXMAP[val >> 4];
+  buf[1] = _HEXMAP[val & 0xf];
+}
+
 void esp_log_buffer_hex_internal(const char *tag, const void *buffer, uint16_t buff_len,
                                  esp_log_level_t level) {
   size_t i = 0;
-  char print_buf[16 * 2 + 1];
-  for (; i + 16 < buff_len; i += 16) {
-    for (uint8_t x = 0; x < 16; x++) {
-      snprintf(print_buf + x * 2, 3, "%02X", ((uint8_t *)buffer)[i + x]);
+  char print_buf[_BUF_ROW * 2 + 1];
+  __attribute__((__aligned__(sizeof(uint32_t)))) uint8_t access_buf[_BUF_ROW];
+  for (; i + _BUF_ROW < buff_len; i += _BUF_ROW) {
+    memcpy(access_buf, (uint8_t *)buffer + i, _BUF_ROW);
+    for (uint8_t x = 0; x < _BUF_ROW; x++) {
+      _HEX_PRINT_BYTE(print_buf + x * 2, access_buf[x]);
     }
     esp_log_write(level, tag, print_buf);
   }
-  for (uint8_t x = 0; i + x < buff_len; x++) {
-    snprintf(print_buf + x * 2, 3, "%02X", ((uint8_t *)buffer)[i + x]);
+  uint8_t tail_len = buff_len - i;
+  memcpy(access_buf, (uint8_t *)buffer + i, tail_len);
+  for (uint8_t x = 0; x < tail_len; x++) {
+    _HEX_PRINT_BYTE(print_buf + x * 2, access_buf[x]);
   }
+  print_buf[tail_len * 2] = '\0';
   esp_log_write(level, tag, print_buf);
 }
 
@@ -340,10 +354,10 @@ static void normalize_print_buf(char *buf, uint8_t len, char fallback) {
 void esp_log_buffer_char_internal(const char *tag, const void *buffer, uint16_t buff_len,
                                   esp_log_level_t level) {
   size_t i = 0;
-  char print_buf[16 * 1 + 1] = {0};
-  for (; i + 16 < buff_len; i += 16) {
-    memcpy(print_buf, (char *)buffer + i, 16);
-    normalize_print_buf(print_buf, 16, '_');
+  char print_buf[_BUF_ROW * 1 + 1] = {0};
+  for (; i + _BUF_ROW < buff_len; i += _BUF_ROW) {
+    memcpy(print_buf, (char *)buffer + i, _BUF_ROW);
+    normalize_print_buf(print_buf, _BUF_ROW, '_');
     esp_log_write(level, tag, "%s", print_buf);
   }
   uint8_t tail_len = buff_len - i;
@@ -357,32 +371,35 @@ void esp_log_buffer_char_internal(const char *tag, const void *buffer, uint16_t 
 
 void esp_log_buffer_hexdump_internal(const char *tag, const void *buffer, uint16_t buff_len,
                                      esp_log_level_t level) {
-  char print_buf[80];
+  __attribute__((__aligned__(sizeof(uint32_t)))) char print_buf[80];
   // 0         1         2         3         4         5         6         7
   // 01234567890123456789012345678901234567890123456789012345678901234567890123456789
   // 0x0000 | AA BB CC DD 11 22 33 44  AA BB CC DD 11 22 33 44 | 0123456789ABCDEF |\0
-  // ==----^==------------------------------------------------^==----------------===
+  // ==----===--=--=--=--=--=--=--=--==--=--=--=--=--=--=--=--===^---------------===
+  memset(print_buf, ' ', sizeof(print_buf));
   print_buf[0] = '0';
   print_buf[1] = 'x';
   print_buf[7] = print_buf[58] = print_buf[77] = '|';
-  print_buf[8] = print_buf[59] = print_buf[76] = ' ';
   print_buf[78] = '\0';
 
-  for (size_t i = 0; i < buff_len; i += 16) {
-    snprintf(print_buf + 2, 5, "%04X", i);
-    print_buf[6] = ' ';
-    for (uint8_t x = 0; x < 16; x++) {
-      if (i + x < buff_len) {
-        snprintf(print_buf + 9 + x * 3, 4, (x < 8) ? "%02X " : " %02X", ((uint8_t *)buffer)[i + x]);
+  // Important: the start of the char contents is 4 byte aligned.
+  uint8_t *access_buf = (uint8_t *)print_buf + 60;
+  for (size_t i = 0; i < buff_len; i += _BUF_ROW) {
+    _HEX_PRINT_BYTE(print_buf + 2, i >> 8);
+    _HEX_PRINT_BYTE(print_buf + 4, i & 0xff);
+    uint8_t copy_len = MIN(buff_len - i, _BUF_ROW);
+    memcpy(access_buf, (uint8_t *)buffer + i, copy_len);
+    for (uint8_t x = 0; x < _BUF_ROW; x++) {
+      uint8_t padlen = (x < _BUF_ROW / 2) ? 0 : 1;
+      if (x < copy_len) {
+        _HEX_PRINT_BYTE(print_buf + 9 + x * 3 + padlen, access_buf[x]);
       } else {
-        print_buf[9 + x * 3] = print_buf[9 + x * 3 + 1] = print_buf[9 + x * 3 + 2] = ' ';
+        print_buf[9 + x * 3 + padlen] = print_buf[9 + x * 3 + 1 + padlen] = ' ';
       }
     }
-    print_buf[57] = ' ';
-    uint8_t copy_len = MIN(buff_len - i, 16);
-    memcpy(print_buf + 60, (char *)buffer + i, copy_len);
+    // memcpy(print_buf + 60, access_buf, copy_len);
     normalize_print_buf(print_buf + 60, copy_len, '_');
-    memset(print_buf + 60 + copy_len, ' ', 16 - copy_len);
+    memset(print_buf + 60 + copy_len, ' ', _BUF_ROW - copy_len);
     esp_log_write(level, tag, "%s", print_buf);
   }
 }
