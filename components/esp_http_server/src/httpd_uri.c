@@ -282,7 +282,8 @@ esp_err_t httpd_uri(struct httpd_data *hd)
     /* For conveying URI not found/method not allowed */
     httpd_err_code_t err = 0;
 
-    ESP_LOGD(TAG, LOG_FMT("request for %s with type %d"), req->uri, req->method);
+    ESP_LOGD(TAG, LOG_FMT("%s request for %s"),
+             http_method_str((enum http_method)req->method), req->uri);
 
     /* URL parser result contains offset and length of path string */
     if (res->field_set & (1 << UF_PATH)) {
@@ -297,9 +298,9 @@ esp_err_t httpd_uri(struct httpd_data *hd)
                 ESP_LOGW(TAG, LOG_FMT("URI '%s' not found"), req->uri);
                 return httpd_req_handle_err(req, HTTPD_404_NOT_FOUND);
             case HTTPD_405_METHOD_NOT_ALLOWED:
-                ESP_LOGW(TAG, LOG_FMT("Method '%d' not allowed for URI '%s'"),
-                         req->method, req->uri);
-                return httpd_req_handle_err(req, HTTPD_405_METHOD_NOT_ALLOWED);
+                ESP_LOGW(TAG, LOG_FMT("Method '%s' not allowed for URI '%s'"),
+                         http_method_str((enum http_method)req->method), req->uri);
+              return httpd_req_handle_err(req, HTTPD_405_METHOD_NOT_ALLOWED);
             default:
                 return ESP_FAIL;
         }
