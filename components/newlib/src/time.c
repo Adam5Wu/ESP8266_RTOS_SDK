@@ -41,6 +41,8 @@ static uint64_t s_boot_time;
 static uint64_t adjtime_start = 0;
 // is how many microseconds total to slew
 static int64_t adjtime_total_correction = 0;
+// the limit of smooth time adjustment (default 2146 sec)
+static int32_t adjtime_correction_limit =  (INT_MAX / 1000000L) - 1L;
 #define ADJTIME_CORRECTION_FACTOR 6
 static uint64_t get_time_since_boot(void);
 #endif
@@ -71,46 +73,45 @@ static inline uint64_t get_boot_time()
     return result;
 }
 
+#if defined( WITH_FRC ) || defined( WITH_RTC )
+
 // This function gradually changes boot_time to the correction value and immediately updates it.
-static uint64_t adjust_boot_time(void)
+uint64_t adjust_boot_time(uint64_t *delta)
 {
     uint64_t boot_time = get_boot_time();
-    if ((boot_time == 0) || (get_time_since_boot() < adjtime_start)) {
-        adjtime_start = 0;
-    }
-    if (adjtime_start > 0) {
-        uint64_t since_boot = get_time_since_boot();
-        // If to call this function once per second, then (since_boot - adjtime_start) will be 1_000_000 (1 second),
-        // and the correction will be equal to (1_000_000us >> 6) = 15_625 us.
-        // The minimum possible correction step can be (64us >> 6) = 1us.
-        // Example: if the time error is 1 second, then it will be compensate for 1 sec / 0,015625 = 64 seconds.
-        int64_t correction = (since_boot >> ADJTIME_CORRECTION_FACTOR) - (adjtime_start >> ADJTIME_CORRECTION_FACTOR);
-        if (correction > 0) {
-            adjtime_start = since_boot;
+    uint64_t since_boot = get_time_since_boot();
+    // If to call this function once per second, then (since_boot - adjtime_start) will be 1_000_000 (1 second),
+    // and the correction will be equal to (1_000_000us >> 6) = 15_625 us.
+    // The minimum possible correction step can be (64us >> 6) = 1us.
+    // Example: if the time error is 1 second, then it will be compensate for 1 sec / 0,015625 = 64 seconds.
+    int64_t correction = (since_boot >> ADJTIME_CORRECTION_FACTOR) - (adjtime_start >> ADJTIME_CORRECTION_FACTOR);
+    if (correction > 0) {
+        adjtime_start = since_boot;
+        if (adjtime_total_correction) {
             if (adjtime_total_correction < 0) {
                 if ((adjtime_total_correction + correction) >= 0) {
                     boot_time = boot_time + adjtime_total_correction;
-                    adjtime_start = 0;
+                    adjtime_total_correction = 0;
                 } else {
-                    adjtime_total_correction += correction;
                     boot_time -= correction;
+                    adjtime_total_correction += correction;
                 }
             } else {
                 if ((adjtime_total_correction - correction) <= 0) {
                     boot_time = boot_time + adjtime_total_correction;
-                    adjtime_start = 0;
+                    adjtime_total_correction = 0;
                 } else {
-                    adjtime_total_correction -= correction;
                     boot_time += correction;
+                    adjtime_total_correction -= correction;
                 }
             }
             set_boot_time(boot_time);
         }
     }
+    if (delta) *delta = adjtime_total_correction;
     return boot_time;
 }
 
-#if defined( WITH_FRC ) || defined( WITH_RTC )
 static uint64_t get_time_since_boot(void)
 {
     uint64_t microseconds = 0;
@@ -125,6 +126,10 @@ static uint64_t get_time_since_boot(void)
 #endif // WITH_FRC
     return microseconds;
 }
+
+void set_adjtime_correction_limit(uint32_t limit) {
+    adjtime_correction_limit = limit;
+}
 #endif // defined( WITH_FRC ) || defined( WITH_RTC
 
 int adjtime(const struct timeval *delta, struct timeval *outdelta)
@@ -134,7 +139,8 @@ int adjtime(const struct timeval *delta, struct timeval *outdelta)
     if(delta != NULL){
         int64_t sec  = delta->tv_sec;
         int64_t usec = delta->tv_usec;
-        if(llabs(sec) > ((INT_MAX / 1000000L) - 1L)) {
+        // Reject if the delta is too large
+        if(llabs(sec) > adjtime_correction_limit) {
             return -1;
         }
         /*
@@ -143,22 +149,14 @@ int adjtime(const struct timeval *delta, struct timeval *outdelta)
         * but the already completed part of the adjustment is not canceled.
         */
         flag = soc_save_local_irq();
-        // If correction is already in progress (adjtime_start != 0), then apply accumulated corrections.
-        adjust_boot_time();
-        adjtime_start = get_time_since_boot();
         adjtime_total_correction = sec * 1000000L + usec;
+        if (adjtime_total_correction) adjust_boot_time(NULL);
         soc_restore_local_irq(flag);
     }
     if(outdelta != NULL){
         flag = soc_save_local_irq();
-        adjust_boot_time();
-        if (adjtime_start != 0) {
-            outdelta->tv_sec    = adjtime_total_correction / 1000000L;
-            outdelta->tv_usec   = adjtime_total_correction % 1000000L;
-        } else {
-            outdelta->tv_sec    = 0;
-            outdelta->tv_usec   = 0;
-        }
+        outdelta->tv_sec    = adjtime_total_correction / 1000000L;
+        outdelta->tv_usec   = adjtime_total_correction % 1000000L;
         soc_restore_local_irq(flag);
     }
   return 0;

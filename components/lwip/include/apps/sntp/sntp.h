@@ -60,7 +60,7 @@ typedef enum {
  *
  * @param tv Time received from SNTP server.
  */
-typedef void (*sntp_sync_time_cb_t) (struct timeval *tv);
+typedef void (*sntp_sync_time_cb_t) (struct timeval *tv, int64_t delta);
 
 /**
  * @brief This function updates the system time.
