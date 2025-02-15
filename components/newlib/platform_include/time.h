@@ -29,9 +29,18 @@ int clock_settime(clockid_t clock_id, const struct timespec *tp);
 int clock_gettime(clockid_t clock_id, struct timespec *tp);
 int clock_getres(clockid_t clock_id, struct timespec *res);
 
+#ifdef CONFIG_ESP8266_TIME_SYSCALL_USE_FRC1
+
 // Call this function regularly to smoothly apply correction to the system clock.
 // Recommended interval between 1 and 10 sec.
-uint64_t adjust_boot_time(void);
+uint64_t adjust_boot_time(uint64_t *delta);
+
+// Set an alternative limit for smooth time adjustment
+// 400 secs of diff takes a little over 7 hours to smoothly adjust.
+// Default limit is 2146 seconds (~38 hours).
+void set_adjtime_correction_limit(uint32_t limit);
+
+#endif  // CONFIG_ESP8266_TIME_SYSCALL_USE_FRC1
 
 #ifdef __cplusplus
 }
