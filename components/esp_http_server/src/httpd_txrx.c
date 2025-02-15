@@ -253,6 +253,13 @@ esp_err_t httpd_resp_send(httpd_req_t *r, const char *buf, ssize_t buf_len)
         return ESP_ERR_HTTPD_RESP_HDR;
     }
 
+    // Check length and type status needed for no-content response of:
+    // 204 (No content), 304 (Not Modified)
+    if (buf_len == 0 &&
+        (strncmp(ra->status, "204 ", 4) == 0 || strncmp(ra->status, "304 ", 4) == 0)) {
+        strstr(ra->scratch, "\r\n")[2] = '\0';
+    }
+
     /* Sending essential headers */
     if (httpd_send_all(r, ra->scratch, strlen(ra->scratch)) != ESP_OK) {
         return ESP_ERR_HTTPD_RESP_SEND;
