@@ -498,9 +498,11 @@ static void prov_stop_task(void *arg)
     free(prov_ctx->wifi_scan_handlers);
     prov_ctx->wifi_scan_handlers = NULL;
 
-    /* Switch device to Wi-Fi STA mode irrespective of
-     * whether provisioning was completed or not */
-    esp_wifi_set_mode(WIFI_MODE_STA);
+    if (!prov_ctx->mgr_config.wifi_touch_free) {
+        /* Switch device to Wi-Fi STA mode irrespective of
+         * whether provisioning was completed or not */
+        esp_wifi_set_mode(WIFI_MODE_STA);
+    }
     ESP_LOGI(TAG, "Provisioning stopped");
 
     if (is_this_a_task) {
@@ -826,7 +828,9 @@ static void wifi_prov_mgr_event_handler_internal(
 
     /* Only handle events when credential is received and
      * Wi-Fi STA is yet to complete trying the connection */
-    if (prov_ctx->prov_state < WIFI_PROV_STATE_CRED_RECV) {
+    // ... unless we are in touch-free mode, which may be retrying an existing credential.
+    if (prov_ctx->prov_state < WIFI_PROV_STATE_CRED_RECV &&
+        !prov_ctx->mgr_config.wifi_touch_free) {
         RELEASE_LOCK(prov_ctx_lock);
         return;
     }
@@ -855,45 +859,59 @@ static void wifi_prov_mgr_event_handler_internal(
         /* Execute user registered callback handler */
         execute_event_cb(WIFI_PROV_CRED_SUCCESS, NULL, 0);
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGE(TAG, "STA Disconnected");
-        /* Station couldn't connect to configured host SSID */
-        prov_ctx->wifi_state = WIFI_PROV_STA_DISCONNECTED;
+        wifi_event_sta_disconnected_t *disconnected = (wifi_event_sta_disconnected_t *)event_data;
+        ESP_LOGD(TAG, "Disconnect reason : %d", disconnected->reason);
 
-        wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*) event_data;
-        ESP_LOGE(TAG, "Disconnect reason : %d", disconnected->reason);
-
-        /* Set code corresponding to the reason for disconnection */
-        switch (disconnected->reason) {
-        case WIFI_REASON_AUTH_EXPIRE:
-        case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
-        case WIFI_REASON_AUTH_FAIL:
-        case WIFI_REASON_ASSOC_EXPIRE:
-        case WIFI_REASON_HANDSHAKE_TIMEOUT:
-            ESP_LOGE(TAG, "STA Auth Error");
-            prov_ctx->wifi_disconnect_reason = WIFI_PROV_STA_AUTH_ERROR;
-            break;
-        case WIFI_REASON_NO_AP_FOUND:
-            ESP_LOGE(TAG, "STA AP Not found");
-            prov_ctx->wifi_disconnect_reason = WIFI_PROV_STA_AP_NOT_FOUND;
-            break;
-        default:
-            /* If none of the expected reasons,
-             * retry connecting to host SSID */
-            prov_ctx->wifi_state = WIFI_PROV_STA_CONNECTING;
-            if (disconnected->reason == WIFI_REASON_BASIC_RATE_NOT_SUPPORT) {
-                /*Switch to 802.11 bgn mode */
-                esp_wifi_set_protocol(ESP_IF_WIFI_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+        if (prov_ctx->mgr_config.wifi_touch_free &&
+            prov_ctx->prov_state != WIFI_PROV_STATE_CRED_RECV) {
+            // This is a proactive provision session. As long as no new credential was
+            // received, we will silently reconnect the retryable errors.
+            if (disconnected->reason == WIFI_REASON_AUTH_EXPIRE ||
+                disconnected->reason == WIFI_REASON_AUTH_FAIL) {
+                ESP_LOGE(TAG, "No touch STA Auth Error");
+            } else {
+                // Leave 5 seconds back-off to not occupy the entire
+                // time slots, make the AP easier to be "seen".
+                esp_timer_start_once(prov_ctx->wifi_connect_timer, 5 * 1000 * 1000U);
             }
-            esp_wifi_connect();
-        }
+        } else {
+            ESP_LOGI(TAG, "STA Disconnected");
+            /* Station couldn't connect to configured host SSID */
+            prov_ctx->wifi_state = WIFI_PROV_STA_DISCONNECTED;
 
-        /* In case of disconnection, update state of service and
-         * run the event handler with disconnection reason as data */
-        if (prov_ctx->wifi_state == WIFI_PROV_STA_DISCONNECTED) {
-            prov_ctx->prov_state = WIFI_PROV_STATE_FAIL;
-            wifi_prov_sta_fail_reason_t reason = prov_ctx->wifi_disconnect_reason;
-            /* Execute user registered callback handler */
-            execute_event_cb(WIFI_PROV_CRED_FAIL, (void *)&reason, sizeof(reason));
+            /* Set code corresponding to the reason for disconnection */
+            switch (disconnected->reason) {
+            case WIFI_REASON_AUTH_EXPIRE:
+            case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+            case WIFI_REASON_AUTH_FAIL:
+            case WIFI_REASON_ASSOC_EXPIRE:
+            case WIFI_REASON_HANDSHAKE_TIMEOUT:
+                ESP_LOGE(TAG, "STA Auth Error");
+                prov_ctx->wifi_disconnect_reason = WIFI_PROV_STA_AUTH_ERROR;
+                break;
+            case WIFI_REASON_NO_AP_FOUND:
+                ESP_LOGE(TAG, "STA AP Not found");
+                prov_ctx->wifi_disconnect_reason = WIFI_PROV_STA_AP_NOT_FOUND;
+                break;
+            default:
+                /* If none of the expected reasons,
+                 * retry connecting to host SSID */
+                prov_ctx->wifi_state = WIFI_PROV_STA_CONNECTING;
+                if (disconnected->reason == WIFI_REASON_BASIC_RATE_NOT_SUPPORT) {
+                    /*Switch to 802.11 bgn mode */
+                    esp_wifi_set_protocol(ESP_IF_WIFI_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+                }
+                esp_wifi_connect();
+            }
+
+            /* In case of disconnection, update state of service and
+             * run the event handler with disconnection reason as data */
+            if (prov_ctx->wifi_state == WIFI_PROV_STA_DISCONNECTED) {
+                prov_ctx->prov_state = WIFI_PROV_STATE_FAIL;
+                wifi_prov_sta_fail_reason_t reason = prov_ctx->wifi_disconnect_reason;
+                /* Execute user registered callback handler */
+                execute_event_cb(WIFI_PROV_CRED_FAIL, (void *)&reason, sizeof(reason));
+            }
         }
     }
 
@@ -921,6 +939,13 @@ esp_err_t wifi_prov_mgr_wifi_scan_start(bool blocking, bool passive,
         return ESP_OK;
     }
 
+    if (prov_ctx->mgr_config.wifi_touch_free) {
+        // Since we have an active provision session, a human is
+        // requesting reconfiguration. So we can safely abort any
+        // ongoing retry of exiting credential.
+        esp_wifi_disconnect();
+    }
+
     /* Clear sorted list for new entries */
     for (uint8_t i = 0; i < MAX_SCAN_RESULTS; i++) {
         prov_ctx->ap_list_sorted[i] = NULL;
@@ -946,6 +971,7 @@ esp_err_t wifi_prov_mgr_wifi_scan_start(bool blocking, bool passive,
 
     if (esp_wifi_scan_start(&prov_ctx->scan_cfg, false) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start scan");
+        RELEASE_LOCK(prov_ctx_lock);
         return ESP_FAIL;
     }
 
@@ -1121,9 +1147,11 @@ esp_err_t wifi_prov_mgr_is_provisioned(bool *provisioned)
 
 static void wifi_connect_timer_cb(void *arg)
 {
+    ACQUIRE_LOCK(prov_ctx_lock);
     if (esp_wifi_connect() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to connect Wi-Fi");
     }
+    RELEASE_LOCK(prov_ctx_lock);
 }
 
 esp_err_t wifi_prov_mgr_configure_sta(wifi_config_t *wifi_cfg)
@@ -1146,25 +1174,28 @@ esp_err_t wifi_prov_mgr_configure_sta(wifi_config_t *wifi_cfg)
     }
     debug_print_wifi_credentials(wifi_cfg->sta, "Received");
 
-    /* Configure Wi-Fi as both AP and/or Station */
-    if (esp_wifi_set_mode(prov_ctx->mgr_config.scheme.wifi_mode) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to set Wi-Fi mode");
-        RELEASE_LOCK(prov_ctx_lock);
-        return ESP_FAIL;
+    if (!prov_ctx->mgr_config.wifi_touch_free) {
+        /* Configure Wi-Fi as both AP and/or Station */
+        if (esp_wifi_set_mode(prov_ctx->mgr_config.scheme.wifi_mode) != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to set Wi-Fi mode");
+            RELEASE_LOCK(prov_ctx_lock);
+            return ESP_FAIL;
+        }
+
+        /* Don't release mutex yet as it is possible that right after
+         * esp_wifi_connect()  is called below, the related Wi-Fi event
+         * happens even before manager state is updated in the next
+         * few lines causing the internal event handler to miss */
+
+        /* Set Wi-Fi storage again to flash to keep the newly
+         * provided credentials on NVS */
+        if (esp_wifi_set_storage(WIFI_STORAGE_FLASH) != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to set storage Wi-Fi");
+            RELEASE_LOCK(prov_ctx_lock);
+            return ESP_FAIL;
+        }
     }
 
-    /* Don't release mutex yet as it is possible that right after
-     * esp_wifi_connect()  is called below, the related Wi-Fi event
-     * happens even before manager state is updated in the next
-     * few lines causing the internal event handler to miss */
-
-    /* Set Wi-Fi storage again to flash to keep the newly
-     * provided credentials on NVS */
-    if (esp_wifi_set_storage(WIFI_STORAGE_FLASH) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to set storage Wi-Fi");
-        RELEASE_LOCK(prov_ctx_lock);
-        return ESP_FAIL;
-    }
     /* Configure Wi-Fi station with host credentials
      * provided during provisioning */
     if (esp_wifi_set_config(ESP_IF_WIFI_STA, wifi_cfg) != ESP_OK) {
@@ -1416,45 +1447,48 @@ esp_err_t wifi_prov_mgr_start_provisioning(wifi_prov_security_t security, const 
      * thread doesn't interfere with this process */
     prov_ctx->prov_state = WIFI_PROV_STATE_STARTING;
 
-    /* Start Wi-Fi in Station Mode.
-     * This is necessary for scanning to work */
-    esp_err_t err = esp_wifi_set_mode(WIFI_MODE_STA);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to set Wi-Fi mode to STA");
-        RELEASE_LOCK(prov_ctx_lock);
-        return err;
-    }
-    err = esp_wifi_start();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start Wi-Fi");
-        RELEASE_LOCK(prov_ctx_lock);
-        return err;
-    }
+    wifi_config_t wifi_cfg_old;
+    if (!prov_ctx->mgr_config.wifi_touch_free) {
+        /* Start Wi-Fi in Station Mode.
+         * This is necessary for scanning to work */
+        esp_err_t err = esp_wifi_set_mode(WIFI_MODE_STA);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to set Wi-Fi mode to STA");
+            RELEASE_LOCK(prov_ctx_lock);
+            return err;
+        }
+        err = esp_wifi_start();
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to start Wi-Fi");
+            RELEASE_LOCK(prov_ctx_lock);
+            return err;
+        }
 
-    /* Change Wi-Fi storage to RAM temporarily and erase any old
-     * credentials (i.e. without erasing the copy on NVS). Also
-     * call disconnect to make sure device doesn't remain connected
-     * to the AP whose credentials were present earlier */
-    wifi_config_t wifi_cfg_empty, wifi_cfg_old;
-    memset(&wifi_cfg_empty, 0, sizeof(wifi_config_t));
-    esp_wifi_get_config(ESP_IF_WIFI_STA, &wifi_cfg_old);
-    err = esp_wifi_set_storage(WIFI_STORAGE_RAM);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to set Wi-Fi storage to RAM");
-        RELEASE_LOCK(prov_ctx_lock);
-        return err;
-    }
-    esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_cfg_empty);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to set empty Wi-Fi credentials");
-        RELEASE_LOCK(prov_ctx_lock);
-        return err;
-    }
-    err = esp_wifi_disconnect();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to disconnect");
-        RELEASE_LOCK(prov_ctx_lock);
-        return err;
+        /* Change Wi-Fi storage to RAM temporarily and erase any old
+         * credentials (i.e. without erasing the copy on NVS). Also
+         * call disconnect to make sure device doesn't remain connected
+         * to the AP whose credentials were present earlier */
+        wifi_config_t wifi_cfg_empty;
+        memset(&wifi_cfg_empty, 0, sizeof(wifi_config_t));
+        esp_wifi_get_config(ESP_IF_WIFI_STA, &wifi_cfg_old);
+        err = esp_wifi_set_storage(WIFI_STORAGE_RAM);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to set Wi-Fi storage to RAM");
+            RELEASE_LOCK(prov_ctx_lock);
+            return err;
+        }
+        esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_cfg_empty);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to set empty Wi-Fi credentials");
+            RELEASE_LOCK(prov_ctx_lock);
+            return err;
+        }
+        err = esp_wifi_disconnect();
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to disconnect");
+            RELEASE_LOCK(prov_ctx_lock);
+            return err;
+        }
     }
 
     /* Initialize app data */
@@ -1529,8 +1563,10 @@ esp_err_t wifi_prov_mgr_start_provisioning(wifi_prov_security_t security, const 
 
 err:
     prov_ctx->prov_state = WIFI_PROV_STATE_IDLE;
-    esp_wifi_set_storage(WIFI_STORAGE_FLASH);
-    esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_cfg_old);
+    if (!prov_ctx->mgr_config.wifi_touch_free) {
+        esp_wifi_set_storage(WIFI_STORAGE_FLASH);
+        esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_cfg_old);
+    }
 
 exit:
     RELEASE_LOCK(prov_ctx_lock);
