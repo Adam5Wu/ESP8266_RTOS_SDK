@@ -30,7 +30,7 @@
 #include "task.h"
 #include "freertos/xtensa_context.h"
 
-#define PANIC(_fmt, ...)    ets_printf(_fmt, ##__VA_ARGS__)
+#define PANIC(_fmt, ...)    _panic_printf(_fmt, ##__VA_ARGS__)
 
 #if defined(CONFIG_ESP_PANIC_SILENT_REBOOT) || defined(CONFIG_ESP_PANIC_PRINT_REBOOT)
 #define ESP_PANIC_REBOOT
@@ -51,6 +51,15 @@
 #endif
 
 #ifdef ESP_PANIC_PRINT
+static void _panic_printf(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    ets_io_vprintf(ets_putc, fmt, ap);
+    va_end(ap);
+}
+
+
 static inline void panic_frame(XtExcFrame *frame)
 {
     static const char *sdesc[] = {
