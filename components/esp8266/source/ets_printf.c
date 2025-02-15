@@ -63,7 +63,7 @@ int __attribute__ ((weak)) ets_putc(int c)
 
 #if defined(CONFIG_USING_NEW_ETS_VPRINTF) && !defined(BOOTLOADER_BUILD)
 
-#ifdef NDEBUG
+#ifdef CONFIG_DISABLE_ROM_UART_PRINT
 #define ets_vprintf(...) 0
 #else
 
