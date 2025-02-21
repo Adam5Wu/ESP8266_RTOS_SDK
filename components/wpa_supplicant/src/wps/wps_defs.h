@@ -335,7 +335,7 @@ enum wps_response_type {
 
 #define WPS_MAX_AUTHORIZED_MACS 5
 
-#define WPS_IGNORE_SEL_REG_MAX_CNT	4
+#define WPS_IGNORE_SEL_REG_MAX_CNT	53
 
 #define WPS_MAX_DIS_AP_NUM	10
 
