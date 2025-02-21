@@ -511,6 +511,11 @@ int esp_vfs_stat(struct _reent *r, const char * path, struct stat * st)
 {
     const vfs_entry_t* vfs = get_vfs_for_path(path);
     if (vfs == NULL) {
+        if (path[0] == '/' && path[1] == '\0') {
+            memset(st, 0, sizeof(struct stat));
+            st->st_mode = S_IRWXU | S_IRWXG | S_IRWXO | S_IFDIR;
+            return 0;
+        }
         __errno_r(r) = ENOENT;
         return -1;
     }
@@ -598,12 +603,22 @@ int _unlink_r(struct _reent *r, const char *path)
 int _rename_r(struct _reent *r, const char *src, const char *dst)
     __attribute__((alias("esp_vfs_rename")));
 
+// Special directory representing the VFS root
+struct VFSRoot {
+  DIR _vfs_root;
+  struct dirent _vfs_dir;
+};
 
 DIR* opendir(const char* name)
 {
     const vfs_entry_t* vfs = get_vfs_for_path(name);
     struct _reent* r = __getreent();
     if (vfs == NULL) {
+        if (name[0] == '/' && name[1] == '\0') {
+            DIR* ret = (DIR*)calloc(1, sizeof(struct VFSRoot));
+            ret->dd_vfs_idx = 0xFFFF;
+            return ret;
+        }
         __errno_r(r) = ENOENT;
         return NULL;
     }
@@ -618,6 +633,30 @@ DIR* opendir(const char* name)
 
 struct dirent* readdir(DIR* pdir)
 {
+    if (pdir->dd_vfs_idx == 0xFFFF) {
+        // This is the VFS root
+        vfs_entry_t* entry = NULL;
+        while (pdir->dd_rsv < s_vfs_count) {
+            entry = s_vfs[pdir->dd_rsv++];
+            // Skip unregistered entry
+            if (entry == NULL) continue;
+            // Ignore special VFS entry
+            if (entry->path_prefix[0] == '\0') {
+                entry = NULL;
+                continue;
+            }
+            break;
+        }
+        // All entries have been enumerated.
+        if (entry == NULL) return NULL;
+
+        struct VFSRoot* vfsroot = (struct VFSRoot*) pdir;
+        vfsroot->_vfs_dir.d_ino = pdir->dd_rsv;
+        vfsroot->_vfs_dir.d_type = DT_DIR;
+        // ESP_VFS_PATH_MAX is a very small number.
+        memcpy(vfsroot->_vfs_dir.d_name, entry->path_prefix, entry->path_prefix_len+1);
+        return &vfsroot->_vfs_dir;
+    }
     const vfs_entry_t* vfs = get_vfs_for_index(pdir->dd_vfs_idx);
     struct _reent* r = __getreent();
     if (vfs == NULL) {
@@ -673,6 +712,11 @@ void rewinddir(DIR* pdir)
 
 int closedir(DIR* pdir)
 {
+    if (pdir->dd_vfs_idx == 0xFFFF) {
+        // This is the VFS root
+        free(pdir);
+        return 0;
+    }
     const vfs_entry_t* vfs = get_vfs_for_index(pdir->dd_vfs_idx);
     struct _reent* r = __getreent();
     if (vfs == NULL) {
