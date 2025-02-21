@@ -533,7 +533,7 @@ static void prov_stop_task(void *arg)
 
     if (!prov_ctx->mgr_config.wifi_touch_free) {
         /* Switch device to Wi-Fi STA mode irrespective of
-        * whether provisioning was completed or not */
+         * whether provisioning was completed or not */
         esp_wifi_set_mode(WIFI_MODE_STA);
     }
     ESP_LOGI(TAG, "Provisioning stopped");
@@ -907,7 +907,7 @@ static void wifi_prov_mgr_event_handler_internal(
                 disconnected->reason == WIFI_REASON_AUTH_FAIL) {
                 ESP_LOGE(TAG, "No touch STA Auth Error");
             } else {
-                // Leave 10 seconds back-off to not occupy the entire
+                // Leave 5 seconds back-off to not occupy the entire
                 // time slots, make the AP easier to be "seen".
                 esp_timer_start_once(prov_ctx->wifi_connect_timer, 5 * 1000 * 1000U);
             }
@@ -932,7 +932,7 @@ static void wifi_prov_mgr_event_handler_internal(
                 break;
             default:
                 /* If none of the expected reasons,
-                * retry connecting to host SSID */
+                 * retry connecting to host SSID */
                 prov_ctx->wifi_state = WIFI_PROV_STA_CONNECTING;
                 if (disconnected->reason == WIFI_REASON_BASIC_RATE_NOT_SUPPORT) {
                     /*Switch to 802.11 bgn mode */
@@ -942,7 +942,7 @@ static void wifi_prov_mgr_event_handler_internal(
             }
 
             /* In case of disconnection, update state of service and
-            * run the event handler with disconnection reason as data */
+             * run the event handler with disconnection reason as data */
             if (prov_ctx->wifi_state == WIFI_PROV_STA_DISCONNECTED) {
                 prov_ctx->prov_state = WIFI_PROV_STATE_FAIL;
                 wifi_prov_sta_fail_reason_t reason = prov_ctx->wifi_disconnect_reason;
@@ -1220,12 +1220,12 @@ esp_err_t wifi_prov_mgr_configure_sta(wifi_config_t *wifi_cfg)
         }
 
         /* Don't release mutex yet as it is possible that right after
-        * esp_wifi_connect()  is called below, the related Wi-Fi event
-        * happens even before manager state is updated in the next
-        * few lines causing the internal event handler to miss */
+         * esp_wifi_connect()  is called below, the related Wi-Fi event
+         * happens even before manager state is updated in the next
+         * few lines causing the internal event handler to miss */
 
         /* Set Wi-Fi storage again to flash to keep the newly
-        * provided credentials on NVS */
+         * provided credentials on NVS */
         if (esp_wifi_set_storage(WIFI_STORAGE_FLASH) != ESP_OK) {
             ESP_LOGE(TAG, "Failed to set storage Wi-Fi");
             RELEASE_LOCK(prov_ctx_lock);
@@ -1487,7 +1487,7 @@ esp_err_t wifi_prov_mgr_start_provisioning(wifi_prov_security_t security, const 
     wifi_config_t wifi_cfg_old;
     if (!prov_ctx->mgr_config.wifi_touch_free) {
         /* Start Wi-Fi in Station Mode.
-        * This is necessary for scanning to work */
+         * This is necessary for scanning to work */
         esp_err_t err = esp_wifi_set_mode(WIFI_MODE_STA);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Failed to set Wi-Fi mode to STA");
@@ -1502,9 +1502,9 @@ esp_err_t wifi_prov_mgr_start_provisioning(wifi_prov_security_t security, const 
         }
 
         /* Change Wi-Fi storage to RAM temporarily and erase any old
-        * credentials (i.e. without erasing the copy on NVS). Also
-        * call disconnect to make sure device doesn't remain connected
-        * to the AP whose credentials were present earlier */
+         * credentials (i.e. without erasing the copy on NVS). Also
+         * call disconnect to make sure device doesn't remain connected
+         * to the AP whose credentials were present earlier */
         wifi_config_t wifi_cfg_empty;
         memset(&wifi_cfg_empty, 0, sizeof(wifi_config_t));
         esp_wifi_get_config(ESP_IF_WIFI_STA, &wifi_cfg_old);
