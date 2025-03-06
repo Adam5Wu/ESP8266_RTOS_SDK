@@ -27,8 +27,8 @@ typedef void (*hw_timer_callback_t)(void *arg);
 
 typedef enum {
     TIMER_CLKDIV_1 = 0,
-    TIMER_CLKDIV_16 = 4,
-    TIMER_CLKDIV_256 = 8
+    TIMER_CLKDIV_16 = 1,
+    TIMER_CLKDIV_256 = 2
 } hw_timer_clkdiv_t;
 
 typedef enum {
@@ -192,6 +192,24 @@ esp_err_t hw_timer_alarm_us(uint32_t value, bool reload);
   *     - ESP_FAIL hardware timer has not been initialized yet
   */
 esp_err_t hw_timer_disarm(void);
+
+/**
+  * @brief get current interrupt status bit.
+  *     @note Suitable to be called by user callback
+  *
+  * @return
+  *     - current interrupt status bit
+  *
+  */
+uint32_t timer_get_intr_status (void);
+
+/**
+  * @brief clear interrupt status bit
+  *     @note required for LEVEL interrupt mode.
+  *     Suitable to be called by user callback
+  *
+  */
+void timer_clr_intr_status (void);
 
 #ifdef __cplusplus
 }

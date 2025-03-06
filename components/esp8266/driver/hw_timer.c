@@ -169,6 +169,16 @@ static void IRAM_ATTR hw_timer_isr_cb(void* arg)
     }
 }
 
+uint32_t IRAM_ATTR timer_get_intr_status (void)
+{
+    return frc1.ctrl.intr_status;
+}
+
+void IRAM_ATTR timer_clr_intr_status (void)
+{
+    frc1.intr.val = 0;
+}
+
 esp_err_t hw_timer_disarm(void)
 {
     HW_TIMER_CHECK(hw_timer_obj, "hw_timer has not been initialized yet", ESP_FAIL);
