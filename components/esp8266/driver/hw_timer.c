@@ -68,7 +68,11 @@ esp_err_t hw_timer_set_clkdiv(hw_timer_clkdiv_t clkdiv)
 
 uint32_t hw_timer_get_clkdiv()
 {
-    return frc1.ctrl.div;
+    switch (frc1.ctrl.div) {
+        case 0: return 1;
+        case 1: return 4;
+        default: return 8;
+    }
 }
 
 esp_err_t hw_timer_set_intr_type(hw_timer_intr_type_t intr_type)
