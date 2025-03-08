@@ -161,15 +161,12 @@ uint32_t hw_timer_get_count_data()
 
 static void IRAM_ATTR hw_timer_isr_cb(void *arg)
 {
-    typeof ( ((frc1_struct_t*)0)->ctrl) ctrl;
-    ctrl.val = frc1.ctrl.val;
-    if (!ctrl.reload) {
-        ctrl.en = 0;
-        frc1.ctrl.val = ctrl.val; //stop counter
-        /* frc1.count.val == 0 causes continuous fire even with the timer disabled.
-         * We force an immediate reload to avoid that*/
-        uint32_t val = frc1.load.val; //split to suppress a warning
-        frc1.load.val= val;
+    if (!frc1.ctrl.reload) {
+        frc1.ctrl.en = 0; //stop counter
+        // If triggering is level-based, disabling the timer while
+        // leaving frc1.count.val at 0 will keep firing the interrupt
+        // We need to make sure it is non-zero.
+        frc1.load.val = 0x100;
         /* Clear the interrupt just in case the timer fired again.
          * This might occur even in case of interrupt latencies */
         soc_clear_int_mask(1ul << (ETS_FRC_TIMER1_INUM));
