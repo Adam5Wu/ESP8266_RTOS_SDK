@@ -126,6 +126,7 @@ NVIC value of 255. */
 // add it to menuconfig later
 #ifdef CONFIG_FREERTOS_ENABLE_REENT
 #define configUSE_NEWLIB_REENTRANT  1
+#define _impure_ptr  _global_impure_ptr
 #endif
 
 /**
