@@ -144,7 +144,7 @@ static esp_err_t bootloader_main()
     wdt_reset_check();
     ESP_LOGI(TAG, "ESP-IDF %s 2nd stage bootloader", IDF_VER);
 
-    ESP_LOGI(TAG, "compile time " __TIME__ );
+    ESP_LOGI(TAG, "Built on " __DATE__ " " __TIME__ );
     ets_set_appcpu_boot_addr(0);
 
     /* disable watch dog here */
@@ -670,7 +670,7 @@ static esp_err_t bootloader_main()
 
     ESP_LOGI(TAG, "ESP-IDF %s 2nd stage bootloader", IDF_VER);
 
-    ESP_LOGI(TAG, "compile time " __TIME__ );
+    ESP_LOGI(TAG, "Built on " __DATE__ " " __TIME__ );
 
 #if defined(CONFIG_ESPTOOLPY_FLASHMODE_QIO) || defined(CONFIG_ESPTOOLPY_FLASHMODE_QOUT)
     fhdr.spi_mode = CONFIG_SPI_FLASH_MODE;

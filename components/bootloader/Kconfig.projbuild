@@ -93,7 +93,7 @@ endchoice
 config BOOTLOADER_FACTORY_RESET
     bool "GPIO triggers factory reset"
     default N
-    depends on IDF_TARGET_ESP32
+    depends on !IDF_TARGET_ESP8266 || !BOOTLOADER_APP_TEST
     help
         Allows to reset the device to factory settings:
         - clear one or more data partitions;
@@ -103,13 +103,14 @@ config BOOTLOADER_FACTORY_RESET
 
 config BOOTLOADER_NUM_PIN_FACTORY_RESET
     int "Number of the GPIO input for factory reset"
-    depends on BOOTLOADER_FACTORY_RESET && IDF_TARGET_ESP32
+    depends on BOOTLOADER_FACTORY_RESET
+    range 0 15 if IDF_TARGET_ESP8266
     range 0 39
     default 4
     help
         The selected GPIO will be configured as an input with internal pull-up enabled.
         To trigger a factory reset, this GPIO must be pulled low on reset.
-        Note that GPIO34-39 do not have an internal pullup and an external one must be provided.
+        Note that GPIO34-39 on ESP32 do not have an internal pullup and an external one must be provided.
 
 config BOOTLOADER_OTA_DATA_ERASE
     bool "Clear OTA data on factory reset (select factory partition)"
@@ -133,6 +134,7 @@ config BOOTLOADER_APP_TEST
     default n
     help
         Allows to run the test app from "TEST" partition.
+        (On ESP8266 enabling this option will disable the "factory reset" option.)
         A boot from "test" partition will occur if there is a GPIO input pulled low while device starts up.
         See settings below.
 
@@ -150,7 +152,9 @@ config BOOTLOADER_APP_TEST_IN_OTA_1
 config BOOTLOADER_NUM_PIN_APP_TEST
     int "Number of the GPIO input to boot TEST partition"
     depends on BOOTLOADER_APP_TEST
-    range 0 15
+    range 0 15 if IDF_TARGET_ESP8266
+    range 0 39
+    default 4 if IDF_TARGET_ESP8266
     default 2
     help
         The selected GPIO will be configured as an input with internal pull-up enabled.

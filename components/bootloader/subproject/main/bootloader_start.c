@@ -65,7 +65,7 @@ static esp_err_t select_image (esp_image_metadata_t *image_data)
     // 1. Load partition table
     bootloader_state_t bs;// = { 0 };
     memset(&bs, 0, sizeof(bootloader_state_t));
-    if (!bootloader_utility_load_partition_table(&bs)) {
+    if (!bootloader_utility_load_partition_table_for_boot(&bs)) {
         ESP_LOGE(TAG, "load partition table error!");
         return ESP_FAIL;
     }

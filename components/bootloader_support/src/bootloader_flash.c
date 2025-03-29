@@ -26,7 +26,7 @@
 #ifndef BOOTLOADER_BUILD
 /* Normal app version maps to esp_spi_flash.h operations...
  */
-static const char *TAG = "bootloader_mmap";
+static const char *TAG = "boot_mmap";
 
 static spi_flash_mmap_handle_t map;
 
@@ -84,7 +84,7 @@ esp_err_t bootloader_flash_erase_sector(size_t sector)
 #include <rom/spi_flash.h>
 #include <rom/cache.h>
 
-static const char *TAG = "bootloader_flash";
+static const char *TAG = "boot_flash";
 
 /* Use first 50 blocks in MMU for bootloader_mmap,
    50th block for bootloader_flash_read

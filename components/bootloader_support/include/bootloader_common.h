@@ -68,3 +68,14 @@ bool bootloader_common_erase_part_type_data(const char *list_erase, bool ota_dat
  * @return    Returns true if the list contains the label, false otherwise.
  */
 bool bootloader_common_label_search(const char *list, char *label);
+
+/**
+ * @brief Load partition table for a certain purpose.
+ *
+ * Parse and validate partition table, and if everything checks out,
+ * calls the provided callback.
+ *
+ * @return        Return true if the partition table was successfully loaded
+ */
+typedef  void (*load_partition_callback)(const esp_partition_info_t *, int num_partitions, void *arg);
+bool bootloader_utility_load_partition_table_for(load_partition_callback cb, void *arg);

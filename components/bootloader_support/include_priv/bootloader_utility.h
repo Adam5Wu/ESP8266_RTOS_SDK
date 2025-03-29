@@ -16,15 +16,15 @@
 #include "esp_image_format.h"
 
 /**
- * @brief Load partition table.
+ * @brief Load partition table for boot.
  *
  * Parse partition table, get useful data such as location of
  * OTA data partition, factory app partition, and test app partition.
  *
  * @param[out] bs Bootloader state structure used to save read data.
- * @return        Return true if the partition table was succesfully loaded and MD5 checksum is valid.
+ * @return        Return true if the partition table was succesfully loaded
  */
-bool bootloader_utility_load_partition_table(bootloader_state_t* bs);
+bool bootloader_utility_load_partition_table_for_boot(bootloader_state_t* bs);
 
 /**
  * @brief Return the index of the selected boot partition.

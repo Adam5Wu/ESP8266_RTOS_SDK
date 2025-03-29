@@ -15,6 +15,10 @@ PROVIDE ( lldesc_build_chain = 0x40004f40 );
 PROVIDE ( lldesc_num2link = 0x40005050 );
 PROVIDE ( lldesc_set_owner = 0x4000507c );
 
+PROVIDE ( MD5Final = 0x40009900 );
+PROVIDE ( MD5Init = 0x40009818 );
+PROVIDE ( MD5Update = 0x40009834 );
+
 __adddf3 = 0x4000c538;
 __addsf3 = 0x4000c180;
 __divdf3 = 0x4000cb94;
