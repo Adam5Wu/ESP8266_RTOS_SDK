@@ -648,10 +648,23 @@ esp_err_t esp_ota_get_partition_description(const esp_partition_t *partition, es
         return ESP_ERR_NOT_SUPPORTED;
     }
 
+#ifdef CONFIG_IDF_TARGET_ESP32
     esp_err_t err = esp_partition_read(partition, sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t), app_desc, sizeof(esp_app_desc_t));
     if (err != ESP_OK) {
         return err;
     }
+#else  // CONFIG_IDF_TARGET_ESP8266
+    esp_image_segment_header_t textseg_hdr;
+    esp_err_t err = esp_partition_read(partition, sizeof(esp_image_header_t), &textseg_hdr, sizeof(esp_image_segment_header_t));
+    if (err != ESP_OK) {
+        return err;
+    }
+    size_t rodata_ofs = sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t) + textseg_hdr.data_len;
+    err = esp_partition_read(partition, rodata_ofs + sizeof(esp_image_segment_header_t), app_desc, sizeof(esp_app_desc_t));
+    if (err != ESP_OK) {
+        return err;
+    }
+#endif  // CONFIG_IDF_TARGET_ESP32
 
     if (app_desc->magic_word != ESP_APP_DESC_MAGIC_WORD) {
         return ESP_ERR_NOT_FOUND;

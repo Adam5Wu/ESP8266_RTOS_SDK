@@ -11,11 +11,12 @@ idf_build_get_property(project_ver PROJECT_VER)
 idf_build_get_property(project_name PROJECT_NAME)
 string(SUBSTRING "${project_ver}" 0 31 PROJECT_VER_CUT)
 string(SUBSTRING "${project_name}" 0 31 PROJECT_NAME_CUT)
+string(TIMESTAMP CURRENT_TIME)
 
 set_source_files_properties(
     SOURCE "esp_app_desc.c" "esp_app_desc.c"
     PROPERTIES COMPILE_DEFINITIONS
-    "PROJECT_VER=\"${PROJECT_VER_CUT}\"; PROJECT_NAME=\"${PROJECT_NAME_CUT}\"")
+    "BUILD_TIMESTAMP=\"${CURRENT_TIME}\"; PROJECT_VER=\"${PROJECT_VER_CUT}\"; PROJECT_NAME=\"${PROJECT_NAME_CUT}\"")
 
 if(NOT BOOTLOADER_BUILD)
     partition_table_get_partition_info(otadata_offset "--partition-type data --partition-subtype ota" "offset")
