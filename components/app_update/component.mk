@@ -50,5 +50,5 @@ ifndef IS_BOOTLOADER_BUILD
         $(shell echo $(NEW_DEFINES) > $(TMP_DEFINES); rm -f esp_app_desc.o;)
     endif
 
-    esp_app_desc.o: CPPFLAGS += -D PROJECT_VER=\""$(PROJECT_VER_CUT)"\" -D PROJECT_NAME=\""$(PROJECT_NAME_CUT)"\"
+    esp_app_desc.o: CPPFLAGS += -D BUILD_TIMESTAMP="$(shell date)" -D PROJECT_VER=\""$(PROJECT_VER_CUT)"\" -D PROJECT_NAME=\""$(PROJECT_NAME_CUT)"\"
 endif # IS_BOOTLOADER_BUILD
