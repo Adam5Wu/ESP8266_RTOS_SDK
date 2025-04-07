@@ -57,6 +57,7 @@ typedef struct vfs_entry_ {
     size_t path_prefix_len; // micro-optimization to avoid doing extra strlen
     void* ctx;              // optional pointer which can be passed to VFS
     int offset;             // index of this structure in s_vfs array
+    SemaphoreHandle_t lock; // VFS lock (for live backup/restore)
 } vfs_entry_t;
 
 typedef struct {
@@ -71,6 +72,89 @@ static size_t s_vfs_count = 0;
 
 static fd_table_t s_fd_table[MAX_FDS] = { [0 ... MAX_FDS-1] = FD_TABLE_ENTRY_UNUSED };
 static _lock_t s_fd_table_lock;
+
+// Passing through a VFS lock barrier if allocated.
+static void __vfs_lock_barrier(const vfs_entry_t* vfs) {
+    if (vfs && vfs->lock) {
+        xSemaphoreTake(vfs->lock, portMAX_DELAY);
+        // Just a barrier
+        xSemaphoreGive(vfs->lock);
+    }
+}
+
+typedef esp_err_t (*vfs_entry_cb_t)(vfs_entry_t*, size_t, void*);
+
+static esp_err_t _locate_vfs_for(const char *base_path, vfs_entry_cb_t callback, void* ctx) {
+    const size_t base_path_len = strlen(base_path);
+    for (size_t i = 0; i < s_vfs_count; ++i) {
+        vfs_entry_t* vfs = s_vfs[i];
+        if (vfs == NULL) continue;
+        if (base_path_len == vfs->path_prefix_len &&
+                memcmp(base_path, vfs->path_prefix, vfs->path_prefix_len) == 0) {
+            return callback(vfs, i, ctx);
+        }
+    }
+    return ESP_ERR_INVALID_STATE;
+}
+
+// If already enabled, this is a no-op
+static esp_err_t _vfs_lock_allocate(vfs_entry_t *vfs, size_t index, void *ctx) {
+    if (!vfs->lock) {
+        vfs->lock = xSemaphoreCreateMutex();
+        if (vfs->lock == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+    return ESP_OK;
+}
+
+esp_err_t esp_vfs_lock_enable(const char *base_path) {
+    return _locate_vfs_for(base_path, _vfs_lock_allocate, NULL);
+}
+
+static esp_err_t _vfs_lock_acquire(vfs_entry_t *vfs, size_t index, void *ctx) {
+    if (!vfs->lock) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(vfs->lock, portMAX_DELAY);
+    // Because locking is implemented in barrier style there maybe "carry-over"
+    // FS operations even after the lock was successfully acquired here.
+    // Give up the current time slice which hopefully will clear up most of them.
+    sleep(0);
+    return ESP_OK;
+}
+
+esp_err_t esp_vfs_lock_acquire(const char *base_path) {
+    return _locate_vfs_for(base_path, _vfs_lock_acquire, NULL);
+}
+
+static esp_err_t _vfs_lock_release(vfs_entry_t *vfs, size_t index, void *ctx) {
+    if (!vfs->lock) return ESP_ERR_INVALID_STATE;
+    if (xSemaphoreGive(vfs->lock) != pdTRUE) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return ESP_OK;
+}
+
+esp_err_t esp_vfs_lock_release(const char *base_path) {
+    return _locate_vfs_for(base_path, _vfs_lock_release, NULL);
+}
+
+static esp_err_t _vfs_open_fd_count(vfs_entry_t *vfs, size_t index, void *ctx) {
+    size_t open_fd_count = 0;
+    _lock_acquire(&s_fd_table_lock);
+    for (int j = 0; j < MAX_FDS; ++j) {
+        if (s_fd_table[j].vfs_index == index) {
+            open_fd_count++;
+        }
+    }
+    _lock_release(&s_fd_table_lock);
+
+    *(size_t*)ctx = open_fd_count;
+    return ESP_OK;
+}
+
+esp_err_t esp_vfs_open_fd_count(const char *base_path, size_t *open_fd_count) {
+    return _locate_vfs_for(base_path, _vfs_open_fd_count, open_fd_count);
+}
 
 static esp_err_t esp_vfs_register_common(const char* base_path, size_t len, const esp_vfs_t* vfs, void* ctx, int *vfs_index)
 {
@@ -109,6 +193,7 @@ static esp_err_t esp_vfs_register_common(const char* base_path, size_t len, cons
     entry->path_prefix_len = len;
     entry->ctx = ctx;
     entry->offset = index;
+    entry->lock = NULL;
 
     if (vfs_index) {
         *vfs_index = index;
@@ -136,8 +221,9 @@ esp_err_t esp_vfs_register_fd_range(const esp_vfs_t *vfs, void *ctx, int min_fd,
         _lock_acquire(&s_fd_table_lock);
         for (int i = min_fd; i < max_fd; ++i) {
             if (s_fd_table[i].vfs_index != -1) {
-                free(s_vfs[i]);
-                s_vfs[i] = NULL;
+                // No need to care for vfs_lock since it is not allocated yet.
+                free(s_vfs[index]);
+                s_vfs[index] = NULL;
                 for (int j = min_fd; j < i; ++j) {
                     if (s_fd_table[j].vfs_index == index) {
                         s_fd_table[j] = FD_TABLE_ENTRY_UNUSED;
@@ -169,32 +255,29 @@ esp_err_t esp_vfs_register_with_id(const esp_vfs_t *vfs, void *ctx, esp_vfs_id_t
     return esp_vfs_register_common("", LEN_PATH_PREFIX_IGNORED, vfs, ctx, vfs_id);
 }
 
-esp_err_t esp_vfs_unregister(const char* base_path)
-{
-    const size_t base_path_len = strlen(base_path);
-    for (size_t i = 0; i < s_vfs_count; ++i) {
-        vfs_entry_t* vfs = s_vfs[i];
-        if (vfs == NULL) {
-            continue;
-        }
-        if (base_path_len == vfs->path_prefix_len &&
-                memcmp(base_path, vfs->path_prefix, vfs->path_prefix_len) == 0) {
-            free(vfs);
-            s_vfs[i] = NULL;
+static esp_err_t _vfs_free(vfs_entry_t *vfs, size_t index, void *ctx) {
+    s_vfs[index] = NULL;
 
-            _lock_acquire(&s_fd_table_lock);
-            // Delete all references from the FD lookup-table
-            for (int j = 0; j < MAX_FDS; ++j) {
-                if (s_fd_table[j].vfs_index == i) {
-                    s_fd_table[j] = FD_TABLE_ENTRY_UNUSED;
-                }
-            }
-            _lock_release(&s_fd_table_lock);
+    if (vfs->lock) {
+        xSemaphoreTake(vfs->lock, portMAX_DELAY);
+        vSemaphoreDelete(vfs->lock);
+    }
+    free(vfs);
 
-            return ESP_OK;
+    _lock_acquire(&s_fd_table_lock);
+    // Delete all references from the FD lookup-table
+    for (int j = 0; j < MAX_FDS; ++j) {
+        if (s_fd_table[j].vfs_index == index) {
+            s_fd_table[j] = FD_TABLE_ENTRY_UNUSED;
         }
     }
-    return ESP_ERR_INVALID_STATE;
+    _lock_release(&s_fd_table_lock);
+
+    return ESP_OK;
+}
+
+esp_err_t esp_vfs_unregister(const char* base_path) {
+    return _locate_vfs_for(base_path, _vfs_free, NULL);
 }
 
 esp_err_t esp_vfs_register_fd(esp_vfs_id_t vfs_id, int *fd)
@@ -250,6 +333,7 @@ static inline const vfs_entry_t *get_vfs_for_index(int index)
     if (index < 0 || index >= s_vfs_count) {
         return NULL;
     } else {
+        __vfs_lock_barrier(s_vfs[index]);
         return s_vfs[index];
     }
 }
@@ -327,6 +411,7 @@ static const vfs_entry_t* get_vfs_for_path(const char* path)
             best_match = vfs;
         }
     }
+    __vfs_lock_barrier(best_match);
     return best_match;
 }
 
@@ -902,6 +987,7 @@ int esp_vfs_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *errorfds
                         esp_vfs_safe_fd_isset(fd, writefds) ||
                         esp_vfs_safe_fd_isset(fd, errorfds)) {
                     const vfs_entry_t *vfs = s_vfs[vfs_index];
+                    // No VFS lock barrier since the operation doesn't concern storage.
                     socket_select = vfs->vfs.socket_select;
                     sel_sem.sem = vfs->vfs.get_socket_select_semaphore();
                 }
@@ -1046,6 +1132,7 @@ void esp_vfs_select_triggered(esp_vfs_select_sem_t sem)
             // Note: s_vfs_count could have changed since the start of vfs_select() call. However, that change doesn't
             // matter here stop_socket_select() will be called for only valid VFS drivers.
             const vfs_entry_t *vfs = s_vfs[i];
+            // No VFS lock barrier since the operation doesn't concern storage.
             if (vfs != NULL && vfs->vfs.stop_socket_select != NULL) {
                 vfs->vfs.stop_socket_select(sem.sem);
                 break;
@@ -1066,6 +1153,7 @@ void esp_vfs_select_triggered_isr(esp_vfs_select_sem_t sem, BaseType_t *woken)
             // Note: s_vfs_count could have changed since the start of vfs_select() call. However, that change doesn't
             // matter here stop_socket_select() will be called for only valid VFS drivers.
             const vfs_entry_t *vfs = s_vfs[i];
+            // No VFS lock barrier since the operation doesn't concern storage.
             if (vfs != NULL && vfs->vfs.stop_socket_select_isr != NULL) {
                 vfs->vfs.stop_socket_select_isr(sem.sem, woken);
                 break;
