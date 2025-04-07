@@ -848,9 +848,9 @@ bool httpd_validate_req_ptr(httpd_req_t *r)
 }
 
 /* Helper function to get a URL query tag from a query string of the type param1=val1&param2=val2 */
-esp_err_t httpd_query_key_value(const char *qry_str, const char *key, char *val, size_t val_size)
+esp_err_t httpd_query_key_value(const char *qry_str, const char *key, char *val, size_t* val_size)
 {
-    if (qry_str == NULL || key == NULL || val == NULL) {
+    if (qry_str == NULL || key == NULL || val_size == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -892,13 +892,20 @@ esp_err_t httpd_query_key_value(const char *qry_str, const char *key, char *val,
         size_t val_len = qry_ptr - val_ptr;
 
         /* Copy value to the caller's buffer. */
-        size_t copy_len = MIN(val_len, val_size - 1);
-        memcpy(val, val_ptr, copy_len);
-        val[copy_len] = '\0';
+        size_t copy_len = 0;
+        if (*val_size && val) {
+            copy_len = MIN(val_len, *val_size - 1);
+            memcpy(val, val_ptr, copy_len);
+            val[copy_len] = '\0';
+        }
 
-        /* If buffer length is smaller than needed, return truncation error */
         if (copy_len < val_len) {
+            /* If buffer length is smaller than needed, return truncation error */
+            *val_size = val_len;
             return ESP_ERR_HTTPD_RESULT_TRUNC;
+        } else {
+            /* Save actual param value size (including terminating null) */
+            *val_size = copy_len;
         }
         return ESP_OK;
     }
@@ -957,9 +964,12 @@ esp_err_t httpd_req_get_url_query_str(httpd_req_t *r, char *buf, size_t buf_len)
         size_t data_len = res->field_data[UF_QUERY].len;
 
         /* Copy data to the caller's buffer. */
-        size_t copy_len = MIN(data_len, buf_len - 1);
-        memcpy(buf, qry, copy_len);
-        buf[copy_len] = '\0';
+        size_t copy_len = 0;
+        if (buf_len) {
+            copy_len = MIN(data_len, buf_len - 1);
+            memcpy(buf, qry, copy_len);
+            buf[copy_len] = '\0';
+        }
 
         if (copy_len < data_len) {
           return ESP_ERR_HTTPD_RESULT_TRUNC;
@@ -1079,7 +1089,7 @@ esp_err_t httpd_req_get_hdr_value_str(httpd_req_t *r, const char *field, char *v
 
         /* Get the NULL terminated value and copy it to the caller's buffer.
          * Note `strlcpy()` will always return the size of the source string
-         * including terminimating null.*/
+         * including terminating null.*/
         size_t full_size = strlcpy(val, val_ptr, val_size);
 
         /* If buffer length is smaller than needed, return truncation error */
@@ -1094,7 +1104,7 @@ esp_err_t httpd_req_get_hdr_value_str(httpd_req_t *r, const char *field, char *v
 /* Helper function to get a cookie value from a cookie string of the type "cookie1=val1; cookie2=val2" */
 esp_err_t static httpd_cookie_key_value(const char *cookie_str, const char *key, char *val, size_t *val_size)
 {
-    if (cookie_str == NULL || key == NULL || val == NULL) {
+    if (cookie_str == NULL || key == NULL || val_size == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -1136,16 +1146,20 @@ esp_err_t static httpd_cookie_key_value(const char *cookie_str, const char *key,
         size_t val_len = cookie_ptr - val_ptr;
 
         /* Copy value to the caller's buffer. */
-        size_t copy_len = MIN(val_len, *val_size - 1);
-        memcpy(val, val_ptr, copy_len);
-        val[copy_len] = '\0';
+        size_t copy_len = 0;
+        if (*val_size && val) {
+            copy_len = MIN(val_len, *val_size - 1);
+            memcpy(val, val_ptr, copy_len);
+            val[copy_len] = '\0';
+        }
 
-        /* Save actual Cookie value size (including terminating null) */
-        *val_size = copy_len + 1;
-
-        /* If buffer length is smaller than needed, return truncation error */
         if (copy_len < val_len) {
+            /* If buffer length is smaller than needed, return truncation error */
+            *val_size = val_len;
             return ESP_ERR_HTTPD_RESULT_TRUNC;
+        } else {
+            /* Save actual Cookie value size (including terminating null) */
+            *val_size = copy_len + 1;
         }
         return ESP_OK;
     }

@@ -1008,10 +1008,11 @@ esp_err_t httpd_req_get_url_query_str(httpd_req_t *r, char *buf, size_t buf_len)
  *  - If actual value size is greater than val_size, then the value is truncated,
  *    accompanied by truncation error as return value.
  *
- * @param[in]  qry       Pointer to query string
- * @param[in]  key       The key to be searched in the query string
- * @param[out] val       Pointer to the buffer into which the value will be copied if the key is found
- * @param[in]  val_size  Size of the user buffer "val"
+ * @param[in]     qry       Pointer to query string
+ * @param[in]     key       The key to be searched in the query string
+ * @param[out]    val       Pointer to the buffer into which the value will be copied if the key is found
+ * @param[inout]  val_size  Size of the user buffer "val". This variable will contain param value length if
+ *                                  ESP_OK is returned and required buffer length in case ESP_ERR_HTTPD_RESULT_TRUNC is returned.
  *
  * @return
  *  - ESP_OK : Key is found in the URL query string and copied to buffer
@@ -1019,7 +1020,7 @@ esp_err_t httpd_req_get_url_query_str(httpd_req_t *r, char *buf, size_t buf_len)
  *  - ESP_ERR_INVALID_ARG        : Null arguments
  *  - ESP_ERR_HTTPD_RESULT_TRUNC : Value string truncated
  */
-esp_err_t httpd_query_key_value(const char *qry, const char *key, char *val, size_t val_size);
+esp_err_t httpd_query_key_value(const char *qry, const char *key, char *val, size_t* val_size);
 
 /**
  * @brief   Get the value string of a cookie value from the "Cookie" request headers by cookie name.
