@@ -451,6 +451,71 @@ ssize_t esp_vfs_pread(int fd, void *dst, size_t size, off_t offset);
  */
 ssize_t esp_vfs_pwrite(int fd, const void *src, size_t size, off_t offset);
 
+/**
+ * @brief Allocate a lock for the VFS of the base_path
+ *
+ * Calling this API will enable the VFS locking feature, which allow a specific
+ * VFS entity to be "locked", i.e. blocking all file system activities until unlocked.
+ *
+ * This feature allows for safe live partition backup/recover operation, which usually
+ * proceeds as the following:
+ * 1. Lock the VFS (so no new file operation can occur);
+ * 2. Check there is no open FD for this file-system;
+ *    (For backup, if the file system is crash-resilient, this step is optional.)
+ * 3. Dump / overwrite the underlying partition;
+ * 4. Unlock the VFS.
+ *
+ * There is no need to explicitly deallocate the lock. It will be automatically
+ * freed when the VFS is unmounted.
+ *
+ * @param base_path  file prefix previously used in esp_vfs_register call
+ * @return ESP_OK if successful, ESP_ERR_INVALID_STATE if VFS for given prefix
+ *         hasn't been registered
+ */
+esp_err_t esp_vfs_lock_enable(const char *base_path);
+
+/**
+ * @brief Acquire a lock for the VFS of the base_path
+ *
+ * Useful as a part of live partition backup/recover operation, see `esp_vfs_lock_enable()`.
+ *
+ * Note that because the lock is implemented in barrier style, successful acquiring the
+ * lock does not guarantee there are no "carry-over" file system activities.
+ * The function will give up *one* time slice to opportunistically clear up the activities
+ * but that may not be enough in certain cases. Callers are encouraged to wait for some
+ * additional time for the locked VFS to reach a quiescence state.
+ *
+ * @param base_path  file prefix previously used in esp_vfs_register call
+ * @return ESP_OK if successful, ESP_ERR_INVALID_STATE if VFS for given prefix
+ *         hasn't been registered
+ */
+esp_err_t esp_vfs_lock_acquire(const char *base_path);
+
+/**
+ * @brief Release the lock on VFS for the base_path
+ *
+ * Useful as a part of live partition backup/recover operation, see `esp_vfs_lock_enable()`.
+ *
+ * @param base_path  file prefix previously used in esp_vfs_register call
+ * @return ESP_OK if successful, ESP_ERR_INVALID_STATE if VFS for given prefix
+ *         hasn't been registered, or lock has not been acquired.
+ */
+esp_err_t esp_vfs_lock_release(const char *base_path);
+
+/**
+ * @brief Count the number of file descriptors under the VFS for the base_path
+ *
+ * Useful as a part of live partition backup/recover operation, see `esp_vfs_lock_enable()`.
+ *
+ * Note that this function does *not* require locking the VFS. But without locking,
+ * the number obtained is unstable, hence should only be used for informational purposes.
+ *
+ * @param base_path  file prefix previously used in esp_vfs_register call
+ * @return ESP_OK if successful, ESP_ERR_INVALID_STATE if VFS for given prefix
+ *         hasn't been registered
+ */
+esp_err_t esp_vfs_open_fd_count(const char *base_path, size_t *open_fd_count);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif
