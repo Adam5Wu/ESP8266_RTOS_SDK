@@ -901,11 +901,11 @@ esp_err_t httpd_query_key_value(const char *qry_str, const char *key, char *val,
 
         if (copy_len < val_len) {
             /* If buffer length is smaller than needed, return truncation error */
-            *val_size = val_len;
+            *val_size = val_len + 1;
             return ESP_ERR_HTTPD_RESULT_TRUNC;
         } else {
             /* Save actual param value size (including terminating null) */
-            *val_size = copy_len;
+            *val_size = copy_len + 1;
         }
         return ESP_OK;
     }
@@ -1155,7 +1155,7 @@ esp_err_t static httpd_cookie_key_value(const char *cookie_str, const char *key,
 
         if (copy_len < val_len) {
             /* If buffer length is smaller than needed, return truncation error */
-            *val_size = val_len;
+            *val_size = val_len + 1;
             return ESP_ERR_HTTPD_RESULT_TRUNC;
         } else {
             /* Save actual Cookie value size (including terminating null) */

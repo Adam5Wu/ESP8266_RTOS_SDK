@@ -1012,7 +1012,7 @@ esp_err_t httpd_req_get_url_query_str(httpd_req_t *r, char *buf, size_t buf_len)
  * @param[in]     key       The key to be searched in the query string
  * @param[out]    val       Pointer to the buffer into which the value will be copied if the key is found
  * @param[inout]  val_size  Size of the user buffer "val". This variable will contain param value length if
- *                                  ESP_OK is returned and required buffer length in case ESP_ERR_HTTPD_RESULT_TRUNC is returned.
+ *                          ESP_OK is returned and required buffer length in case ESP_ERR_HTTPD_RESULT_TRUNC is returned.
  *
  * @return
  *  - ESP_OK : Key is found in the URL query string and copied to buffer
