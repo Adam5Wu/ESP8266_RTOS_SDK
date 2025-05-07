@@ -71,6 +71,23 @@ static inline uint32_t get_reset_reason(uint32_t rtc_reset_reason, uint32_t rese
             if (reset_reason_hint == ESP_RST_DEEPSLEEP) {
                 return reset_reason_hint;
             }
+#ifdef CONFIG_IDF_TARGET_ESP8266
+            // ESP8266 doesn't produce proper POWERON_RESET from RTC read.
+            // So a physical power on or brown-out will likely leave the
+            // `reset_reason_hint` with scrambled values.
+            // Only two values are known to be not power-on:
+            // - ESP_RST_UNKNOWN: this is set during regular operation
+            //   so a reset with this hint means external interruption;
+            // - ESP_RST_SW: this is set by esp_restart(), which supposedly
+            //   should also have set `SW_RESET` in the RTC. However, the
+            //   latest ESP8266 RTOS SDK seems to fail doing that.
+            if (reset_reason_hint == ESP_RST_SW) {
+                return reset_reason_hint;
+            }
+            if (reset_reason_hint != ESP_RST_UNKNOWN) {
+                return ESP_RST_POWERON;
+            }
+#endif
             return ESP_RST_EXT;
         case SW_RESET:
             if (reset_reason_hint == ESP_RST_PANIC ||
