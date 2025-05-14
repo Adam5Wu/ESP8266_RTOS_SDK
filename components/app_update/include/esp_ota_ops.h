@@ -96,7 +96,8 @@ esp_err_t esp_ota_write(esp_ota_handle_t handle, const void* data, size_t size);
 /**
  * @brief Finish OTA update and validate newly written app image.
  *
- * @param handle  Handle obtained from esp_ota_begin().
+ * @param handle    Handle obtained from esp_ota_begin().
+ * @param boot_next Set the partition to boot next (if OTA was successful)
  *
  * @note After calling esp_ota_end(), the handle is no longer valid and any memory associated with it is freed (regardless of result).
  *
@@ -107,7 +108,11 @@ esp_err_t esp_ota_write(esp_ota_handle_t handle, const void* data, size_t size);
  *    - ESP_ERR_OTA_VALIDATE_FAILED: OTA image is invalid (either not a valid app image, or - if secure boot is enabled - signature failed to verify.)
  *    - ESP_ERR_INVALID_STATE: If flash encryption is enabled, this result indicates an internal error writing the final encrypted bytes to flash.
  */
-esp_err_t esp_ota_end(esp_ota_handle_t handle);
+esp_err_t esp_ota_end_ex(esp_ota_handle_t handle, bool boot_next);
+
+inline esp_err_t esp_ota_end(esp_ota_handle_t handle) {
+  return esp_ota_end_ex(handle, false);
+}
 
 /**
  * @brief Configure OTA data for a new boot partition
