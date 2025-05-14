@@ -221,7 +221,9 @@ esp_err_t esp_ota_write(esp_ota_handle_t handle, const void *data, size_t size)
     return ESP_ERR_INVALID_ARG;
 }
 
-esp_err_t esp_ota_end(esp_ota_handle_t handle)
+static esp_err_t esp_rewrite_ota_data(esp_partition_subtype_t subtype);
+
+esp_err_t esp_ota_end_ex(esp_ota_handle_t handle, bool boot_next)
 {
     ota_ops_entry_t *it;
     esp_err_t ret = ESP_OK;
@@ -280,6 +282,10 @@ esp_err_t esp_ota_end(esp_ota_handle_t handle)
         goto cleanup;
     }
 #endif
+
+    if (boot_next) {
+        ret = esp_rewrite_ota_data(it->part->subtype);
+    }
 
  cleanup:
     LIST_REMOVE(it, entries);
