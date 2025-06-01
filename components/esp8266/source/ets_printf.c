@@ -34,10 +34,9 @@
 static void uart_putc(int c)
 {
     while (1) {
-        uint32_t fifo_cnt = READ_PERI_REG(UART_STATUS(CONFIG_ESP_CONSOLE_UART_NUM)) & (UART_TXFIFO_CNT << UART_TXFIFO_CNT_S);
-
-        if ((fifo_cnt >> UART_TXFIFO_CNT_S & UART_TXFIFO_CNT) < 126)
-            break;
+        int uart_status = REG_READ(UART_STATUS(CONFIG_ESP_CONSOLE_UART_NUM));
+        int tx_bytes = (uart_status >> UART_TXFIFO_CNT_S) & UART_TXFIFO_CNT;
+        if (tx_bytes < 126) break;
     }
 
     WRITE_PERI_REG(UART_FIFO(CONFIG_ESP_CONSOLE_UART_NUM) , c);
