@@ -1125,6 +1125,11 @@ void tcp_print_status(int status, void* p, uint32_t tmp1, uint32_t tmp2, uint32_
  */
 #define SNTP_SERVER_DNS            1
 
+// Disable startup delay per config
+#ifndef CONFIG_LWIP_SNTP_STARTUP_DELAY
+#define SNTP_STARTUP_DELAY         0
+#endif
+
 // It disables a check of SNTP_UPDATE_DELAY it is done in sntp_set_sync_interval
 #define SNTP_SUPPRESS_DELAY_CHECK
 
