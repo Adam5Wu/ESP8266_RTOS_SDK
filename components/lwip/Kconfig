@@ -699,6 +699,14 @@ menu "LWIP"
                 First argument of sntp_setserver/sntp_setservername functions
                 is limited to this value.
 
+        config LWIP_SNTP_STARTUP_DELAY
+            bool "Randomized start up request delay (0~5000ms)"
+            default y
+            help
+                This option allows you to control the startup delay.
+                Can be disable for startup time sensitive projects
+                (e.g. battery operated or low energy reserve devices).
+
         config LWIP_SNTP_UPDATE_DELAY
             int "Request interval to update time (ms)"
             range 15000 4294967295
