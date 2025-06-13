@@ -33,7 +33,7 @@ int clock_getres(clockid_t clock_id, struct timespec *res);
 
 // Call this function regularly to smoothly apply correction to the system clock.
 // Recommended interval between 1 and 10 sec.
-uint64_t adjust_boot_time(uint64_t *delta);
+uint64_t adjust_boot_time(int64_t *delta);
 
 // Set an alternative limit for smooth time adjustment
 // 400 secs of diff takes a little over 7 hours to smoothly adjust.
