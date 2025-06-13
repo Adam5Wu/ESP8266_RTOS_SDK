@@ -76,7 +76,7 @@ static inline uint64_t get_boot_time()
 #if defined( WITH_FRC ) || defined( WITH_RTC )
 
 // This function gradually changes boot_time to the correction value and immediately updates it.
-uint64_t adjust_boot_time(uint64_t *delta)
+uint64_t adjust_boot_time(int64_t *delta)
 {
     uint64_t boot_time = get_boot_time();
     uint64_t since_boot = get_time_since_boot();
