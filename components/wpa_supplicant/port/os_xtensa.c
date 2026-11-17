@@ -44,7 +44,7 @@ unsigned long os_random(void)
     return esp_random();
 }
 
-int os_get_random(unsigned char *buf, size_t len)
+int32_t os_get_random(unsigned char *buf, size_t len)
 {
     esp_fill_random(buf, len);
     return 0;

@@ -70,18 +70,21 @@ int esp_fast_boot_enable(void)
 void IRAM_ATTR esp_fast_boot_restart_app(uint32_t image_start, uint32_t entry_addr, uint8_t region, uint8_t sub_region)
 {
     const uint32_t sp = DRAM_BASE + DRAM_SIZE - 16;
-    void (*user_start)(size_t start_addr);
 
     Cache_Read_Disable();
     Cache_Read_Enable(sub_region, region, SOC_CACHE_SIZE);
 
-    __asm__ __volatile__(
-        "mov    a1, %0\n"
-        : : "a"(sp) : "memory"
-    );
-
-    user_start = (void *)entry_addr;
-    user_start(image_start);
+    {
+        register uint32_t r_start __asm__("a2") = image_start;
+        register uint32_t r_entry __asm__("a3") = entry_addr;
+        register uint32_t r_sp __asm__("a4") = sp;
+        __asm__ __volatile__(
+            "mov    a1, %2\n"
+            "jx     %1\n"
+            : : "a"(r_start), "a"(r_entry), "a"(r_sp) : "memory"
+        );
+    }
+    __builtin_unreachable();
 }
 
 int esp_fast_boot_restart(void)

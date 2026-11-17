@@ -587,6 +587,9 @@ int esp_vfs_fstat(struct _reent *r, int fd, struct stat * st)
         __errno_r(r) = EBADF;
         return -1;
     }
+    if (st) {
+        memset(st, 0, sizeof(*st));
+    }
     int ret;
     CHECK_AND_CALL(ret, r, vfs, fstat, local_fd, st);
     return ret;
@@ -605,6 +608,9 @@ int esp_vfs_stat(struct _reent *r, const char * path, struct stat * st)
         return -1;
     }
     const char* path_within_vfs = translate_path(vfs, path);
+    if (st) {
+        memset(st, 0, sizeof(*st));
+    }
     int ret;
     CHECK_AND_CALL(ret, r, vfs, stat, path_within_vfs, st);
     return ret;

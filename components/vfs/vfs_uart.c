@@ -300,6 +300,7 @@ static ssize_t uart_read(int fd, void* data, size_t size)
 static int uart_fstat(int fd, struct stat * st)
 {
     assert(fd >=0 && fd < 3);
+    memset(st, 0, sizeof(*st));
     st->st_mode = S_IFCHR;
     return 0;
 }

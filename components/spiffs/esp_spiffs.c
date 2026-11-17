@@ -35,8 +35,8 @@
 static const char* TAG = "SPIFFS";
 
 #ifdef CONFIG_SPIFFS_USE_MTIME
-_Static_assert(CONFIG_SPIFFS_META_LENGTH >= sizeof(time_t),
-        "SPIFFS_META_LENGTH size should be >= sizeof(time_t)");
+_Static_assert(CONFIG_SPIFFS_META_LENGTH >= sizeof(uint32_t),
+        "SPIFFS_META_LENGTH size should be >= 4 bytes");
 #endif //CONFIG_SPIFFS_USE_MTIME
 
 /**
@@ -654,7 +654,7 @@ static int vfs_spiffs_readdir_r(void* ctx, DIR* pdir, struct dirent* entry,
     }
     entry->d_ino = 0;
     entry->d_type = out.type;
-    snprintf(entry->d_name, SPIFFS_OBJ_NAME_LEN, "%s", item_name);
+    strlcpy(entry->d_name, item_name, SPIFFS_OBJ_NAME_LEN);
     dir->offset++;
     *out_dirent = entry;
     return 0;
@@ -723,11 +723,17 @@ static void vfs_spiffs_update_mtime(spiffs *fs, spiffs_file fd)
     time_t t = time(NULL);
     spiffs_stat s;
     int ret = SPIFFS_OK;
-    if (CONFIG_SPIFFS_META_LENGTH > sizeof(t)) {
+    size_t store_sz = (CONFIG_SPIFFS_META_LENGTH >= sizeof(time_t)) ? sizeof(time_t) : sizeof(uint32_t);
+    if (CONFIG_SPIFFS_META_LENGTH > store_sz) {
         ret = SPIFFS_fstat(fs, fd, &s);
     }
     if (ret == SPIFFS_OK) {
-        memcpy(s.meta, &t, sizeof(t));
+        if (store_sz == sizeof(time_t)) {
+            memcpy(s.meta, &t, sizeof(t));
+        } else {
+            uint32_t t32 = (uint32_t)t;
+            memcpy(s.meta, &t32, sizeof(t32));
+        }
         ret = SPIFFS_fupdate_meta(fs, fd, s.meta);
     }
     if (ret != SPIFFS_OK) {
@@ -740,7 +746,13 @@ static time_t vfs_spiffs_get_mtime(const spiffs_stat* s)
 {
     time_t t = 0;
 #ifdef CONFIG_SPIFFS_USE_MTIME
-    memcpy(&t, s->meta, sizeof(t));
+    if (CONFIG_SPIFFS_META_LENGTH >= sizeof(time_t)) {
+        memcpy(&t, s->meta, sizeof(t));
+    } else {
+        uint32_t t32 = 0;
+        memcpy(&t32, s->meta, sizeof(t32));
+        t = (time_t)t32;
+    }
 #endif
     return t;
 }

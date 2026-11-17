@@ -57,12 +57,12 @@ int mbedtls_sha256_update_ret(mbedtls_sha256_context *ctx, const unsigned char *
     return esp_sha256_update(ctx, input, ilen);
 }
 
-int mbedtls_sha256_finish_ret(mbedtls_sha256_context *ctx, unsigned char output[64])
+int mbedtls_sha256_finish_ret(mbedtls_sha256_context *ctx, unsigned char output[32])
 {
     return esp_sha256_finish(ctx, output);
 }
 
-int mbedtls_internal_sha256_process(mbedtls_sha256_context *ctx, const unsigned char data[128])
+int mbedtls_internal_sha256_process(mbedtls_sha256_context *ctx, const unsigned char data[64])
 {
     return esp_sha256_update(ctx, data, 64);
 }

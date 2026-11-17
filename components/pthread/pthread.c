@@ -502,12 +502,37 @@ int pthread_equal(pthread_t t1, pthread_t t2)
 /***************** ONCE ******************/
 int pthread_once(pthread_once_t *once_control, void (*init_routine)(void))
 {
+    static SemaphoreHandle_t s_once_mux = NULL;
+
     if (once_control == NULL || init_routine == NULL || !once_control->is_initialized) {
         ESP_LOGE(TAG, "%s: Invalid args!", __FUNCTION__);
         return EINVAL;
     }
 
-    once_control->init_executed = 1;
+    if (once_control->init_executed == 1) {
+        return 0;
+    }
+
+    if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED) {
+        portENTER_CRITICAL();
+        if (s_once_mux == NULL) {
+            s_once_mux = xSemaphoreCreateRecursiveMutex();
+        }
+        portEXIT_CRITICAL();
+        if (s_once_mux != NULL) {
+            xSemaphoreTakeRecursive(s_once_mux, portMAX_DELAY);
+        }
+    }
+
+    if (once_control->init_executed == 0) {
+        once_control->init_executed = 2;
+        init_routine();
+        once_control->init_executed = 1;
+    }
+
+    if (s_once_mux != NULL && xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED) {
+        xSemaphoreGiveRecursive(s_once_mux);
+    }
 
     return 0;
 }

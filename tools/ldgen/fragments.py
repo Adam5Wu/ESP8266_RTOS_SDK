@@ -203,7 +203,7 @@ class Fragment():
     """
 
     IDENTIFIER = Word(alphas + "_", alphanums + "_")
-    ENTITY = Word(alphanums + ".-_$")
+    ENTITY = Word(alphanums + ".-_$+")
 
     @abc.abstractmethod
     def set_key_value(self, key, parse_results):

@@ -110,7 +110,7 @@ extern void vTaskSwitchContext( void );				\
 void portYIELD_FROM_ISR(void);
 
 /*-----------------------------------------------------------*/
-extern unsigned cpu_sr;
+extern uint32_t cpu_sr;
 
 /* Critical section management. */
 extern void vPortEnterCritical( void );

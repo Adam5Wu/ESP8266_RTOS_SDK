@@ -213,19 +213,22 @@ SECTIONS
     *(.gnu.version_r)
     . = (. + 3) & ~ 3;
     __eh_frame = ABSOLUTE(.);
-    KEEP(*(.eh_frame))
+    *(.eh_frame)
     . = (. + 7) & ~ 3;
     /*  C++ constructor and destructor tables
 
         Make a point of not including anything from crtbegin.o or crtend.o, as IDF doesn't use toolchain crt
       */
     __init_array_start = ABSOLUTE(.);
-    KEEP (*(EXCLUDE_FILE (*crtend.* *crtbegin.*) .ctors .ctors.*))
+    KEEP (*(SORT_BY_INIT_PRIORITY(.init_array.*) SORT_BY_INIT_PRIORITY(.ctors.*)))
+    KEEP (*(EXCLUDE_FILE (*crtend.* *crtbegin.*) .init_array .ctors))
     __init_array_end = ABSOLUTE(.);
     KEEP (*crtbegin.*(.dtors))
     KEEP (*(EXCLUDE_FILE (*crtend.*) .dtors))
     KEEP (*(SORT(.dtors.*)))
     KEEP (*(.dtors))
+    KEEP (*(SORT_BY_INIT_PRIORITY(.fini_array.*)))
+    KEEP (*(EXCLUDE_FILE (*crtend.* *crtbegin.*) .fini_array))
     /*  C++ exception handlers table:  */
     __XT_EXCEPTION_DESCS_ = ABSOLUTE(.);
     *(.xt_except_desc)

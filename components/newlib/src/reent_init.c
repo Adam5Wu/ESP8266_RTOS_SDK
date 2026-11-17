@@ -23,6 +23,7 @@
 #define _STR(_s)    #_s
 #define STR(_s)     _STR(_s)
 
+#if !defined(__NEWLIB__) || (__NEWLIB__ < 4)
 static struct _reent impure_data;
 
 /* This function is not part on newlib API, it is defined in libc/stdio/local.h
@@ -30,6 +31,7 @@ static struct _reent impure_data;
  * so extern declaration is used here.
  */
 extern void _cleanup_r(struct _reent* r);
+#endif
 
 /**
  * This is the replacement for newlib's _REENT_INIT_PTR and __sinit.
@@ -42,6 +44,7 @@ extern void _cleanup_r(struct _reent* r);
 void esp_reent_init(struct _reent* r)
 {
     memset(r, 0, sizeof(*r));
+#if !defined(__NEWLIB__) || (__NEWLIB__ < 4)
     r->_stdout = _GLOBAL_REENT->_stdout;
     r->_stderr = _GLOBAL_REENT->_stderr;
     r->_stdin  = _GLOBAL_REENT->_stdin;
@@ -50,6 +53,13 @@ void esp_reent_init(struct _reent* r)
     r->__sglue._next = NULL;
     r->__sglue._niobs = 0;
     r->__sglue._iobs = NULL;
+#else
+    if (r != _GLOBAL_REENT) {
+        r->_stdout = _GLOBAL_REENT->_stdout;
+        r->_stderr = _GLOBAL_REENT->_stderr;
+        r->_stdin  = _GLOBAL_REENT->_stdin;
+    }
+#endif
 }
 
 /* only declared in private stdio header file, local.h */
@@ -77,8 +87,13 @@ void esp_reent_cleanup(void)
     }
 
     /* Clean up "glue" (lazily-allocated FILE objects) */
+#if !defined(__NEWLIB__) || (__NEWLIB__ < 4)
     struct _glue* prev = &_GLOBAL_REENT->__sglue;
     for (struct _glue* cur = _GLOBAL_REENT->__sglue._next; cur != NULL;) {
+#else
+    struct _glue* prev = &__sglue;
+    for (struct _glue* cur = __sglue._next; cur != NULL;) {
+#endif
         if (cur->_niobs == 0) {
             cur = cur->_next;
             continue;
@@ -120,8 +135,13 @@ int esp_newlib_init(void)
 {
     const char *default_uart_dev = "/dev/uart/" STR(CONFIG_CONSOLE_UART_NUM);
 
+#if !defined(__NEWLIB__) || (__NEWLIB__ < 4)
     _global_impure_ptr = &impure_data;
     esp_reent_init(_global_impure_ptr);
+#else
+    _impure_ptr = _GLOBAL_REENT;
+    esp_reent_init(_GLOBAL_REENT);
+#endif
 
     esp_vfs_dev_uart_register();
 
@@ -156,5 +176,9 @@ err:
 
 struct _reent* __getreent()
 {
+#if !defined(__NEWLIB__) || (__NEWLIB__ < 4)
     return _global_impure_ptr;
+#else
+    return _impure_ptr ? _impure_ptr : _GLOBAL_REENT;
+#endif
 }

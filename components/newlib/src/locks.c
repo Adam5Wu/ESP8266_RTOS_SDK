@@ -210,3 +210,92 @@ void _lock_release(_lock_t *lock) {
 void _lock_release_recursive(_lock_t *lock) {
     lock_release_generic(lock, queueQUEUE_TYPE_RECURSIVE_MUTEX);
 }
+
+#if defined(_RETARGETABLE_LOCKING)
+
+struct __lock {
+    _lock_t impl;
+    uint8_t is_dynamic;
+};
+
+struct __lock __lock___sinit_recursive_mutex;
+struct __lock __lock___sfp_recursive_mutex;
+struct __lock __lock___atexit_recursive_mutex;
+struct __lock __lock___at_quick_exit_mutex;
+struct __lock __lock___env_recursive_mutex;
+struct __lock __lock___tz_mutex;
+struct __lock __lock___dd_hash_mutex;
+struct __lock __lock___arc4random_mutex;
+struct __lock __lock___malloc_recursive_mutex;
+
+void __retarget_lock_init(_LOCK_T *lock) {
+    struct __lock *l = (struct __lock *)calloc(1, sizeof(struct __lock));
+    if (!l) {
+        abort();
+    }
+    l->is_dynamic = 1;
+    _lock_init(&l->impl);
+    *lock = l;
+}
+
+void __retarget_lock_init_recursive(_LOCK_T *lock) {
+    struct __lock *l = (struct __lock *)calloc(1, sizeof(struct __lock));
+    if (!l) {
+        abort();
+    }
+    l->is_dynamic = 1;
+    _lock_init_recursive(&l->impl);
+    *lock = l;
+}
+
+void __retarget_lock_close(_LOCK_T lock) {
+    if (lock) {
+        _lock_close(&lock->impl);
+        if (lock->is_dynamic) {
+            free(lock);
+        }
+    }
+}
+
+void __retarget_lock_close_recursive(_LOCK_T lock) {
+    if (lock) {
+        _lock_close_recursive(&lock->impl);
+        if (lock->is_dynamic) {
+            free(lock);
+        }
+    }
+}
+
+void __retarget_lock_acquire(_LOCK_T lock) {
+    if (lock) {
+        _lock_acquire(&lock->impl);
+    }
+}
+
+void __retarget_lock_acquire_recursive(_LOCK_T lock) {
+    if (lock) {
+        _lock_acquire_recursive(&lock->impl);
+    }
+}
+
+int __retarget_lock_try_acquire(_LOCK_T lock) {
+    return lock ? _lock_try_acquire(&lock->impl) : 0;
+}
+
+int __retarget_lock_try_acquire_recursive(_LOCK_T lock) {
+    return lock ? _lock_try_acquire_recursive(&lock->impl) : 0;
+}
+
+void __retarget_lock_release(_LOCK_T lock) {
+    if (lock) {
+        _lock_release(&lock->impl);
+    }
+}
+
+void __retarget_lock_release_recursive(_LOCK_T lock) {
+    if (lock) {
+        _lock_release_recursive(&lock->impl);
+    }
+}
+
+#endif /* _RETARGETABLE_LOCKING */

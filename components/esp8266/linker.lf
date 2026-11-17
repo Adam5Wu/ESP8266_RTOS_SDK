@@ -26,4 +26,55 @@ archive: libgcc.a
 entries:
     unwind-dw2 (inflash_text)
     unwind-dw2-fde (inflash_text)
+    unwind-c (inflash_text)
+    emutls (inflash_text)
+    hardcfr (inflash_text)
+    strub (inflash_text)
+    _mulsf3 (inflash_text)
+    _divsf3 (inflash_text)
+    _cmpsf2 (inflash_text)
+    _fixsfsi (inflash_text)
+    _fixsfdi (inflash_text)
+    _fixunssfdi (inflash_text)
+    _floatdisf (inflash_text)
+    _cmpdf2 (inflash_text)
+    _fixdfdi (inflash_text)
+    _fixunsdfdi (inflash_text)
+    _floatdidf (inflash_text)
+    _powisf2 (inflash_text)
+    _powidf2 (inflash_text)
+    _mulsc3 (inflash_text)
+    _muldc3 (inflash_text)
+    _divsc3 (inflash_text)
+    _divdc3 (inflash_text)
+
+[mapping:c]
+archive: libc.a
+entries:
+    * (inflash_text)
+
+[mapping:c_nano]
+archive: libc_nano.a
+entries:
+    * (inflash_text)
+
+[mapping:m]
+archive: libm.a
+entries:
+    * (inflash_text)
+
+[mapping:stdcxx]
+archive: libstdc++.a
+entries:
+    * (inflash_text)
+
+[mapping:supcxx]
+archive: libsupc++.a
+entries:
+    * (inflash_text)
+
+[mapping:nosys]
+archive: libnosys.a
+entries:
+    * (inflash_text)
 

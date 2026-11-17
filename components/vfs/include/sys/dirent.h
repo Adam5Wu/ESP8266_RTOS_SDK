@@ -45,6 +45,10 @@ struct dirent {
     char d_name[256];   /*!< zero-terminated file name */
 };
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 DIR* opendir(const char* name);
 struct dirent* readdir(DIR* pdir);
 long telldir(DIR* pdir);
@@ -52,4 +56,8 @@ void seekdir(DIR* pdir, long loc);
 void rewinddir(DIR* pdir);
 int closedir(DIR* pdir);
 int readdir_r(DIR* pdir, struct dirent* entry, struct dirent** out_dirent);
+
+#ifdef __cplusplus
+}
+#endif
 

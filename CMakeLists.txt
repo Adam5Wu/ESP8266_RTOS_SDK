@@ -19,6 +19,8 @@ if(CONFIG_COMPILER_CXX_EXCEPTIONS)
     list(APPEND cxx_compile_options "-fexceptions")
 else()
     list(APPEND cxx_compile_options "-fno-exceptions")
+    list(APPEND compile_options "-fno-unwind-tables"
+                                "-fno-asynchronous-unwind-tables")
 endif()
 
 if(CONFIG_COMPILER_DISABLE_GCC8_WARNINGS)

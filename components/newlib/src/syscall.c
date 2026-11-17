@@ -86,7 +86,61 @@ int _getpid_r(struct _reent *r)
     return -1;
 }
 
+int _kill_r(struct _reent *r, int pid, int sig)
+{
+    (void)pid;
+    (void)sig;
+    __errno_r(r) = ENOSYS;
+    return -1;
+}
+
 int *__errno(void)
 {
     return (int *)pvTaskGetThreadLocalStorageBufferPointer(NULL, ERRNO_TLS_INDEX);
+}
+
+extern int __real___swhatbuf_r(struct _reent *r, FILE *fp, size_t *bufsize, int *couldbetty);
+
+int __wrap___swhatbuf_r(struct _reent *r, FILE *fp, size_t *bufsize, int *couldbetty)
+{
+    int flags = __real___swhatbuf_r(r, fp, bufsize, couldbetty);
+    if (bufsize && *bufsize > BUFSIZ) {
+        *bufsize = BUFSIZ;
+        if (fp) {
+            fp->_blksize = BUFSIZ;
+        }
+        flags = __SNPT;
+    }
+    return flags;
+}
+
+void __wrap___smakebuf_r(struct _reent *r, FILE *fp)
+{
+    void *p;
+    int flags;
+    size_t size;
+    int couldbetty;
+
+    if (fp->_flags & __SNBF) {
+        fp->_bf._base = fp->_p = fp->_nbuf;
+        fp->_bf._size = 1;
+        return;
+    }
+    flags = __wrap___swhatbuf_r(r, fp, &size, &couldbetty);
+    p = _malloc_r(r, size);
+    if (p == NULL) {
+        if (!(fp->_flags & __SSTR)) {
+            fp->_flags = (fp->_flags & ~(__SLBF | __SNBF)) | __SNBF;
+            fp->_bf._base = fp->_p = fp->_nbuf;
+            fp->_bf._size = 1;
+        }
+        return;
+    }
+    fp->_flags |= __SMBF;
+    fp->_bf._base = fp->_p = (unsigned char *)p;
+    fp->_bf._size = (int)size;
+    if (couldbetty && _isatty_r(r, fp->_file)) {
+        fp->_flags = (fp->_flags & ~(__SLBF | __SNBF)) | __SLBF;
+    }
+    fp->_flags |= flags;
 }

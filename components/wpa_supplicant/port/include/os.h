@@ -18,6 +18,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/types.h>
+#include <time.h>
 #include "esp_err.h"
 // #include "esp32/rom/ets_sys.h"
 #include "esp_libc.h"
@@ -115,7 +117,7 @@ void os_daemonize_terminate(const char *pid_file);
  * @len: Length of the buffer
  * Returns: 0 on success, -1 on failure
  */
-int os_get_random(unsigned char *buf, size_t len);
+int32_t os_get_random(unsigned char *buf, size_t len);
 
 /**
  * os_random - Get pseudo random value (not necessarily very strong)

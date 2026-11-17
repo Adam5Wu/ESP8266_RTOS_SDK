@@ -241,6 +241,9 @@ int clock_gettime (clockid_t clock_id, struct timespec *tp)
             tp->tv_nsec = tv.tv_usec * 1000L;
             break;
         case CLOCK_MONOTONIC:
+#if defined(CLOCK_BOOTTIME) && (CLOCK_BOOTTIME != CLOCK_MONOTONIC)
+        case CLOCK_BOOTTIME:
+#endif
 #if defined( WITH_FRC )
             monotonic_time_us = (uint64_t) esp_timer_get_time();
 #elif defined( WITH_RTC )

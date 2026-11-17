@@ -50,12 +50,12 @@ int mbedtls_sha1_update_ret(mbedtls_sha1_context *ctx, const unsigned char *inpu
     return esp_sha1_update(ctx, input, ilen);
 }
 
-int mbedtls_sha1_finish_ret(mbedtls_sha1_context *ctx, unsigned char output[64])
+int mbedtls_sha1_finish_ret(mbedtls_sha1_context *ctx, unsigned char output[20])
 {
     return esp_sha1_finish(ctx, output);
 }
 
-int mbedtls_internal_sha1_process(mbedtls_sha1_context *ctx, const unsigned char data[128])
+int mbedtls_internal_sha1_process(mbedtls_sha1_context *ctx, const unsigned char data[64])
 {
     return esp_sha1_update(ctx, data, 64);
 }

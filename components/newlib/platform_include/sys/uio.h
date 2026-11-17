@@ -14,6 +14,10 @@
 #ifndef _ESP_PLATFORM_SYS_UIO_H_
 #define _ESP_PLATFORM_SYS_UIO_H_
 
+#include <sys/types.h>
+
+struct iovec;
+
 int writev(int s, const struct iovec *iov, int iovcnt);
 
 ssize_t readv(int fd, const struct iovec *iov, int iovcnt);

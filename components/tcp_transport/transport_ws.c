@@ -312,7 +312,8 @@ static int ws_read_payload(esp_transport_handle_t t, char *buffer, int len, int 
     }
     ws->frame_state.bytes_remaining -= rlen;
 
-    if (ws->frame_state.mask_key) {
+    if (ws->frame_state.mask_key[0] | ws->frame_state.mask_key[1] |
+        ws->frame_state.mask_key[2] | ws->frame_state.mask_key[3]) {
         for (int i = 0; i < bytes_to_read; i++) {
             buffer[i] = (buffer[i] ^ ws->frame_state.mask_key[i % 4]);
         }

@@ -421,10 +421,6 @@ static void uart_intr_service(void *arg)
     // read status to get interrupt status for UART0-1
     uint32_t uart_intr_status = UART[uart_num]->int_st.val;
 
-    if (uart_isr_func == NULL) {
-        return;
-    }
-
     do {
         uart_intr_status = UART[uart_num]->int_st.val;
         if (uart_intr_status != 0) {

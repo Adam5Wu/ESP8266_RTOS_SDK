@@ -28,6 +28,7 @@ project(bootloader)
 
 idf_build_set_property(COMPILE_DEFINITIONS "-DBOOTLOADER_BUILD=1" APPEND)
 idf_build_set_property(COMPILE_OPTIONS "-fno-stack-protector" APPEND)
+idf_build_set_property(INCLUDE_DIRECTORIES "${IDF_PATH}/components/newlib/platform_include" APPEND)
 
 string(REPLACE ";" " " espsecurepy "${ESPSECUREPY}")
 string(REPLACE ";" " " espefusepy "${ESPEFUSEPY}")

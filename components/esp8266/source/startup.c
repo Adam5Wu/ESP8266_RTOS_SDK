@@ -118,6 +118,36 @@ static void user_init_entry(void *param)
     vTaskDelete(NULL);
 }
 
+static void __attribute__((noinline, noreturn)) call_start_cpu_cont(void)
+{
+    heap_caps_init();
+
+#ifdef CONFIG_INIT_OS_BEFORE_START
+    extern int __esp_os_init(void);
+#ifdef NDEBUG
+    __esp_os_init();
+#else
+    assert(__esp_os_init() == 0);
+#endif
+#endif
+
+#ifdef NDEBUG
+    esp_newlib_init();
+#else
+    assert(esp_newlib_init() == 0);
+#endif
+
+#ifdef NDEBUG
+    xTaskCreate(user_init_entry, "uiT", ESP_TASK_MAIN_STACK, NULL, ESP_TASK_MAIN_PRIO, NULL);
+#else
+    assert(xTaskCreate(user_init_entry, "uiT", ESP_TASK_MAIN_STACK, NULL, ESP_TASK_MAIN_PRIO, NULL) == pdPASS);
+#endif
+
+    vTaskStartScheduler();
+    while (1) {
+    }
+}
+
 void call_start_cpu(size_t start_addr)
 {
     int i;
@@ -171,33 +201,13 @@ void call_start_cpu(size_t start_addr)
     for (p = &_iram_bss_start; p < &_iram_bss_end; p++)
         *p = 0;
 
-    __asm__ __volatile__(
-        "rsil       a2, 2\n"
-        "movi       a1, _chip_interrupt_tmp\n"
-        : : :"memory");
-
-    heap_caps_init();
-
-#ifdef CONFIG_INIT_OS_BEFORE_START
-    extern int __esp_os_init(void);
-#ifdef NDEBUG
-    __esp_os_init();
-#else
-    assert(__esp_os_init() == 0);
-#endif
-#endif
-
-#ifdef NDEBUG
-    esp_newlib_init();
-#else
-    assert(esp_newlib_init() == 0);
-#endif
-
-#ifdef NDEBUG
-    xTaskCreate(user_init_entry, "uiT", ESP_TASK_MAIN_STACK, NULL, ESP_TASK_MAIN_PRIO, NULL);
-#else
-    assert(xTaskCreate(user_init_entry, "uiT", ESP_TASK_MAIN_STACK, NULL, ESP_TASK_MAIN_PRIO, NULL) == pdPASS);
-#endif
-
-    vTaskStartScheduler();
+    {
+        register void (*cont)(void) __asm__("a3") = call_start_cpu_cont;
+        __asm__ __volatile__(
+            "rsil       a2, 2\n"
+            "movi       a1, _chip_interrupt_tmp\n"
+            "jx         %0\n"
+            : : "a"(cont) : "a2", "memory");
+    }
+    __builtin_unreachable();
 }

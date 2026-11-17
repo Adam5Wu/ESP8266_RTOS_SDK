@@ -123,10 +123,16 @@ configKERNEL_INTERRUPT_PRIORITY setting.  Here 15 corresponds to the lowest
 NVIC value of 255. */
 #define configLIBRARY_KERNEL_INTERRUPT_PRIORITY	15
 
+#ifndef __ASSEMBLER__
+#include <newlib.h>
+#endif
+
 // add it to menuconfig later
 #ifdef CONFIG_FREERTOS_ENABLE_REENT
 #define configUSE_NEWLIB_REENTRANT  1
+#if !defined(__ASSEMBLER__) && (!defined(__NEWLIB__) || (__NEWLIB__ < 4))
 #define _impure_ptr  _global_impure_ptr
+#endif
 #endif
 
 /**
