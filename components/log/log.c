@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <inttypes.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -267,7 +268,7 @@ void esp_log_write(esp_log_level_t level, const char *tag,  const char *fmt, ...
     }
 #endif
     prefix = level >= ESP_LOG_MAX ? 'N' : s_log_prefix[level];
-    ret = asprintf(&pbuf, "%c (%7d) %-12.12s: ", prefix, esp_log_early_timestamp(), tag);
+    ret = asprintf(&pbuf, "%c (%7" PRIu32 ") %-12.12s: ", prefix, esp_log_early_timestamp(), tag);
     if (ret < 0)
         goto out;
     ret = esp_log_write_str(pbuf);

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -292,7 +293,7 @@ esp_err_t gpio_config(const gpio_config_t *gpio_cfg)
 
         if (((gpio_pin_mask >> io_num) & BIT(0))) {
             if (!io_reg) {
-                ESP_LOGE(GPIO_TAG, "IO%d is not a valid GPIO", io_num);
+                ESP_LOGE(GPIO_TAG, "IO%" PRIu32 " is not a valid GPIO", io_num);
                 return ESP_ERR_INVALID_ARG;
             }
 
@@ -326,7 +327,7 @@ esp_err_t gpio_config(const gpio_config_t *gpio_cfg)
                 }
             }
 
-            ESP_LOGI(GPIO_TAG, "GPIO[%d]| InputEn: %d| OutputEn: %d| OpenDrain: %d| Pullup: %d| Pulldown: %d| Intr:%d ", io_num, input_en, output_en, od_en, pu_en, pd_en, gpio_cfg->intr_type);
+            ESP_LOGI(GPIO_TAG, "GPIO[%" PRIu32 "]| InputEn: %d| OutputEn: %d| OpenDrain: %d| Pullup: %d| Pulldown: %d| Intr:%d ", io_num, input_en, output_en, od_en, pu_en, pd_en, gpio_cfg->intr_type);
 
             if (!RTC_GPIO_IS_VALID_GPIO(io_num)) {
                 gpio_set_intr_type(io_num, gpio_cfg->intr_type);

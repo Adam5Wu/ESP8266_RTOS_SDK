@@ -155,6 +155,7 @@ static void unpack_load_app(const esp_image_metadata_t* data)
 
 #ifdef CONFIG_IDF_TARGET_ESP8266
 
+#include <inttypes.h>
 #include <stdbool.h>
 #include <sys/param.h>
 #include <string.h>
@@ -278,7 +279,7 @@ static void enumerate_partitions_for_boot(const esp_partition_info_t *partitions
         }
 
         /* print partition type info */
-        ESP_LOGI(TAG, "%2d %-16s %-16s %02x %02x %08x %08x", part_count, partition->label, partition_usage,
+        ESP_LOGI(TAG, "%2d %-16s %-16s %02x %02x %08" PRIx32 " %08" PRIx32, part_count, partition->label, partition_usage,
                  partition->type, partition->subtype,
                  partition->pos.offset, partition->pos.size);
     }
@@ -349,21 +350,21 @@ int bootloader_utility_get_selected_boot_partition(const bootloader_state_t *bs)
     if (bs->ota_info.offset != 0) {
         // partition table has OTA data partition
         if (bs->ota_info.size < 2 * SPI_SEC_SIZE) {
-            ESP_LOGE(TAG, "ota_info partition size %d is too small (minimum %d bytes)", bs->ota_info.size, sizeof(esp_ota_select_entry_t));
+            ESP_LOGE(TAG, "ota_info partition size %" PRIu32 " is too small (minimum %d bytes)", bs->ota_info.size, sizeof(esp_ota_select_entry_t));
             return INVALID_INDEX; // can't proceed
         }
 
-        ESP_LOGD(TAG, "OTA data offset 0x%x", bs->ota_info.offset);
+        ESP_LOGD(TAG, "OTA data offset 0x%" PRIx32, bs->ota_info.offset);
         ota_select_map = bootloader_mmap(bs->ota_info.offset, bs->ota_info.size);
         if (!ota_select_map) {
-            ESP_LOGE(TAG, "bootloader_mmap(0x%x, 0x%x) failed", bs->ota_info.offset, bs->ota_info.size);
+            ESP_LOGE(TAG, "bootloader_mmap(0x%" PRIx32 ", 0x%" PRIx32 ") failed", bs->ota_info.offset, bs->ota_info.size);
             return INVALID_INDEX; // can't proceed
         }
         memcpy(&sa, ota_select_map, sizeof(esp_ota_select_entry_t));
         memcpy(&sb, (uint8_t *)ota_select_map + SPI_SEC_SIZE, sizeof(esp_ota_select_entry_t));
         bootloader_munmap(ota_select_map);
 
-        ESP_LOGD(TAG, "OTA sequence values A 0x%08x B 0x%08x", sa.ota_seq, sb.ota_seq);
+        ESP_LOGD(TAG, "OTA sequence values A 0x%08" PRIx32 " B 0x%08" PRIx32, sa.ota_seq, sb.ota_seq);
         if(sa.ota_seq == UINT32_MAX && sb.ota_seq == UINT32_MAX) {
             ESP_LOGD(TAG, "OTA sequence numbers both empty (all-0xFF)");
             if (bs->factory.offset != 0) {
@@ -419,7 +420,7 @@ static bool try_load_partition(const esp_partition_pos_t *partition, esp_image_m
     }
 #ifdef BOOTLOADER_BUILD
     if (esp_image_load(ESP_IMAGE_LOAD, partition, data) == ESP_OK) {
-        ESP_LOGI(TAG, "Loaded app from partition at offset 0x%x",
+        ESP_LOGI(TAG, "Loaded app from partition at offset 0x%" PRIx32,
                  partition->offset);
         return true;
     }
@@ -428,7 +429,7 @@ static bool try_load_partition(const esp_partition_pos_t *partition, esp_image_m
     return false;
 }
 
-#define TRY_LOG_FORMAT "Trying partition index %d offs 0x%x size 0x%x"
+#define TRY_LOG_FORMAT "Trying partition index %d offs 0x%" PRIx32 " size 0x%" PRIx32
 
 bool bootloader_utility_load_boot_image(const bootloader_state_t *bs, int start_index, esp_image_metadata_t *result)
 {

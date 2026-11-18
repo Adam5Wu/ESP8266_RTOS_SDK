@@ -65,6 +65,7 @@ target_sources(mbedcrypto PRIVATE "${COMPONENT_DIR}/port/esp_hardware.c"
 
 foreach(target ${mbedtls_targets})
     target_compile_definitions(${target} PUBLIC -DMBEDTLS_CONFIG_FILE="mbedtls/esp_config.h" -DCONFIG_SSL_USING_MBEDTLS)
+    target_compile_options(${target} PRIVATE -Wno-array-parameter -Wno-stringop-overflow)
 endforeach()
 
 if(CONFIG_MBEDTLS_DYNAMIC_BUFFER)

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -750,7 +751,8 @@ esp_err_t tcpip_adapter_dhcps_option(tcpip_adapter_option_mode_t opt_op, tcpip_a
 
             if (poll->enable) {
                 memset(&info, 0x00, sizeof(tcpip_adapter_ip_info_t));
-                tcpip_adapter_get_ip_info(ESP_IF_WIFI_AP, &info);
+                /* ESP_IF_WIFI_AP (1) coincides with TCPIP_ADAPTER_IF_AP (1) */
+                tcpip_adapter_get_ip_info((tcpip_adapter_if_t)ESP_IF_WIFI_AP, &info);
                 softap_ip = htonl(info.ip.addr);
                 start_ip = htonl(poll->start_ip.addr);
                 end_ip = htonl(poll->end_ip.addr);
@@ -830,7 +832,7 @@ esp_err_t tcpip_adapter_set_dns_info(tcpip_adapter_if_t tcpip_if, tcpip_adapter_
         IP_SET_TYPE_VAL(dns->ip, IPADDR_TYPE_V4);
     }
 #else
-    ESP_LOGD(TAG, "set dns if=%d type=%d dns=%x", tcpip_if, type, ip_2_ip4(&(dns->ip))->addr);
+    ESP_LOGD(TAG, "set dns if=%d type=%d dns=%" PRIx32, tcpip_if, type, ip_2_ip4(&(dns->ip))->addr);
     IP_SET_TYPE_VAL(dns->ip, IPADDR_TYPE_V4);
 #endif
 
@@ -897,7 +899,8 @@ esp_err_t tcpip_adapter_dhcps_start(tcpip_adapter_if_t tcpip_if)
 
         if (p_netif != NULL && netif_is_up(p_netif)) {
             tcpip_adapter_ip_info_t default_ip;
-            tcpip_adapter_get_ip_info(ESP_IF_WIFI_AP, &default_ip);
+            /* ESP_IF_WIFI_AP (1) coincides with TCPIP_ADAPTER_IF_AP (1) */
+            tcpip_adapter_get_ip_info((tcpip_adapter_if_t)ESP_IF_WIFI_AP, &default_ip);
             dhcps_start(p_netif, default_ip.ip);
             dhcps_status = TCPIP_ADAPTER_DHCP_STARTED;
             ESP_LOGD(TAG, "dhcp server start successfully");
@@ -1066,7 +1069,7 @@ static esp_err_t tcpip_adapter_start_ip_lost_timer(tcpip_adapter_if_t tcpip_if)
         return ESP_OK;
     }
 
-    ESP_LOGD(TAG, "if%d start ip lost tmr: no need start because netif=%p interval=%d ip=%x", 
+    ESP_LOGD(TAG, "if%d start ip lost tmr: no need start because netif=%p interval=%d ip=%" PRIx32, 
                   tcpip_if, netif, CONFIG_IP_LOST_TIMER_INTERVAL, ip_info_old->ip.addr);
 
     return ESP_OK;

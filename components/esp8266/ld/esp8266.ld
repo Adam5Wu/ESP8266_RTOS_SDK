@@ -42,16 +42,3 @@ MEMORY
   /* RTC memory. Persists over deep sleep */
   rtc_data_seg(RW) :                 org = 0x60001200, len = 0x200
 }
-
-#ifndef CONFIG_COMPILER_CXX_EXCEPTIONS
-SECTIONS
-{
-  /DISCARD/ :
-  {
-    *(.eh_frame)
-    *(.eh_frame.*)
-    *(.gcc_except_table)
-    *(.gcc_except_table.*)
-  }
-}
-#endif

@@ -23,14 +23,8 @@
 #define _STR(_s)    #_s
 #define STR(_s)     _STR(_s)
 
-#if !defined(__NEWLIB__) || (__NEWLIB__ < 4)
-static struct _reent impure_data;
-
-/* This function is not part on newlib API, it is defined in libc/stdio/local.h
- * There is no nice way to get __cleanup member populated while avoiding __sinit,
- * so extern declaration is used here.
- */
-extern void _cleanup_r(struct _reent* r);
+#if !defined(__NEWLIB__) || __NEWLIB__ < 4
+#error "gcc16 branches require Newlib >= 4 (xtensa-esp-elf GCC 16)"
 #endif
 
 /**
@@ -44,22 +38,17 @@ extern void _cleanup_r(struct _reent* r);
 void esp_reent_init(struct _reent* r)
 {
     memset(r, 0, sizeof(*r));
-#if !defined(__NEWLIB__) || (__NEWLIB__ < 4)
-    r->_stdout = _GLOBAL_REENT->_stdout;
-    r->_stderr = _GLOBAL_REENT->_stderr;
-    r->_stdin  = _GLOBAL_REENT->_stdin;
-    r->__cleanup = &_cleanup_r;
-    r->__sdidinit = 1;
-    r->__sglue._next = NULL;
-    r->__sglue._niobs = 0;
-    r->__sglue._iobs = NULL;
-#else
-    if (r != _GLOBAL_REENT) {
+    if (r == _GLOBAL_REENT) {
+        /* Point at Newlib 4's static __sf[3] so freopen() reuses them instead of
+         * allocating a duplicate heap glue block. */
+        r->_stdin  = &__sf[0];
+        r->_stdout = &__sf[1];
+        r->_stderr = &__sf[2];
+    } else {
         r->_stdout = _GLOBAL_REENT->_stdout;
         r->_stderr = _GLOBAL_REENT->_stderr;
         r->_stdin  = _GLOBAL_REENT->_stdin;
     }
-#endif
 }
 
 /* only declared in private stdio header file, local.h */
@@ -87,13 +76,8 @@ void esp_reent_cleanup(void)
     }
 
     /* Clean up "glue" (lazily-allocated FILE objects) */
-#if !defined(__NEWLIB__) || (__NEWLIB__ < 4)
-    struct _glue* prev = &_GLOBAL_REENT->__sglue;
-    for (struct _glue* cur = _GLOBAL_REENT->__sglue._next; cur != NULL;) {
-#else
     struct _glue* prev = &__sglue;
     for (struct _glue* cur = __sglue._next; cur != NULL;) {
-#endif
         if (cur->_niobs == 0) {
             cur = cur->_next;
             continue;
@@ -135,27 +119,23 @@ int esp_newlib_init(void)
 {
     const char *default_uart_dev = "/dev/uart/" STR(CONFIG_CONSOLE_UART_NUM);
 
-#if !defined(__NEWLIB__) || (__NEWLIB__ < 4)
-    _global_impure_ptr = &impure_data;
-    esp_reent_init(_global_impure_ptr);
-#else
     _impure_ptr = _GLOBAL_REENT;
     esp_reent_init(_GLOBAL_REENT);
-#endif
 
     esp_vfs_dev_uart_register();
 
-    _GLOBAL_REENT->_stdout = fopen(default_uart_dev, "w");
-    if (!_GLOBAL_REENT->_stdout)
+    /* Reuse Newlib 4's static __sf[3] via freopen() to avoid allocating a duplicate
+     * heap glue block (~430 B). Open in stdin/stdout/stderr (0/1/2) order so
+     * _freopen_r's initial close() of __sf[i]._file (= i) never closes an already
+     * allocated VFS fd from s_fd_table[0..2]. */
+    if (!freopen(default_uart_dev, "r", stdin))
         goto err;
 
-    _GLOBAL_REENT->_stderr = fopen(default_uart_dev, "w");
-    if (!_GLOBAL_REENT->_stderr)
-        goto err_fail;
+    if (!freopen(default_uart_dev, "w", stdout))
+        goto err_stdin;
 
-    _GLOBAL_REENT->_stdin = fopen(default_uart_dev, "r");
-    if (!_GLOBAL_REENT->_stdin)
-        goto err_in;
+    if (!freopen(default_uart_dev, "w", stderr))
+        goto err_stdout;
 
     environ = malloc(sizeof(char*));
     if (!environ)
@@ -165,20 +145,16 @@ int esp_newlib_init(void)
     return 0;
 
 err_env:
-    fclose(_GLOBAL_REENT->_stdin);
-err_in:
-    fclose(_GLOBAL_REENT->_stderr);
-err_fail:
-    fclose(_GLOBAL_REENT->_stdout);
+    fclose(stderr);
+err_stdout:
+    fclose(stdout);
+err_stdin:
+    fclose(stdin);
 err:
     return -1;
 }
 
 struct _reent* __getreent()
 {
-#if !defined(__NEWLIB__) || (__NEWLIB__ < 4)
-    return _global_impure_ptr;
-#else
     return _impure_ptr ? _impure_ptr : _GLOBAL_REENT;
-#endif
 }

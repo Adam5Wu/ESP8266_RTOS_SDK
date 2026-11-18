@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #include "sdkconfig.h"
+#include <inttypes.h>
 #include "nvs.hpp"
 #include "nvs_flash.h"
 #include "nvs_storage.hpp"
@@ -293,7 +294,7 @@ extern "C" esp_err_t nvs_open(const char* name, nvs_open_mode_t open_mode, nvs_h
 extern "C" void nvs_close(nvs_handle_t handle)
 {
     Lock lock;
-    ESP_LOGD(TAG, "%s %d", __func__, handle);
+    ESP_LOGD(TAG, "%s %" PRIu32, __func__, handle);
     auto it = find_if(begin(s_nvs_handles), end(s_nvs_handles), [=](NVSHandleEntry& e) -> bool {
         return e.mHandle == handle;
     });

@@ -22,7 +22,7 @@ entries:
         * (iram_bss)
 
 [mapping:gcc]
-archive: libgcc.a
+archive: libgcc_romstrip.a
 entries:
     unwind-dw2 (inflash_text)
     unwind-dw2-fde (inflash_text)

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <inttypes.h>
 #include <string.h>
 
 #include "utils/includes.h"
@@ -405,7 +406,7 @@ struct wps_data *wps_init(void)
         }
 
         spin = wps_generate_pin();
-        sprintf((char *)data->dev_password, "%08d", spin);
+        sprintf((char *)data->dev_password, "%08" PRIu32, spin);
         wpa_hexdump_key(MSG_DEBUG, "WPS: AP PIN dev_password",
                         data->dev_password, data->dev_password_len);
         do {

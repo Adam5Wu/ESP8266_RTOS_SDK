@@ -16,6 +16,7 @@
 // libstdcxx threading framework to operate correctly. So not all original pthread routines are supported.
 //
 
+#include <inttypes.h>
 #include <time.h>
 #include <errno.h>
 #include <pthread.h>
@@ -324,7 +325,7 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
 
     *thread = (pthread_t)pthread; // pointer value fit into pthread_t (uint32_t)
 
-    ESP_LOGV(TAG, "Created task %x", (uint32_t)xHandle);
+    ESP_LOGV(TAG, "Created task %" PRIx32, (uint32_t)xHandle);
 
     return 0;
 }
@@ -514,14 +515,23 @@ int pthread_once(pthread_once_t *once_control, void (*init_routine)(void))
     }
 
     if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED) {
+        SemaphoreHandle_t new_mux = NULL;
+        if (s_once_mux == NULL) {
+            new_mux = xSemaphoreCreateRecursiveMutex();
+            if (new_mux == NULL) {
+                return ENOMEM;
+            }
+        }
         portENTER_CRITICAL();
         if (s_once_mux == NULL) {
-            s_once_mux = xSemaphoreCreateRecursiveMutex();
+            s_once_mux = new_mux;
+            new_mux = NULL;
         }
         portEXIT_CRITICAL();
-        if (s_once_mux != NULL) {
-            xSemaphoreTakeRecursive(s_once_mux, portMAX_DELAY);
+        if (new_mux != NULL) {
+            vSemaphoreDelete(new_mux);
         }
+        xSemaphoreTakeRecursive(s_once_mux, portMAX_DELAY);
     }
 
     if (once_control->init_executed == 0) {

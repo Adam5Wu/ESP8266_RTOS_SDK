@@ -2272,7 +2272,7 @@ void wpa_supplicant_stop_countermeasures(u16 *pisunicast)
 int wpa_michael_mic_failure(u16 isunicast)
 {
        struct wpa_sm *sm = &gWpaSm;
-       int32_t *pmic_errors_seen=(isunicast)? &((sm->install_ptk).mic_errors_seen) : &((sm->install_gtk).mic_errors_seen);
+       int *pmic_errors_seen=(isunicast)? &((sm->install_ptk).mic_errors_seen) : &((sm->install_gtk).mic_errors_seen);
     
     wpa_printf(MSG_DEBUG, "\nTKIP MIC failure occur\n");
     

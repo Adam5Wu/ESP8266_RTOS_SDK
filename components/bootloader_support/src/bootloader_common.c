@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -100,16 +101,16 @@ esp_comm_gpio_hold_t bootloader_common_check_long_hold_gpio(uint32_t num_pin, ui
 
     uint32_t tm_start = esp_log_early_timestamp();
     if (GPIO_INPUT_GET(num_pin) == 1) {
-        ESP_LOGD(TAG, "gpio %d not held", num_pin);
+        ESP_LOGD(TAG, "gpio %" PRIu32 " not held", num_pin);
         return GPIO_NOT_HOLD;
     }
     do {
         if (GPIO_INPUT_GET(num_pin) != 0) {
-            ESP_LOGD(TAG, "gpio %d short hold", num_pin);
+            ESP_LOGD(TAG, "gpio %" PRIu32 " short hold", num_pin);
             return GPIO_SHORT_HOLD;
         }
     } while (delay_sec > ((esp_log_early_timestamp() - tm_start) / 1000L));
-    ESP_LOGD(TAG, "gpio %d long hold", num_pin);
+    ESP_LOGD(TAG, "gpio %" PRIu32 " long hold", num_pin);
     return GPIO_LONG_HOLD;
 }
 
@@ -236,7 +237,7 @@ static void enumerate_partitions_for_erasure(const esp_partition_info_t *partiti
                     state = "no";
             }
         }
-        ESP_LOGI(TAG, "%2d %-16s %08x %08x [%s]", part_count, partition->label,
+        ESP_LOGI(TAG, "%2d %-16s %08" PRIx32 " %08" PRIx32 " [%s]", part_count, partition->label,
             partition->pos.offset, partition->pos.size, state);
     }
 }

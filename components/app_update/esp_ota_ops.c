@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -74,7 +75,7 @@ static inline int esp_ota_verify_binary(const esp_partition_pos_t *pos, esp_imag
 {
     const int32_t entry = image->entry_addr - 0x40200010;
 
-    ESP_LOGD(TAG, "OTA binary start entry 0x%x, partition start from 0x%x to 0x%x\n", entry, pos->offset,
+    ESP_LOGD(TAG, "OTA binary start entry 0x%" PRIx32 ", partition start from 0x%" PRIx32 " to 0x%" PRIx32 "\n", entry, pos->offset,
                         pos->offset + pos->size);
 
     if (pos->offset + pos->size <= 0x100000) {
@@ -133,7 +134,7 @@ esp_err_t esp_ota_begin(const esp_partition_t *partition, size_t image_size, esp
         return ret;
     }
 
-    new_entry = (ota_ops_entry_t *) calloc(sizeof(ota_ops_entry_t), 1);
+    new_entry = (ota_ops_entry_t *) calloc(1, sizeof(ota_ops_entry_t));
     if (new_entry == NULL) {
         return ESP_ERR_NO_MEM;
     }
@@ -543,20 +544,20 @@ const esp_partition_t *esp_ota_get_boot_partition(void)
         ESP_LOGD(TAG, "finding factory app......");
         return find_default_boot_partition();
     } else if (ota_select_valid(&s_ota_select[0]) && ota_select_valid(&s_ota_select[1])) {
-        ESP_LOGD(TAG, "finding ota_%d app......", \
+        ESP_LOGD(TAG, "finding ota_%" PRIu32 " app......", \
                  ESP_PARTITION_SUBTYPE_APP_OTA_MIN + ((OTA_MAX(s_ota_select[0].ota_seq, s_ota_select[1].ota_seq) - 1) % ota_app_count));
 
         return esp_partition_find_first(ESP_PARTITION_TYPE_APP, \
                                         ESP_PARTITION_SUBTYPE_APP_OTA_MIN + ((OTA_MAX(s_ota_select[0].ota_seq, s_ota_select[1].ota_seq) - 1) % ota_app_count), NULL);
     } else if (ota_select_valid(&s_ota_select[0])) {
-        ESP_LOGD(TAG, "finding ota_%d app......", \
+        ESP_LOGD(TAG, "finding ota_%" PRIu32 " app......", \
                  ESP_PARTITION_SUBTYPE_APP_OTA_MIN + (s_ota_select[0].ota_seq - 1) % ota_app_count);
 
         return esp_partition_find_first(ESP_PARTITION_TYPE_APP, \
                                         ESP_PARTITION_SUBTYPE_APP_OTA_MIN + (s_ota_select[0].ota_seq - 1) % ota_app_count, NULL);
 
     } else if (ota_select_valid(&s_ota_select[1])) {
-        ESP_LOGD(TAG, "finding ota_%d app......", \
+        ESP_LOGD(TAG, "finding ota_%" PRIu32 " app......", \
                  ESP_PARTITION_SUBTYPE_APP_OTA_MIN + (s_ota_select[1].ota_seq - 1) % ota_app_count);
 
         return esp_partition_find_first(ESP_PARTITION_TYPE_APP, \

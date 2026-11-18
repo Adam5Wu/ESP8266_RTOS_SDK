@@ -3,6 +3,16 @@ ENTRY(call_start_cpu);
 
 SECTIONS
 {
+#ifndef CONFIG_COMPILER_CXX_EXCEPTIONS
+  /DISCARD/ :
+  {
+    *(.eh_frame)
+    *(.eh_frame.*)
+    *(.gcc_except_table)
+    *(.gcc_except_table.*)
+  }
+
+#endif
   /* RTC data section holds RTC wake data/rodata
      marked with RTC_DATA_ATTR, RTC_RODATA_ATTR attributes.
   */
@@ -213,7 +223,11 @@ SECTIONS
     *(.gnu.version_r)
     . = (. + 3) & ~ 3;
     __eh_frame = ABSOLUTE(.);
+#ifdef CONFIG_COMPILER_CXX_EXCEPTIONS
+    KEEP(*(.eh_frame))
+#else
     *(.eh_frame)
+#endif
     . = (. + 7) & ~ 3;
     /*  C++ constructor and destructor tables
 

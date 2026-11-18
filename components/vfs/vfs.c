@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <inttypes.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
@@ -592,6 +594,10 @@ int esp_vfs_fstat(struct _reent *r, int fd, struct stat * st)
     }
     int ret;
     CHECK_AND_CALL(ret, r, vfs, fstat, local_fd, st);
+    // Newlib >= 4 sizes FILE buffers from st_blksize; LittleFS reports 4096 and DRAM is scarce.
+    if (ret == 0 && st && st->st_blksize > BUFSIZ) {
+        st->st_blksize = BUFSIZ;
+    }
     return ret;
 }
 
@@ -613,6 +619,10 @@ int esp_vfs_stat(struct _reent *r, const char * path, struct stat * st)
     }
     int ret;
     CHECK_AND_CALL(ret, r, vfs, stat, path_within_vfs, st);
+    // Newlib >= 4 sizes FILE buffers from st_blksize; LittleFS reports 4096 and DRAM is scarce.
+    if (ret == 0 && st && st->st_blksize > BUFSIZ) {
+        st->st_blksize = BUFSIZ;
+    }
     return ret;
 }
 
@@ -1147,7 +1157,7 @@ int esp_vfs_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *errorfds
         if (timeout) {
             uint32_t timeout_ms = timeout->tv_sec * 1000 + timeout->tv_usec / 1000;
             ticks_to_wait = timeout_ms / portTICK_PERIOD_MS;
-            ESP_LOGD(TAG, "timeout is %dms", timeout_ms);
+            ESP_LOGD(TAG, "timeout is %" PRIu32 "ms", timeout_ms);
         }
         ESP_LOGD(TAG, "waiting without calling socket_select");
         xSemaphoreTake(sel_sem.sem, ticks_to_wait);

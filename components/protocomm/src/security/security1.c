@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -372,7 +373,7 @@ static esp_err_t sec1_session_setup(uint32_t session_id,
     }
 
     if (session_id != cur_session->id) {
-        ESP_LOGE(TAG, "Invalid session ID : %d (expected %d)", session_id, cur_session->id);
+        ESP_LOGE(TAG, "Invalid session ID : %" PRIu32 " (expected %" PRIu32 ")", session_id, cur_session->id);
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -453,7 +454,7 @@ static esp_err_t sec1_new_session(uint32_t session_id)
 {
     if (cur_session) {
         /* Only one session is allowed at a time */
-        ESP_LOGE(TAG, "Closing old session with id %u", cur_session->id);
+        ESP_LOGE(TAG, "Closing old session with id %" PRIu32, cur_session->id);
         sec1_close_session(cur_session->id);
     }
 
@@ -475,7 +476,7 @@ static esp_err_t sec1_init()
 static esp_err_t sec1_cleanup()
 {
     if (cur_session) {
-        ESP_LOGD(TAG, "Closing current session with id %u", cur_session->id);
+        ESP_LOGD(TAG, "Closing current session with id %" PRIu32, cur_session->id);
         sec1_close_session(cur_session->id);
     }
     return ESP_OK;
@@ -490,7 +491,7 @@ static esp_err_t sec1_decrypt(uint32_t session_id,
     }
 
     if (!cur_session || cur_session->id != session_id) {
-        ESP_LOGE(TAG, "Session with ID %d not found", session_id);
+        ESP_LOGE(TAG, "Session with ID %" PRIu32 " not found", session_id);
         return ESP_ERR_INVALID_STATE;
     }
 

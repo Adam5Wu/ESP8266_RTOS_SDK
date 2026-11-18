@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <inttypes.h>
 #include <stdbool.h>
 #include <string.h>
 
@@ -47,7 +48,7 @@ esp_err_t esp_partition_table_basic_verify(const esp_partition_info_t *partition
             const esp_partition_pos_t *pos = &part->pos;
             if (pos->offset > chip_size || pos->offset + pos->size > chip_size) {
                 if (log_errors) {
-                    ESP_LOGE(TAG, "Partition %d invalid - offset 0x%x size 0x%x exceeds flash chip size 0x%x",
+                    ESP_LOGE(TAG, "Partition %d invalid - offset 0x%" PRIx32 " size 0x%" PRIx32 " exceeds flash chip size 0x%" PRIx32,
                              num_parts, pos->offset, pos->size, chip_size);
                 }
                 return ESP_ERR_INVALID_SIZE;

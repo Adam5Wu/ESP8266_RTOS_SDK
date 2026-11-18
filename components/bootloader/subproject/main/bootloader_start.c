@@ -14,6 +14,7 @@
 
 #include "sdkconfig.h"
 
+#include <inttypes.h>
 #include <string.h>
 #include "bootloader_config.h"
 #include "bootloader_init.h"
@@ -34,7 +35,7 @@ void call_start_cpu(void)
     esp_irqflag_t irq;
 
     irq = soc_save_local_irq();
-    ESP_LOGD(TAG, "CPU local irq: 0x%x", irq);
+    ESP_LOGD(TAG, "CPU local irq: 0x%" PRIx32, irq);
 
 #ifdef CONFIG_BOOTLOADER_FAST_BOOT
     REG_SET_BIT(DPORT_CTL_REG, DPORT_CTL_DOUBLE_CLK);

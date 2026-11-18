@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -195,7 +196,7 @@ static void IRAM_ATTR i2s_intr_handler_default(void *arg)
     lldesc_t *finish_desc;
 
     if (dma_reg->int_st.tx_dscr_err || dma_reg->int_st.rx_dscr_err) {
-        ESP_EARLY_LOGE(I2S_TAG, "dma error, interrupt status: 0x%08x", dma_reg->int_st.val);
+        ESP_EARLY_LOGE(I2S_TAG, "dma error, interrupt status: 0x%08" PRIx32, dma_reg->int_st.val);
 
         if (p_i2s->i2s_queue) {
             i2s_event.type = I2S_EVENT_DMA_ERROR;
@@ -481,7 +482,7 @@ static esp_err_t i2s_set_rate(i2s_port_t i2s_num, uint32_t rate)
 
     for (uint8_t i = 1; i < 64; i++) {
         for (uint8_t j = i; j < 64; j++) {
-            float new_delta = abs(((float)scaled_base_freq / i / j) - rate);
+            float new_delta = fabsf(((float)scaled_base_freq / i / j) - rate);
 
             if (new_delta < delta_best) {
                 delta_best = new_delta;

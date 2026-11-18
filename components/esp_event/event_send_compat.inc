@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <inttypes.h>
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_event_legacy.h"
@@ -163,7 +164,7 @@ static void esp_system_event_debug(const system_event_t* event)
         }
         case SYSTEM_EVENT_SCAN_DONE: {
             const system_event_sta_scan_done_t *scan_done = &event->event_info.scan_done;
-            ESP_LOGD(TAG, "SYSTEM_EVENT_SCAN_DONE, status:%d, number:%d",  scan_done->status, scan_done->number);
+            ESP_LOGD(TAG, "SYSTEM_EVENT_SCAN_DONE, status:%" PRIu32 ", number:%d",  scan_done->status, scan_done->number);
             break;
         }
         case SYSTEM_EVENT_STA_START: {
@@ -253,7 +254,7 @@ static void esp_system_event_debug(const system_event_t* event)
         }
         case SYSTEM_EVENT_STA_BSS_RSSI_LOW: {
             const system_event_bss_rssi_low_t *bss_rssi_low = &event->event_info.bss_rssi_low;
-            ESP_LOGD(TAG, "SYSTEM_EVENT_STA_BSS_RSSI_LOW, rssi:%d", bss_rssi_low->rssi);
+            ESP_LOGD(TAG, "SYSTEM_EVENT_STA_BSS_RSSI_LOW, rssi:%" PRId32, bss_rssi_low->rssi);
             break;
         }
 #if LWIP_IPV6

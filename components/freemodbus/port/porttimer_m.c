@@ -34,6 +34,7 @@
  */
 
 /* ----------------------- Platform includes --------------------------------*/
+#include <inttypes.h>
 #include "port.h"
 
 /* ----------------------- Modbus includes ----------------------------------*/
@@ -73,7 +74,7 @@ BOOL xMBMasterPortTimersInit(USHORT msTimeOut)
 static BOOL xMBMasterPortTimersEnable(USHORT msTimeOut)
 {
     MB_PORT_CHECK((msTimeOut > 0), FALSE,
-                            "incorrect tick value for timer = (0x%x).",
+                            "incorrect tick value for timer = (0x%" PRIx32 ").",
                             (uint32_t)msTimeOut);
     ESP_ERROR_CHECK(esp_timer_stop(xTimerIntHandle));
     ESP_ERROR_CHECK(esp_timer_start_once(xTimerIntHandle, msTimeOut * 1000));

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <inttypes.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_log.h>
@@ -44,13 +45,13 @@ static esp_err_t common_post_handler(httpd_req_t *req)
     if (cur_session_id != session_id) {
         /* Initialize new security session */
         if (session_id != PROTOCOMM_NO_SESSION_ID) {
-            ESP_LOGD(TAG, "Closing session with ID: %d", session_id);
+            ESP_LOGD(TAG, "Closing session with ID: %" PRIu32, session_id);
             /* Presently HTTP server doesn't support callback on socket closure so
              * previous session can only be closed when new session is requested */
             if (pc_httpd->sec && pc_httpd->sec->close_transport_session) {
                 ret = pc_httpd->sec->close_transport_session(session_id);
                 if (ret != ESP_OK) {
-                    ESP_LOGE(TAG, "Failed to close session with ID: %d", session_id);
+                    ESP_LOGE(TAG, "Failed to close session with ID: %" PRIu32, session_id);
                     ret = ESP_FAIL;
                     goto out;
                 }

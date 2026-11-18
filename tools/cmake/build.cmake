@@ -95,7 +95,6 @@ function(__build_set_default_build_specifications)
 
     list(APPEND compile_options     "-ffunction-sections"
                                     "-fdata-sections"
-                                    "-mtext-section-literals"
                                     "-fno-builtin-memcpy"
                                     "-fno-builtin-memset"
                                     "-fno-builtin-memmove"
@@ -110,14 +109,6 @@ function(__build_set_default_build_specifications)
                                     "-Wno-error=unused-but-set-variable"
                                     "-Wno-error=unused-variable"
                                     "-Wno-error=deprecated-declarations"
-                                    "-Wno-error=format"
-                                    "-Wno-error=array-bounds"
-                                    "-Wno-error=stringop-overflow"
-                                    "-Wno-error=stringop-overread"
-                                    "-Wno-error=dangling-pointer"
-                                    "-Wno-error=address-of-packed-member"
-                                    "-Wno-error=enum-conversion"
-                                    "-Wno-error=implicit-fallthrough"
                                     "-Wextra"
                                     "-Wno-unused-parameter"
                                     "-Wno-sign-compare"
@@ -126,12 +117,14 @@ function(__build_set_default_build_specifications)
                                     "-ggdb")
 
     list(APPEND c_compile_options   "-std=gnu99"
-                                    "-Wno-old-style-declaration"
-                                    "-Wno-error=incompatible-pointer-types"
-                                    "-Wno-error=array-parameter")
+                                    "-mtext-section-literals"
+                                    "-Wno-old-style-declaration")
 
     list(APPEND cxx_compile_options "-std=gnu++11"
+                                    "-mtext-section-literals"
                                     "-fno-rtti"
+                                    # Deliberate size/heap optimisation (saves flash and guard mutexes);
+                                    # function-local statics are therefore NOT task-safe (pthread_once works if needed).
                                     "-fno-threadsafe-statics")
 
     idf_build_set_property(COMPILE_DEFINITIONS "${compile_definitions}" APPEND)

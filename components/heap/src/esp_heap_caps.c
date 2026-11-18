@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <inttypes.h>
 #include <string.h>
 #include <assert.h>
 #include <stdbool.h>
@@ -117,7 +118,7 @@ void IRAM_ATTR *_heap_caps_malloc(size_t size, uint32_t caps, const char *file, 
         size_t head_size;
 
         if ((g_heap_region[num].caps & caps) != caps) {
-            ESP_EARLY_LOGV(TAG, "caps in %x, num %d region %x @ %p", caps, num, g_heap_region[num].caps, &g_heap_region[num]);
+            ESP_EARLY_LOGV(TAG, "caps in %" PRIx32 ", num %" PRIu32 " region %" PRIx32 " @ %p", caps, num, g_heap_region[num].caps, &g_heap_region[num]);
             continue;
         }
 
@@ -129,7 +130,7 @@ void IRAM_ATTR *_heap_caps_malloc(size_t size, uint32_t caps, const char *file, 
 
         mem_blk_size = ptr2memblk_size(size, trace);
 
-        ESP_EARLY_LOGV(TAG, "malloc size is %d(%x) blk size is %d(%x) region is %d", size, size,
+        ESP_EARLY_LOGV(TAG, "malloc size is %d(%x) blk size is %" PRIu32 "(%" PRIx32 ") region is %" PRIu32, size, size,
                             mem_blk_size, mem_blk_size, num);
 
         if (mem_blk_size > g_heap_region[num].free_bytes)

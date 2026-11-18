@@ -31,7 +31,7 @@ void spiffs_api_unlock(spiffs *fs)
     xSemaphoreGive(((esp_spiffs_t *)(fs->user_data))->lock);
 }
 
-s32_t spiffs_api_read(spiffs *fs, uint32_t addr, uint32_t size, uint8_t *dst)
+s32_t spiffs_api_read(spiffs *fs, u32_t addr, u32_t size, u8_t *dst)
 {
     esp_err_t err = esp_partition_read(((esp_spiffs_t *)(fs->user_data))->partition, 
                                         addr, dst, size);
@@ -42,7 +42,7 @@ s32_t spiffs_api_read(spiffs *fs, uint32_t addr, uint32_t size, uint8_t *dst)
     return 0;
 }
 
-s32_t spiffs_api_write(spiffs *fs, uint32_t addr, uint32_t size, uint8_t *src)
+s32_t spiffs_api_write(spiffs *fs, u32_t addr, u32_t size, u8_t *src)
 {
     esp_err_t err = esp_partition_write(((esp_spiffs_t *)(fs->user_data))->partition, 
                                         addr, src, size);
@@ -53,7 +53,7 @@ s32_t spiffs_api_write(spiffs *fs, uint32_t addr, uint32_t size, uint8_t *src)
     return 0;
 }
 
-s32_t spiffs_api_erase(spiffs *fs, uint32_t addr, uint32_t size)
+s32_t spiffs_api_erase(spiffs *fs, u32_t addr, u32_t size)
 {
     esp_err_t err = esp_partition_erase_range(((esp_spiffs_t *)(fs->user_data))->partition, 
                                         addr, size);
@@ -65,7 +65,7 @@ s32_t spiffs_api_erase(spiffs *fs, uint32_t addr, uint32_t size)
 }
 
 void spiffs_api_check(spiffs *fs, spiffs_check_type type, 
-                            spiffs_check_report report, uint32_t arg1, uint32_t arg2)
+                            spiffs_check_report report, u32_t arg1, u32_t arg2)
 {
     static const char * spiffs_check_type_str[3] = {
         "LOOKUP",

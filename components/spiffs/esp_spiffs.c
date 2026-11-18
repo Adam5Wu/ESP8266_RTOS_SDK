@@ -22,6 +22,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include <inttypes.h>
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/errno.h>
@@ -139,7 +140,7 @@ static esp_err_t esp_spiffs_init(const esp_vfs_spiffs_conf_t* conf)
     uint32_t flash_page_size = g_rom_flashchip.page_size;
     uint32_t log_page_size = CONFIG_SPIFFS_PAGE_SIZE;
     if (log_page_size % flash_page_size != 0) {
-        ESP_LOGE(TAG, "SPIFFS_PAGE_SIZE is not multiple of flash chip page size (%d)",
+        ESP_LOGE(TAG, "SPIFFS_PAGE_SIZE is not multiple of flash chip page size (%" PRIu32 ")",
                 flash_page_size);
         return ESP_ERR_INVALID_ARG;
     }

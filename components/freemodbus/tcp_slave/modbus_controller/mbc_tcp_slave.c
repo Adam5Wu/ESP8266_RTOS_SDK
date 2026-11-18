@@ -16,6 +16,7 @@
 // mbc_tcp_slave.c
 // Implementation of the Modbus controller TCP slave
 
+#include <inttypes.h>
 #include <sys/time.h>               // for calculation of time stamp in milliseconds
 #include "esp_log.h"                // for log_write
 #include "mb.h"                     // for mb types definition
@@ -96,7 +97,7 @@ static esp_err_t mbc_tcp_slave_start(void)
 
     status = eMBEnable();
     MB_SLAVE_CHECK((status == MB_ENOERR), ESP_ERR_INVALID_STATE,
-            "mb TCP stack start failure, eMBEnable() returned (0x%x).", (uint32_t)status);
+            "mb TCP stack start failure, eMBEnable() returned (0x%" PRIx32 ").", (uint32_t)status);
     // Set the mbcontroller start flag
     EventBits_t flag = xEventGroupSetBits(mbs_opts->mbs_event_group,
                                             (EventBits_t)MB_EVENT_STACK_STARTED);
@@ -134,12 +135,12 @@ esp_err_t mbc_tcp_slave_set_descriptor(const mb_register_area_descriptor_t descr
     MB_SLAVE_ASSERT(mbs_interface_ptr != NULL);
     mb_slave_options_t* mbs_opts = &mbs_interface_ptr->opts;
     MB_SLAVE_CHECK(((descr_info.type < MB_PARAM_COUNT) && (descr_info.type >= MB_PARAM_HOLDING)),
-                ESP_ERR_INVALID_ARG, "mb incorrect modbus instance type = (0x%x).",
+                ESP_ERR_INVALID_ARG, "mb incorrect modbus instance type = (0x%" PRIx32 ").",
                 (uint32_t)descr_info.type);
     MB_SLAVE_CHECK((descr_info.address != NULL),
                 ESP_ERR_INVALID_ARG, "mb instance pointer is NULL.");
     MB_SLAVE_CHECK((descr_info.size >= MB_INST_MIN_SIZE) && (descr_info.size < (MB_INST_MAX_SIZE)),
-                ESP_ERR_INVALID_ARG, "mb instance size is incorrect = (0x%x).",
+                ESP_ERR_INVALID_ARG, "mb instance size is incorrect = (0x%" PRIx32 ").",
                 (uint32_t)descr_info.size);
     mbs_opts->mbs_area_descriptors[descr_info.type] = descr_info;
     return ESP_OK;
@@ -162,7 +163,7 @@ static esp_err_t send_param_info(mb_event_group_t par_type, uint16_t mb_offset,
     BaseType_t status = xQueueSend(mbs_opts->mbs_notification_queue_handle,
                                     &par_info, MB_PAR_INFO_TOUT);
     if (pdTRUE == status) {
-        ESP_LOGD(MB_SLAVE_TAG, "Queue send parameter info (type, address, size): %d, 0x%.4x, %d",
+        ESP_LOGD(MB_SLAVE_TAG, "Queue send parameter info (type, address, size): %d, 0x%.4" PRIx32 ", %d",
                 par_type, (uint32_t)par_address, par_size);
         error = ESP_OK;
     } else if (errQUEUE_FULL == status) {
@@ -456,7 +457,7 @@ esp_err_t mbc_tcp_slave_create(void** handler)
     if (status != pdPASS) {
         vTaskDelete(mbs_opts->mbs_task_handle);
         MB_SLAVE_CHECK((status == pdPASS), ESP_ERR_NO_MEM,
-                "mb controller task creation error, xTaskCreate() returns (0x%x).",
+                "mb controller task creation error, xTaskCreate() returns (0x%" PRIx32 ").",
                 (uint32_t)status);
     }
 

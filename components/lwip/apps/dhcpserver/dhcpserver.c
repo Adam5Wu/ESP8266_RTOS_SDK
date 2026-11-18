@@ -340,7 +340,8 @@ static u8_t *add_offer_options(u8_t *optptr)
         //bzero(&if_ip, sizeof(struct ip_info));
         memset(&if_ip , 0x00, sizeof(tcpip_adapter_ip_info_t));
 
-        tcpip_adapter_get_ip_info(ESP_IF_WIFI_AP, &if_ip);
+        /* ESP_IF_WIFI_AP (1) coincides with TCPIP_ADAPTER_IF_AP (1) */
+        tcpip_adapter_get_ip_info((tcpip_adapter_if_t)ESP_IF_WIFI_AP, &if_ip);
 
         if (!ip4_addr_isany_val(if_ip.gw)) {
             *optptr++ = DHCP_OPTION_ROUTER;

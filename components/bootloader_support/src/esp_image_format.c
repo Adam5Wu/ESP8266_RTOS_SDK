@@ -243,9 +243,7 @@ static esp_err_t verify_image_header(uint32_t src_addr, const esp_image_header_t
         if (image->spi_mode > ESP_IMAGE_SPI_MODE_SLOW_READ) {
             ESP_LOGW(TAG, "image at 0x%x has invalid SPI mode %d", src_addr, image->spi_mode);
         }
-        if (image->spi_speed > ESP_IMAGE_SPI_SPEED_80M) {
-            ESP_LOGW(TAG, "image at 0x%x has invalid SPI speed %d", src_addr, image->spi_speed);
-        }
+        /* image->spi_speed is a 4-bit field and ESP_IMAGE_SPI_SPEED_80M (0xF) is already max. */
         if (image->spi_size > ESP_IMAGE_FLASH_SIZE_MAX) {
             ESP_LOGW(TAG, "image at 0x%x has invalid SPI size %d", src_addr, image->spi_size);
         }
@@ -585,6 +583,7 @@ static void debug_log_hash(const uint8_t *image_hash, const char *label)
 
 #ifdef CONFIG_IDF_TARGET_ESP8266
 
+#include <inttypes.h>
 #include <string.h>
 #include <stdlib.h>
 #include <sys/param.h>
@@ -675,13 +674,13 @@ esp_err_t esp_image_load(esp_image_load_mode_t mode, const esp_partition_pos_t *
 
     if (part->size > SIXTEEN_MB) {
         err = ESP_ERR_INVALID_ARG;
-        FAIL_LOAD("partition size 0x%x invalid, larger than 16MB", part->size);
+        FAIL_LOAD("partition size 0x%" PRIx32 " invalid, larger than 16MB", part->size);
     }
 
     bzero(data, sizeof(esp_image_metadata_t));
     data->start_addr = part->offset;
 
-    ESP_LOGD(TAG, "reading image header @ 0x%x", data->start_addr);
+    ESP_LOGD(TAG, "reading image header @ 0x%" PRIx32, data->start_addr);
     err = bootloader_flash_read(data->start_addr, &data->image, sizeof(esp_image_header_t), true);
     if (err != ESP_OK) {
         goto err;
@@ -705,7 +704,7 @@ esp_err_t esp_image_load(esp_image_load_mode_t mode, const esp_partition_pos_t *
 #endif
 #endif
 
-    ESP_LOGD(TAG, "image header: 0x%02x 0x%02x 0x%02x 0x%02x %08x",
+    ESP_LOGD(TAG, "image header: 0x%02x 0x%02x 0x%02x 0x%02x %08" PRIx32,
              data->image.magic,
              data->image.segment_count,
              data->image.spi_mode,
@@ -718,7 +717,7 @@ goto err;
     }
 
     if (data->image.segment_count > ESP_IMAGE_MAX_SEGMENTS) {
-        FAIL_LOAD("image at 0x%x segment count %d exceeds max %d",
+        FAIL_LOAD("image at 0x%" PRIx32 " segment count %d exceeds max %d",
                   data->start_addr, data->image.segment_count, ESP_IMAGE_MAX_SEGMENTS);
     }
 
@@ -726,7 +725,7 @@ goto err;
 
     for(int i = 0; i < data->image.segment_count; i++) {
         esp_image_segment_header_t *header = &data->segments[i];
-        ESP_LOGV(TAG, "loading segment header %d at offset 0x%x", i, next_addr);
+        ESP_LOGV(TAG, "loading segment header %d at offset 0x%" PRIx32, i, next_addr);
         err = process_segment(i, next_addr, header, silent, do_load, sha_handle, &checksum_word);
         if (err != ESP_OK) {
             goto err;
@@ -743,7 +742,7 @@ goto err;
     }
 
     data->image_len = end_addr - data->start_addr;
-    ESP_LOGV(TAG, "image start 0x%08x end of last section 0x%08x", data->start_addr, end_addr);
+    ESP_LOGV(TAG, "image start 0x%08" PRIx32 " end of last section 0x%08" PRIx32, data->start_addr, end_addr);
 #ifdef CONFIG_ENABLE_BOOT_CHECK_OCD
     if (!esp_cpu_in_ocd_debug_mode()) {
 #endif
@@ -755,7 +754,7 @@ goto err;
     }
 #endif
     if (data->image_len > part->size) {
-        FAIL_LOAD("Image length %d doesn't fit in partition length %d", data->image_len, part->size);
+        FAIL_LOAD("Image length %" PRIu32 " doesn't fit in partition length %" PRIu32, data->image_len, part->size);
     }
 
     bool is_bootloader = (data->start_addr == ESP_BOOTLOADER_OFFSET);
@@ -829,19 +828,17 @@ static esp_err_t verify_image_header(uint32_t src_addr, const esp_image_header_t
 
     if (image->magic != ESP_IMAGE_HEADER_MAGIC) {
         if (!silent) {
-            ESP_LOGE(TAG, "image at 0x%x has invalid magic byte", src_addr);
+            ESP_LOGE(TAG, "image at 0x%" PRIx32 " has invalid magic byte", src_addr);
         }
         err = ESP_ERR_IMAGE_INVALID;
     }
     if (!silent) {
         if (image->spi_mode > ESP_IMAGE_SPI_MODE_SLOW_READ) {
-            ESP_LOGW(TAG, "image at 0x%x has invalid SPI mode %d", src_addr, image->spi_mode);
+            ESP_LOGW(TAG, "image at 0x%" PRIx32 " has invalid SPI mode %d", src_addr, image->spi_mode);
         }
-        if (image->spi_speed > ESP_IMAGE_SPI_SPEED_80M) {
-            ESP_LOGW(TAG, "image at 0x%x has invalid SPI speed %d", src_addr, image->spi_speed);
-        }
+        /* image->spi_speed is a 4-bit field and ESP_IMAGE_SPI_SPEED_80M (0xF) is already max. */
         if (image->spi_size > ESP_IMAGE_FLASH_SIZE_MAX) {
-            ESP_LOGW(TAG, "image at 0x%x has invalid SPI size %d", src_addr, image->spi_size);
+            ESP_LOGW(TAG, "image at 0x%" PRIx32 " has invalid SPI size %d", src_addr, image->spi_size);
         }
     }
     return err;
@@ -855,7 +852,7 @@ static esp_err_t process_segment(int index, uint32_t flash_addr, esp_image_segme
     memset(header, 0, sizeof(esp_image_segment_header_t));
     err = bootloader_flash_read(flash_addr, header, sizeof(esp_image_segment_header_t), true);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "bootloader_flash_read failed at 0x%08x", flash_addr);
+        ESP_LOGE(TAG, "bootloader_flash_read failed at 0x%08" PRIx32, flash_addr);
         return err;
     }
 #ifdef CONFIG_APP_UPDATE_CHECK_APP_HASH
@@ -868,7 +865,7 @@ static esp_err_t process_segment(int index, uint32_t flash_addr, esp_image_segme
     uint32_t data_len = header->data_len;
     uint32_t data_addr = flash_addr + sizeof(esp_image_segment_header_t);
 
-    ESP_LOGV(TAG, "segment data length 0x%x data starts 0x%x", data_len, data_addr);
+    ESP_LOGV(TAG, "segment data length 0x%" PRIx32 " data starts 0x%" PRIx32, data_len, data_addr);
 
     err = verify_segment_header(index, header, data_addr, silent);
     if (err != ESP_OK) {
@@ -876,14 +873,14 @@ static esp_err_t process_segment(int index, uint32_t flash_addr, esp_image_segme
     }
 
     if (data_len % 4 != 0) {
-        FAIL_LOAD("unaligned segment length 0x%x", data_len);
+        FAIL_LOAD("unaligned segment length 0x%" PRIx32, data_len);
     }
 
     bool is_mapping = should_map(load_addr);
     do_load = do_load && should_load(load_addr);
 
     if (!silent) {
-        ESP_LOGI(TAG, "segment %d: paddr=0x%08x vaddr=0x%08x size=0x%05x (%6d) %s",
+        ESP_LOGI(TAG, "segment %d: paddr=0x%08" PRIx32 " vaddr=0x%08x size=0x%05" PRIx32 " (%6" PRIu32 ") %s",
                  index, data_addr, load_addr,
                  data_len, data_len,
                  (do_load)?"load":(is_mapping)?"map":"");
@@ -1052,7 +1049,7 @@ static esp_err_t verify_checksum(bootloader_sha256_handle_t sha_handle, uint32_t
     uint8_t buf[16];
     err = bootloader_flash_read(data->start_addr + unpadded_length, buf, length - unpadded_length, true);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "bootloader read flash @ 0x%x %d error %d", data->start_addr + unpadded_length, length - unpadded_length, err);
+        ESP_LOGE(TAG, "bootloader read flash @ 0x%" PRIx32 " %" PRIu32 " error %d", data->start_addr + unpadded_length, length - unpadded_length, err);
         return ESP_ERR_IMAGE_INVALID;
     }
 

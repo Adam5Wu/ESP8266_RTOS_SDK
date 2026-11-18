@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "sdkconfig.h"
+#include <inttypes.h>
 #include <string.h>
 #include "esp_system.h"
 #include "esp_private/esp_system_internal.h"
@@ -126,7 +127,7 @@ static void __esp_reset_reason_init(int init)
     }
 
     if (init)
-        ESP_LOGD(TAG, "RTC reset %u wakeup %u store %u, reason is %u", hw_reset, hw_wakeup, hint, s_reset_reason);
+        ESP_LOGD(TAG, "RTC reset %" PRIu32 " wakeup %" PRIu32 " store %" PRIu32 ", reason is %" PRIu32, hw_reset, hw_wakeup, hint, s_reset_reason);
 }
 
 /**

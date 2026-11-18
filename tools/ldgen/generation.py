@@ -479,11 +479,17 @@ class TemplateModel:
 
     Marker = collections.namedtuple("Marker", "target indent rules")
 
-    def __init__(self, template_file):
+    def __init__(self, template_file, sdkconfig=None):
         self.members = []
         self.file = os.path.realpath(template_file.name)
+        self.sdkconfig = sdkconfig
 
         self._generate_members(template_file)
+
+    def _eval_ifdef(self, sym):
+        if sym.startswith("CONFIG_"):
+            sym = sym[len("CONFIG_"):]
+        return self.sdkconfig.evaluate_expression(sym)
 
     def _generate_members(self, template_file):
         lines = template_file.readlines()
@@ -492,9 +498,36 @@ class TemplateModel:
         reference = Suppress("mapping") + Suppress("[") + target.setResultsName("target") + Suppress("]")
         pattern = White(" \t").setResultsName("indent") + reference
 
+        cond_stack = []  # stack of [branch_active, parent_active, seen_else]
+
         # Find the markers in the template file line by line. If line does not match marker grammar,
         # set it as a literal to be copied as is to the output file.
         for line in lines:
+            if self.sdkconfig is not None:
+                stripped = line.strip()
+                if stripped.startswith("#ifdef "):
+                    sym = stripped[7:].strip()
+                    parent_active = not cond_stack or cond_stack[-1][0]
+                    cond_stack.append([parent_active and self._eval_ifdef(sym), parent_active, False])
+                    continue
+                if stripped.startswith("#ifndef "):
+                    sym = stripped[8:].strip()
+                    parent_active = not cond_stack or cond_stack[-1][0]
+                    cond_stack.append([parent_active and (not self._eval_ifdef(sym)), parent_active, False])
+                    continue
+                if stripped == "#else":
+                    if not cond_stack or cond_stack[-1][2]:
+                        raise GenerationException("Unexpected #else in linker script template '%s'." % self.file)
+                    prev_active, parent_active, _ = cond_stack[-1]
+                    cond_stack[-1] = [parent_active and (not prev_active), parent_active, True]
+                    continue
+                if stripped == "#endif":
+                    if not cond_stack:
+                        raise GenerationException("Unexpected #endif in linker script template '%s'." % self.file)
+                    cond_stack.pop()
+                    continue
+                if cond_stack and not cond_stack[-1][0]:
+                    continue
             try:
                 parsed = pattern.parseString(line)
 
@@ -507,6 +540,9 @@ class TemplateModel:
             except ParseException:
                 # Does not match marker syntax
                 self.members.append(line)
+
+        if cond_stack:
+            raise GenerationException("Unterminated #ifdef/#ifndef in linker script template '%s'." % self.file)
 
     def fill(self, mapping_rules):
         for member in self.members:

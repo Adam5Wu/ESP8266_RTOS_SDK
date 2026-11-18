@@ -6,31 +6,8 @@ if(BOOTLOADER_BUILD)
     register_component(esp8266)
 
     idf_build_get_property(_idf_path IDF_PATH)
-    idf_build_get_property(_strip_python PYTHON)
-    if(NOT _strip_python)
-        set(_strip_python "python")
-    endif()
-    set(_stripped_libgcc_dir "${CMAKE_BINARY_DIR}/rom_stripped_lib")
-    set(_stripped_libgcc "${_stripped_libgcc_dir}/libgcc.a")
-    get_filename_component(_esp_cc_name "${CMAKE_C_COMPILER}" NAME)
-    set(_strip_cflags)
-    if(_esp_cc_name MATCHES "xtensa-esp-elf")
-        list(APPEND _strip_cflags "--cflag=-mdynconfig=xtensa_esp8266.so")
-    endif()
-
-    execute_process(
-        COMMAND "${_strip_python}" "${_idf_path}/tools/cmake/scripts/strip_rom_libgcc.py"
-            --cc "${CMAKE_C_COMPILER}"
-            --ar "${CMAKE_AR}"
-            --nm "${CMAKE_NM}"
-            ${_strip_cflags}
-            --rom-ld "${CMAKE_CURRENT_SOURCE_DIR}/ld/esp8266.rom.ld"
-            --output "${_stripped_libgcc}"
-        RESULT_VARIABLE _strip_libgcc_res
-    )
-    if(NOT _strip_libgcc_res EQUAL 0)
-        message(FATAL_ERROR "strip_rom_libgcc.py failed for bootloader (exit ${_strip_libgcc_res})")
-    endif()
+    include("${_idf_path}/tools/cmake/romstrip.cmake")
+    esp8266_generate_romstrip_libgcc(_romstrip_libgcc)
 
     # as cmake won't attach linker args to a header-only library, attach
     # linker args directly to the bootloader.elf
@@ -40,9 +17,8 @@ if(BOOTLOADER_BUILD)
         )
 
     set(ESP8266_BOOTLOADER_LIBS
-        "-L ${_stripped_libgcc_dir}"
+        "${_romstrip_libgcc}"
         "-L ${CMAKE_CURRENT_SOURCE_DIR}/lib"
-        "gcc"
         "core"
         PARENT_SCOPE
         )
@@ -98,39 +74,13 @@ else()
                     REQUIRED_IDF_TARGETS esp8266)
 
     idf_build_get_property(_idf_path IDF_PATH)
-    idf_build_get_property(_strip_python PYTHON)
-    if(NOT _strip_python)
-        set(_strip_python "python")
-    endif()
-    set(_stripped_libgcc_dir "${CMAKE_BINARY_DIR}/rom_stripped_lib")
-    set(_stripped_libgcc "${_stripped_libgcc_dir}/libgcc.a")
-    get_filename_component(_esp_cc_name "${CMAKE_C_COMPILER}" NAME)
-    set(_strip_cflags)
-    if(_esp_cc_name MATCHES "xtensa-esp-elf")
-        list(APPEND _strip_cflags "--cflag=-mdynconfig=xtensa_esp8266.so")
-        if(NOT CONFIG_COMPILER_CXX_RTTI)
-            list(APPEND _strip_cflags "--cflag=-fno-rtti")
-        endif()
-    endif()
+    include("${_idf_path}/tools/cmake/romstrip.cmake")
+    esp8266_generate_romstrip_libgcc(_romstrip_libgcc)
 
-    execute_process(
-        COMMAND "${_strip_python}" "${_idf_path}/tools/cmake/scripts/strip_rom_libgcc.py"
-            --cc "${CMAKE_C_COMPILER}"
-            --ar "${CMAKE_AR}"
-            --nm "${CMAKE_NM}"
-            ${_strip_cflags}
-            --rom-ld "${CMAKE_CURRENT_SOURCE_DIR}/ld/esp8266.rom.ld"
-            --output "${_stripped_libgcc}"
-        RESULT_VARIABLE _strip_libgcc_res
-    )
-    if(NOT _strip_libgcc_res EQUAL 0)
-        message(FATAL_ERROR "strip_rom_libgcc.py failed for app (exit ${_strip_libgcc_res})")
-    endif()
-
-    target_link_libraries(${COMPONENT_LIB} PUBLIC "-L ${_stripped_libgcc_dir}" "-L ${CMAKE_CURRENT_SOURCE_DIR}/lib" "-lstdc++")
+    target_link_libraries(${COMPONENT_LIB} PUBLIC "${_romstrip_libgcc}" "-L ${CMAKE_CURRENT_SOURCE_DIR}/lib" "-lstdc++")
     target_compile_definitions(${COMPONENT_LIB} PUBLIC -DUSING_IBUS_FASTER_GET)
     if(NOT CONFIG_NO_BLOBS)
-        set(blobs "gcc" "hal" "phy" "rtc" "clk" "smartconfig" "ssc")
+        set(blobs "hal" "phy" "rtc" "clk" "smartconfig" "ssc")
         if(CONFIG_ESP8266_WIFI_DEBUG_LOG_ENABLE)
             list(APPEND blobs "core_dbg" "net80211_dbg" "pp_dbg" "espnow_dbg")
         else()
@@ -138,11 +88,7 @@ else()
         endif()
         foreach(blob ${blobs})
             add_library(${blob} STATIC IMPORTED)
-            if(blob STREQUAL "gcc")
-                set_property(TARGET ${blob} PROPERTY IMPORTED_LOCATION "${_stripped_libgcc}")
-            else()
-                set_property(TARGET ${blob} PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/lib/lib${blob}.a)
-            endif()
+            set_property(TARGET ${blob} PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/lib/lib${blob}.a)
             target_link_libraries(${COMPONENT_LIB} PUBLIC ${blob})
 
             foreach(_blob ${blobs})
@@ -163,16 +109,14 @@ else()
     target_linker_script(${COMPONENT_LIB} INTERFACE "ld/esp8266.peripherals.ld")
 
     target_link_libraries(${COMPONENT_LIB} INTERFACE "-u call_user_start")
+    target_link_libraries(${COMPONENT_LIB} INTERFACE "-u __cxx_abi_force_link")
 
     # Preprocess esp8266.ld linker script to include configuration, becomes esp8266_out.ld
     set(LD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ld)
 
     partition_table_get_partition_info(app_offset "--partition-boot-default" "offset")
     partition_table_get_partition_info(app_size "--partition-boot-default" "size")
-    set(CFLAGS ${CFLAGS} -DAPP_OFFSET=${app_offset} -DAPP_SIZE=${app_size})
-    if(_esp_cc_name MATCHES "xtensa-esp-elf")
-        set(CFLAGS -mdynconfig=xtensa_esp8266.so ${CFLAGS})
-    endif()
+    set(CFLAGS ${ESP8266_DYNCONFIG_FLAG} ${CFLAGS} -DAPP_OFFSET=${app_offset} -DAPP_SIZE=${app_size})
 
     add_custom_command(
         OUTPUT esp8266_out.ld

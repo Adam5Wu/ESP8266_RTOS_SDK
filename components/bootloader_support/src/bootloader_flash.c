@@ -14,6 +14,8 @@
 
 #include "sdkconfig.h"
 
+#include <inttypes.h>
+
 #ifdef CONFIG_IDF_TARGET_ESP32
 
 #include <stddef.h>
@@ -492,7 +494,7 @@ esp_err_t bootloader_flash_xmc_startup(void)
     // If the RDID value is a valid XMC one, may skip the flow
     const bool fast_check = true;
     if (fast_check && is_xmc_chip_strict(id)) {
-        ESP_LOGD(TAG, "XMC chip detected by RDID (%08X), skip.", id);
+        ESP_LOGD(TAG, "XMC chip detected by RDID (%08" PRIX32 "), skip.", id);
         return ESP_OK;
     }
 

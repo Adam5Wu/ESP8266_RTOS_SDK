@@ -12,6 +12,7 @@
 // limitations under the License.
 
 #include "WL_Ext_Perf.h"
+#include <inttypes.h>
 #include <stdlib.h>
 #include "esp_log.h"
 
@@ -74,7 +75,7 @@ esp_err_t WL_Ext_Perf::erase_sector(size_t sector)
 
 esp_err_t WL_Ext_Perf::erase_sector_fit(uint32_t start_sector, uint32_t count)
 {
-    ESP_LOGV(TAG, "%s begin, start_sector = 0x%08x, count = %i", __func__, start_sector, count);
+    ESP_LOGV(TAG, "%s begin, start_sector = 0x%08" PRIx32 ", count = %" PRIu32, __func__, start_sector, count);
     // This method works with one flash device sector and able to erase "count" of fatfs sectors from this sector
     esp_err_t result = ESP_OK;
 
@@ -151,7 +152,7 @@ esp_err_t WL_Ext_Perf::erase_range(size_t start_address, size_t size)
         result = this->erase_sector_fit(start_address / this->fat_sector_size, pre_check_count);
         WL_EXT_RESULT_CHECK(result);
     }
-    ESP_LOGV(TAG, "%s rest_check_start = %i, pre_check_count=%i, rest_check_count=%i, post_check_count=%i\n", __func__, rest_check_start, pre_check_count, rest_check_count, post_check_count);
+    ESP_LOGV(TAG, "%s rest_check_start = %" PRIu32 ", pre_check_count=%" PRIu32 ", rest_check_count=%" PRIu32 ", post_check_count=%" PRIu32 "\n", __func__, rest_check_start, pre_check_count, rest_check_count, post_check_count);
     if (rest_check_count > 0) {
         rest_check_count = rest_check_count / this->size_factor;
         size_t start_sector = rest_check_start / this->flash_sector_size;

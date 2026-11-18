@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <inttypes.h>
 #include <stdlib.h>
 #include <new>
 #include <sys/lock.h>
@@ -141,12 +142,12 @@ esp_err_t wl_mount(const esp_partition_t *partition, wl_handle_t *out_handle)
 
     result = wl_flash->config(&cfg, part);
     if (ESP_OK != result) {
-        ESP_LOGE(TAG, "%s: config instance=0x%08x, result=0x%x", __func__, *out_handle, result);
+        ESP_LOGE(TAG, "%s: config instance=0x%08" PRIx32 ", result=0x%x", __func__, *out_handle, result);
         goto out;
     }
     result = wl_flash->init();
     if (ESP_OK != result) {
-        ESP_LOGE(TAG, "%s: init instance=0x%08x, result=0x%x", __func__, *out_handle, result);
+        ESP_LOGE(TAG, "%s: init instance=0x%08" PRIx32 ", result=0x%x", __func__, *out_handle, result);
         goto out;
     }
     s_instances[*out_handle].instance = wl_flash;
@@ -256,11 +257,11 @@ static esp_err_t check_handle(wl_handle_t handle, const char *func)
         return ESP_ERR_NOT_FOUND;
     }
     if (handle >= MAX_WL_HANDLES) {
-        ESP_LOGE(TAG, "%s: instance[0x%08x] out of range", func, handle);
+        ESP_LOGE(TAG, "%s: instance[0x%08" PRIx32 "] out of range", func, handle);
         return ESP_ERR_INVALID_ARG;
     }
     if (s_instances[handle].instance == NULL) {
-        ESP_LOGE(TAG, "%s: instance[0x%08x] not initialized", func, handle);
+        ESP_LOGE(TAG, "%s: instance[0x%08" PRIx32 "] not initialized", func, handle);
         return ESP_ERR_NOT_FOUND;
     }
     return ESP_OK;

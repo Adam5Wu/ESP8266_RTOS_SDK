@@ -12,6 +12,7 @@
 // limitations under the License.
 
 #include "WL_Ext_Safe.h"
+#include <inttypes.h>
 #include <stdlib.h>
 #include "esp_log.h"
 
@@ -78,7 +79,7 @@ esp_err_t WL_Ext_Safe::init()
 
 size_t WL_Ext_Safe::chip_size()
 {
-    ESP_LOGV(TAG, "%s size = %i", __func__, WL_Flash::chip_size() - 2 * this->flash_sector_size);
+    ESP_LOGV(TAG, "%s size = %" PRIu32, __func__, WL_Flash::chip_size() - 2 * this->flash_sector_size);
     return WL_Flash::chip_size() - 2 * this->flash_sector_size;
 }
 
@@ -89,7 +90,7 @@ esp_err_t WL_Ext_Safe::recover()
     WL_Ext_Safe_State state;
     result = WL_Flash::read(this->state_addr, &state, sizeof(WL_Ext_Safe_State));
     WL_EXT_RESULT_CHECK(result);
-    ESP_LOGV(TAG, "%s recover, start_addr = 0x%08x, local_addr_base = 0x%08x, local_addr_shift = %i, count=%i", __func__, state.erase_begin, state.local_addr_base, state.local_addr_shift, state.count);
+    ESP_LOGV(TAG, "%s recover, start_addr = 0x%08" PRIx32 ", local_addr_base = 0x%08" PRIx32 ", local_addr_shift = %" PRIu32 ", count=%" PRIu32, __func__, state.erase_begin, state.local_addr_base, state.local_addr_shift, state.count);
 
     // check if we have transaction
     if (state.erase_begin == WL_EXT_SAFE_OK) {
@@ -119,7 +120,7 @@ esp_err_t WL_Ext_Safe::erase_sector_fit(uint32_t start_sector, uint32_t count)
 
     uint32_t local_addr_base = start_sector / this->size_factor;
     uint32_t pre_check_start = start_sector % this->size_factor;
-    ESP_LOGV(TAG, "%s start_sector=0x%08x, count = %i", __func__, start_sector, count);
+    ESP_LOGV(TAG, "%s start_sector=0x%08" PRIx32 ", count = %" PRIu32, __func__, start_sector, count);
     for (int i = 0; i < this->size_factor; i++) {
         if ((i < pre_check_start) || (i >= count + pre_check_start)) {
             result = this->read(start_sector / this->size_factor * this->flash_sector_size + i * this->fat_sector_size, &this->sector_buffer[i * this->fat_sector_size / sizeof(uint32_t)], this->fat_sector_size);

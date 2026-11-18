@@ -125,7 +125,7 @@ def main():
 
         mapping_rules = generation_model.generate_rules(sections_infos)
 
-        script_model = TemplateModel(input_file)
+        script_model = TemplateModel(input_file, sdkconfig)
         script_model.fill(mapping_rules)
 
         with tempfile.TemporaryFile("w+") as output:

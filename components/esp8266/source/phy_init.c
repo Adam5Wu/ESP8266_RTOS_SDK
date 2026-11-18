@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <inttypes.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -106,7 +107,7 @@ esp_err_t esp_phy_rf_init(const esp_phy_init_data_t* init_data, esp_phy_calibrat
 
     phy_disable_agc();
 
-    ESP_LOGI(TAG, "phy ver: %d_%d", (READ_PERI_REG(0x6000107C)>>16)&0xFFF, READ_PERI_REG(0x6000107C)>>28);
+    ESP_LOGI(TAG, "phy ver: %" PRIu32 "_%" PRIu32, (READ_PERI_REG(0x6000107C)>>16)&0xFFF, READ_PERI_REG(0x6000107C)>>28);
     get_data_from_rtc((uint8_t *)calibration_data);
 
     memcpy(rx_gain_dc_table, calibration_data->rx_gain_dc_table, 4 * 125);
@@ -309,7 +310,7 @@ static esp_err_t store_cal_data_to_nvs_handle(nvs_handle_t handle,
 void esp_phy_load_cal_and_init(phy_rf_module_t module)
 {
     esp_phy_calibration_data_t* cal_data =
-        (esp_phy_calibration_data_t*) calloc(sizeof(esp_phy_calibration_data_t), 1);
+        (esp_phy_calibration_data_t*) calloc(1, sizeof(esp_phy_calibration_data_t));
 
     if (cal_data == NULL) {
         ESP_LOGE(TAG, "failed to allocate memory for RF calibration data");

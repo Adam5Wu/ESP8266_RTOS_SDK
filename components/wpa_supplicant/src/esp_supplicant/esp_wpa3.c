@@ -130,7 +130,7 @@ void esp_wpa3_free_sae_data(void)
     sae_clear_data(&g_sae_data);
 }
 
-static u8 *wpa3_build_sae_msg(u8 *bssid, u32 sae_msg_type, u32 *sae_msg_len)
+static u8 *wpa3_build_sae_msg(u8 *bssid, u32 sae_msg_type, size_t *sae_msg_len)
 {
     u8 *buf = NULL;
 
@@ -205,7 +205,7 @@ static int wpa3_parse_sae_confirm(u8 *buf, u32 len)
     return ESP_OK;
 }
 
-static int wpa3_parse_sae_msg(u8 *buf, u32 len, u32 sae_msg_type, u16 status)
+static int wpa3_parse_sae_msg(u8 *buf, size_t len, u32 sae_msg_type, u16 status)
 {
     int ret = ESP_OK;
 

@@ -615,7 +615,8 @@ int8_t ethernetif_init(struct netif* netif)
   /* Initialize interface hostname */
 
 #if ESP_LWIP
-  if (tcpip_adapter_get_hostname(tcpip_adapter_get_esp_if(netif), &netif->hostname) != ESP_OK) {
+  /* esp_interface_t STA/AP values coincide with tcpip_adapter_if_t */
+  if (tcpip_adapter_get_hostname((tcpip_adapter_if_t)tcpip_adapter_get_esp_if(netif), &netif->hostname) != ESP_OK) {
     netif->hostname = CONFIG_LWIP_LOCAL_HOSTNAME;
   }
 #else

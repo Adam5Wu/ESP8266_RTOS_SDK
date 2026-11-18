@@ -14,6 +14,7 @@
 
 // #define LOG_LOCAL_LEVEL ESP_LOG_ERROR
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/errno.h>
@@ -128,7 +129,7 @@ int esp_fast_boot_restart(void)
     } else if (image_start < 0x800000) {
         region = 3;
     } else {
-        ESP_LOGE(TAG, "ERROR: App bin error, start_addr 0x%08x image_len %d\n", image_start, image_size);
+        ESP_LOGE(TAG, "ERROR: App bin error, start_addr 0x%08" PRIx32 " image_len %" PRIu32 "\n", image_start, image_size);
         return -EINVAL;
     }
 
