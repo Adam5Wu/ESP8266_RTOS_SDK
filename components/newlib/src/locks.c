@@ -229,7 +229,7 @@ struct __lock __lock___arc4random_mutex;
 struct __lock __lock___malloc_recursive_mutex;
 
 void __retarget_lock_init(_LOCK_T *lock) {
-    struct __lock *l = (struct __lock *)calloc(1, sizeof(struct __lock));
+    struct __lock *l = calloc(1, sizeof(*l));
     if (!l) {
         abort();
     }
@@ -239,7 +239,7 @@ void __retarget_lock_init(_LOCK_T *lock) {
 }
 
 void __retarget_lock_init_recursive(_LOCK_T *lock) {
-    struct __lock *l = (struct __lock *)calloc(1, sizeof(struct __lock));
+    struct __lock *l = calloc(1, sizeof(*l));
     if (!l) {
         abort();
     }

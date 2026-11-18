@@ -731,7 +731,7 @@ static void vfs_spiffs_update_mtime(spiffs *fs, spiffs_file fd)
         if (store_sz == sizeof(time_t)) {
             memcpy(s.meta, &t, sizeof(t));
         } else {
-            uint32_t t32 = (uint32_t)t;
+            uint32_t t32 = t;
             memcpy(s.meta, &t32, sizeof(t32));
         }
         ret = SPIFFS_fupdate_meta(fs, fd, s.meta);
@@ -751,7 +751,7 @@ static time_t vfs_spiffs_get_mtime(const spiffs_stat* s)
     } else {
         uint32_t t32 = 0;
         memcpy(&t32, s->meta, sizeof(t32));
-        t = (time_t)t32;
+        t = t32;
     }
 #endif
     return t;

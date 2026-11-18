@@ -116,7 +116,7 @@ int __wrap___swhatbuf_r(struct _reent *r, FILE *fp, size_t *bufsize, int *couldb
 
 void __wrap___smakebuf_r(struct _reent *r, FILE *fp)
 {
-    void *p;
+    unsigned char *p;
     int flags;
     size_t size;
     int couldbetty;
@@ -137,8 +137,8 @@ void __wrap___smakebuf_r(struct _reent *r, FILE *fp)
         return;
     }
     fp->_flags |= __SMBF;
-    fp->_bf._base = fp->_p = (unsigned char *)p;
-    fp->_bf._size = (int)size;
+    fp->_bf._base = fp->_p = p;
+    fp->_bf._size = size;
     if (couldbetty && _isatty_r(r, fp->_file)) {
         fp->_flags = (fp->_flags & ~(__SLBF | __SNBF)) | __SLBF;
     }
