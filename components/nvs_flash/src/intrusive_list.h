@@ -15,6 +15,8 @@
 #define intrusive_list_h
 
 #include <cassert>
+#include <cstddef>
+#include <iterator>
 #include <unordered_map>
 
 template <typename T>
@@ -37,9 +39,14 @@ class intrusive_list
 
 public:
 
-    class iterator : public std::iterator<std::forward_iterator_tag, T>
+    class iterator
     {
     public:
+        using iterator_category = std::forward_iterator_tag;
+        using value_type = T;
+        using difference_type = std::ptrdiff_t;
+        using pointer = T*;
+        using reference = T&;
 
         iterator() : mPos(nullptr) {}
 

@@ -2,6 +2,12 @@
 # so that ROM routines (e.g. float/64-bit helpers) are not duplicated in flash.
 # Runs at CMake configure time because PlatformIO configures CMake via the
 # file API and builds with SCons rather than Ninja.
+include_guard(GLOBAL)
+
+function(esp8266_romstrip_libgcc_path out_var)
+    set(${out_var} "${CMAKE_BINARY_DIR}/rom_stripped_lib/libgcc_romstrip.a" PARENT_SCOPE)
+endfunction()
+
 function(esp8266_generate_romstrip_libgcc out_var)
     set(_cflags "${ESP8266_DYNCONFIG_FLAG}")
     if(NOT BOOTLOADER_BUILD AND NOT CONFIG_COMPILER_CXX_RTTI)
@@ -25,7 +31,7 @@ function(esp8266_generate_romstrip_libgcc out_var)
     endif()
     set(_rom_ld "${_idf}/components/esp8266/ld/esp8266.rom.ld")
     set(_script "${_idf}/tools/cmake/scripts/strip_rom_libgcc.py")
-    set(_out "${CMAKE_BINARY_DIR}/rom_stripped_lib/libgcc_romstrip.a")
+    esp8266_romstrip_libgcc_path(_out)
 
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
         "${_src_libgcc}" "${_rom_ld}" "${_script}"

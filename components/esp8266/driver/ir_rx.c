@@ -55,7 +55,6 @@ typedef enum {
 static void IRAM_ATTR ir_rx_intr_handler(void *arg)
 {
     static int ir_state  =  IR_RX_IDLE;
-    static int ir_repeat =  0;
     static ir_rx_nec_data_t ir_data = {0};
     static int cnt  =  0;
     static uint8_t rep_flg = 0;
@@ -109,7 +108,6 @@ static void IRAM_ATTR ir_rx_intr_handler(void *arg)
                 if (time_escape < IR_RX_NEC_TM1_REP_US + IR_RX_ERROR_US && IR_RX_NEC_TM2_REP_US - IR_RX_ERROR_US) {
                     // push rcv data to ringbuf
                     xRingbufferSendFromISR(ir_rx_obj->ring_buf, (void *) &ir_data, sizeof(ir_rx_nec_data_t) * 1, &xHigherPriorityTaskWoken);
-                    ir_repeat++;
                     rep_flg = 0;
                 } else {
                     goto reset_status;
@@ -129,7 +127,6 @@ reset_status:
     ir_state = IR_RX_IDLE;
     cnt = 0;
     ir_data.val = 0;
-    ir_repeat = 0;
     rep_flg = 0;
 }
 

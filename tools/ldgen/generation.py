@@ -502,9 +502,16 @@ class TemplateModel:
 
         # Find the markers in the template file line by line. If line does not match marker grammar,
         # set it as a literal to be copied as is to the output file.
+        # Only #ifdef SYM, #ifndef SYM, #else, and #endif (each on its own line, with or without
+        # the CONFIG_ prefix) are supported in linker script templates.
         for line in lines:
             if self.sdkconfig is not None:
                 stripped = line.strip()
+                if stripped.startswith("#if ") or stripped.startswith("#elif"):
+                    raise GenerationException(
+                        "Unsupported conditional directive '%s' in linker script template '%s' "
+                        "(only #ifdef/#ifndef/#else/#endif are supported)." % (stripped, self.file)
+                    )
                 if stripped.startswith("#ifdef "):
                     sym = stripped[7:].strip()
                     parent_active = not cond_stack or cond_stack[-1][0]

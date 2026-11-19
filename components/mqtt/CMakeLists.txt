@@ -6,4 +6,4 @@ idf_component_register(SRCS "esp-mqtt/mqtt_client.c"
                     PRIV_INCLUDE_DIRS "esp-mqtt/lib/include"
                     REQUIRES lwip http_parser mbedtls tcp_transport)
 
-target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-incompatible-pointer-types -Wno-format)
+target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-incompatible-pointer-types -Wno-format -Wno-unused-but-set-variable)

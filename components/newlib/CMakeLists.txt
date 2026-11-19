@@ -39,8 +39,11 @@ if(NOT CONFIG_COMPILER_CXX_RTTI)
 endif()
 
 # Toolchain libraries require code defined in this component
+idf_build_get_property(_idf_path IDF_PATH)
+include("${_idf_path}/tools/cmake/romstrip.cmake")
+esp8266_romstrip_libgcc_path(_romstrip_libgcc)
 idf_component_get_property(newlib newlib COMPONENT_LIB)
-target_link_libraries(${COMPONENT_LIB} INTERFACE ${LIBC} ${LIBM} "${CMAKE_BINARY_DIR}/rom_stripped_lib/libgcc_romstrip.a" "$<TARGET_FILE:${newlib}>")
+target_link_libraries(${COMPONENT_LIB} INTERFACE ${LIBC} ${LIBM} "${_romstrip_libgcc}" "$<TARGET_FILE:${newlib}>")
 
 # Forces the linker to include __errno (and retargetable locks) from this component,
 # instead of the implementations provided by newlib.

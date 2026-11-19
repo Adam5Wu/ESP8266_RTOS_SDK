@@ -242,7 +242,6 @@ void pmksa_cache_flush(struct rsn_pmksa_cache *pmksa, void *network_ctx,
         const u8 *pmk, size_t pmk_len)
 {
     struct rsn_pmksa_cache_entry *entry, *prev = NULL, *tmp;
-    int removed = 0;
 
     entry = pmksa->pmksa;
     while (entry) {
@@ -260,14 +259,12 @@ void pmksa_cache_flush(struct rsn_pmksa_cache *pmksa, void *network_ctx,
             tmp = entry;
             entry = entry->next;
             pmksa_cache_free_entry(pmksa, tmp, PMKSA_FREE);
-            removed++;
         } else {
             prev = entry;
             entry = entry->next;
         }
     }
-    /*if (removed)
-      pmksa_cache_set_expiration(pmksa);*/
+    /* Upstream re-arms the expiration timer here; not used in this port. */
 }
 
 

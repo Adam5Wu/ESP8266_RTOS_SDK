@@ -31,5 +31,4 @@ set(CMAKE_C_FLAGS "-mlongcalls -Wno-frame-address ${ESP8266_DYNCONFIG_FLAG}" CAC
 set(CMAKE_CXX_FLAGS "-mlongcalls -Wno-frame-address ${ESP8266_DYNCONFIG_FLAG}" CACHE STRING "C++ Compiler Base Flags")
 set(CMAKE_ASM_FLAGS "${ESP8266_DYNCONFIG_FLAG}" CACHE STRING "ASM Compiler Base Flags")
 
-# Can be removed after gcc 5.2.0 support is removed (ref GCC_NOT_5_2_0)
 set(CMAKE_EXE_LINKER_FLAGS "-nostdlib -Wl,--gc-sections ${ESP8266_DYNCONFIG_FLAG} -Wl,--no-warn-rwx-segments" CACHE STRING "Linker Base Flags")

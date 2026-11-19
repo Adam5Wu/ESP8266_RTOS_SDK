@@ -112,7 +112,7 @@ static esp_err_t mbc_tcp_master_start(void)
     vMBTCPPortMasterTaskStart();
 
     // Add slave IP address for each slave to initialise connection
-    for (int idx = 0; *comm_ip_table != NULL; idx++, comm_ip_table++)
+    for (; *comm_ip_table != NULL; comm_ip_table++)
     {
         result = (BOOL)xMBTCPPortMasterAddSlaveIp(*comm_ip_table);
         MB_MASTER_CHECK(result, ESP_ERR_INVALID_STATE, "mb stack add slave IP failed: %s.", *comm_ip_table);

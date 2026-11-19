@@ -10,6 +10,10 @@
 # where this file is located.
 #
 
+# gcc16 branches support only the CMake build (PlatformIO). The legacy GNU Make path
+# still references the removed GCC 4.8.2 libgcc.a and never passes -mdynconfig.
+$(error The GNU Make build system is not supported on gcc16 branches; use CMake/PlatformIO)
+
 .PHONY: build-components menuconfig defconfig all build clean all_binaries check-submodules size size-components size-files size-symbols list-components
 
 MAKECMDGOALS ?= all
@@ -469,10 +473,8 @@ export CC CXX LD AR OBJCOPY OBJDUMP SIZE
 
 COMPILER_VERSION_STR := $(shell $(CC) -dumpversion)
 COMPILER_VERSION_NUM := $(subst .,,$(COMPILER_VERSION_STR))
-GCC_NOT_5_2_0 := $(shell expr $(COMPILER_VERSION_STR) != "5.2.0")
-export COMPILER_VERSION_STR COMPILER_VERSION_NUM GCC_NOT_5_2_0
+export COMPILER_VERSION_STR COMPILER_VERSION_NUM
 
-CPPFLAGS += -DGCC_NOT_5_2_0=$(GCC_NOT_5_2_0)
 export CPPFLAGS
 
 
