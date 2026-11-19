@@ -60,7 +60,7 @@ static void IRAM_ATTR ir_rx_intr_handler(void *arg)
     static uint8_t rep_flg = 0;
     static uint32_t time_last = 0;
 
-    BaseType_t xHigherPriorityTaskWoken;
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     uint32_t time_escape, time_current;
     struct timeval now;
 
@@ -105,7 +105,7 @@ static void IRAM_ATTR ir_rx_intr_handler(void *arg)
                     goto reset_status;
                 }
             } else if (rep_flg == 1) {
-                if (time_escape < IR_RX_NEC_TM1_REP_US + IR_RX_ERROR_US && IR_RX_NEC_TM2_REP_US - IR_RX_ERROR_US) {
+                if (time_escape < IR_RX_NEC_TM2_REP_US + IR_RX_ERROR_US && time_escape > IR_RX_NEC_TM2_REP_US - IR_RX_ERROR_US) {
                     // push rcv data to ringbuf
                     xRingbufferSendFromISR(ir_rx_obj->ring_buf, (void *) &ir_data, sizeof(ir_rx_nec_data_t) * 1, &xHigherPriorityTaskWoken);
                     rep_flg = 0;
