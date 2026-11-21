@@ -173,12 +173,12 @@ config WIFI_PPT_TASKSTACK_SIZE
         complex, the stack must be set larger.
 
 config ESP8266_CORE_GLOBAL_DATA_LINK_IRAM
-    bool "Link libcore.a internal global data to IRAM"
+    bool "Link ESP8266 core internal global data to IRAM"
     default y
     depends on !LWIP_HIGH_THROUGHPUT
     depends on !SOC_FULL_ICACHE
     help
-        Link libcore.a internal global data(.bss .data COMMON) from DRAM to IRAM.
+        Link ESP8266 core internal global data (.bss .data COMMON) from DRAM to IRAM.
 
 config INIT_OS_BEFORE_START
     bool "Init OS before starting it"
