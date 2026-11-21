@@ -28,8 +28,6 @@ static const char *TAG = "esp-tls";
 
 #ifdef CONFIG_ESP_TLS_USING_MBEDTLS
 #include "esp_tls_mbedtls.h"
-#elif CONFIG_ESP_TLS_USING_WOLFSSL
-#include "esp_tls_wolfssl.h"
 #endif
 
 #ifdef ESP_PLATFORM
@@ -55,21 +53,7 @@ static const char *TAG = "esp-tls";
 #define _esp_tls_get_global_ca_store        esp_mbedtls_get_global_ca_store
 #define _esp_tls_free_global_ca_store       esp_mbedtls_free_global_ca_store                /*!< Callback function for freeing global ca store for TLS/SSL */
 #define _esp_tls_get_ciphersuites_list      esp_mbedtls_get_ciphersuites_list
-#elif CONFIG_ESP_TLS_USING_WOLFSSL /* CONFIG_ESP_TLS_USING_MBEDTLS */
-#define _esp_create_ssl_handle              esp_create_wolfssl_handle
-#define _esp_tls_handshake                  esp_wolfssl_handshake
-#define _esp_tls_read                       esp_wolfssl_read
-#define _esp_tls_write                      esp_wolfssl_write
-#define _esp_tls_conn_delete                esp_wolfssl_conn_delete
-#ifdef CONFIG_ESP_TLS_SERVER
-#define _esp_tls_server_session_create      esp_wolfssl_server_session_create
-#define _esp_tls_server_session_delete      esp_wolfssl_server_session_delete
-#endif  /* CONFIG_ESP_TLS_SERVER */
-#define _esp_tls_get_bytes_avail            esp_wolfssl_get_bytes_avail
-#define _esp_tls_init_global_ca_store       esp_wolfssl_init_global_ca_store
-#define _esp_tls_set_global_ca_store        esp_wolfssl_set_global_ca_store                 /*!< Callback function for setting global CA store data for TLS/SSL */
-#define _esp_tls_free_global_ca_store       esp_wolfssl_free_global_ca_store                /*!< Callback function for freeing global ca store for TLS/SSL */
-#else   /* ESP_TLS_USING_WOLFSSL */
+#else
 #error "No TLS stack configured"
 #endif
 

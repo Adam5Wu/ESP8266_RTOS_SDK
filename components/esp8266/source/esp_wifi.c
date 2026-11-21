@@ -23,8 +23,23 @@
 #include "phy.h"
 #include "esp_supplicant/esp_wpa.h"
 #include "esp_aio.h"
+#ifndef CONFIG_ESP8266_VENDOR_ESPNOW
+#include "esp_now.h"
+#endif
 
 #define TAG "wifi_init"
+
+#ifndef CONFIG_ESP8266_VENDOR_ESPNOW
+/*
+ * Vendor libnet80211.a(ieee80211_api.o) unconditionally invokes esp_now_deinit()
+ * inside esp_wifi_stop(). Provide a clean no-op stub when ESP-NOW is disabled so
+ * libespnow.a does not need to be linked.
+ */
+esp_err_t esp_now_deinit(void)
+{
+    return ESP_OK;
+}
+#endif
 
 const size_t _g_esp_wifi_ppt_task_stk_size = CONFIG_WIFI_PPT_TASKSTACK_SIZE;
 

@@ -58,7 +58,17 @@ struct _rtc_sys_info {
         uint32_t    image_entry;
         uint32_t    crc32;
     } fast_boot;
+    struct {
+        uint32_t    magic;          /* 0x57464331 ('WFC1') */
+        uint32_t    cred_hash[4];   /* Truncated 128-bit SHA-256(ssid || 0x00 || password) */
+        uint32_t    pmk[8];         /* 32-byte derived WPA2 PMK */
+        uint32_t    bssid_lo;       /* Last associated BSSID [0..3] */
+        uint32_t    bssid_hi_ch;    /* [15:0]=BSSID[4..5], [23:16]=channel, [31:24]=authmode */
+        uint32_t    crc32;          /* CRC32 over preceding 15 words */
+    } wifi_fast_connect;
 };
+
+_Static_assert(sizeof(struct _rtc_sys_info) <= RTC_SYS_RAM_SIZE, "rtc_sys_info exceeds 256-byte RTC_SYS");
 
 /**
  * @brief System information

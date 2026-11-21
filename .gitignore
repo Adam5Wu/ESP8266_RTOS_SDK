@@ -42,3 +42,7 @@ docs/doxygen_sqlite3.db
 
 # MacOS directory files
 .DS_Store
+
+# PlatformIO local symlink build artifacts
+components/__pio_env/
+/version.txt

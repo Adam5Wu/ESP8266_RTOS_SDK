@@ -242,6 +242,118 @@ config ESP8266_BOOT_COPY_APP
         config ESP8266_TIME_SYSCALL_USE_NONE
             bool "None"
     endchoice
+
+    menu "Open-Source / Vendor Blob Selection"
+
+        config ESP8266_VENDOR_BLOBS
+            bool "Allow prebuilt vendor blobs"
+            default n
+            help
+                By default, ESP8266_RTOS_SDK builds 100% from open-source
+                implementations with zero prebuilt vendor binary archives linked.
+
+                Enable this option to unlock legacy prebuilt vendor archives in
+                components/esp8266/lib/ (HAL, Core/RTC, Wi-Fi, ESP-NOW, and
+                SmartConfig).
+
+        choice ESP8266_HAL_IMPL
+            prompt "HAL implementation"
+            default ESP8266_OSS_HAL
+            help
+                Select the Xtensa LX106 Call0 Core HAL implementation:
+
+                - Open-source: clean-room components/esp8266/source/xtensa_hal.S.
+                - Vendor blob: prebuilt components/esp8266/lib/libhal.a
+                  (requires Allow prebuilt vendor blobs).
+
+                Fully ABI-compatible and independently mixable with either
+                open-source or vendor Core/Wi-Fi layers.
+
+            config ESP8266_OSS_HAL
+                bool "Open-source"
+            config ESP8266_VENDOR_HAL
+                bool "Vendor blob"
+                depends on ESP8266_VENDOR_BLOBS
+        endchoice
+
+        choice ESP8266_WIFI_IMPL
+            prompt "Wi-Fi implementation"
+            default ESP8266_OSS_WIFI
+            help
+                Select the Wi-Fi RF/PHY, Lower MAC, and IEEE 802.11 stack:
+
+                - Open-source: clean-room components/esp8266/{phy,lmac,net80211}/.
+                - Vendor blobs: prebuilt libphy.a + libpp.a + libnet80211.a
+                  (requires Allow prebuilt vendor blobs).
+                - Disabled (no Wi-Fi): minimal zero-blob build linking
+                  esp_no_blobs_stubs.c with zero Wi-Fi code.
+
+            config ESP8266_OSS_WIFI
+                bool "Open-source"
+            config ESP8266_VENDOR_WIFI
+                bool "Vendor blobs"
+                depends on ESP8266_VENDOR_BLOBS
+            config ESP8266_NO_WIFI
+                bool "Disabled (no Wi-Fi)"
+        endchoice
+
+        config ESP8266_OSS_WIFI_MIN_NMI
+            bool "Minimal IRAM NMI handler"
+            depends on ESP8266_OSS_WIFI
+            default n
+            help
+                Disable the IRAM Level-3 NMI fast TX retry/launch path in
+                lmac_nmi.c (wDev_ProcessFiq).
+
+                By default (n), retryable TX completions and queued TX launches
+                execute directly in IRAM NMI so TX continues uninterrupted across
+                SPI flash erase/read cache-off windows (+708 B IRAM, still ~50%
+                less IRAM than vendor blobs).
+
+                Enable (y) to defer all TX handling to the flash-resident Wi-Fi
+                worker task and reclaim those 708 B of static IRAM.
+
+        choice ESP8266_CORE_IMPL
+            prompt "Core & RTC implementation"
+            default ESP8266_OSS_CORE
+            help
+                Select the SoC Core (ets_timer, misc, misc_nvs, sys_ctrl) and
+                RTC/Clock implementation:
+
+                - Open-source: clean-room components/esp8266/source/esp_*.c
+                  (compatible with Open-source Wi-Fi, Vendor Wi-Fi, or no Wi-Fi).
+                - Vendor blobs: prebuilt libcore.a + libclk.a + librtc.a
+                  (requires Allow prebuilt vendor blobs and Vendor Wi-Fi).
+
+            config ESP8266_OSS_CORE
+                bool "Open-source"
+            config ESP8266_VENDOR_CORE
+                bool "Vendor blobs"
+                depends on ESP8266_VENDOR_BLOBS && ESP8266_VENDOR_WIFI
+        endchoice
+
+        config ESP8266_VENDOR_ESPNOW
+            bool "Vendor ESP-NOW"
+            depends on ESP8266_VENDOR_BLOBS && ESP8266_VENDOR_WIFI
+            default n
+            help
+                Link the prebuilt vendor ESP-NOW archive
+                (components/esp8266/lib/libespnow.a / libespnow_dbg.a).
+
+                Requires Vendor Wi-Fi blobs (libnet80211.a / libpp.a). When
+                disabled, links a minimal open-source esp_now_deinit() stub.
+
+        config ESP8266_VENDOR_SMARTCONFIG
+            bool "Vendor SmartConfig"
+            depends on ESP8266_VENDOR_BLOBS && ESP8266_VENDOR_WIFI
+            default n
+            help
+                Compile SmartConfig wrappers (source/smartconfig*.c) and link
+                the prebuilt vendor archive (components/esp8266/lib/libsmartconfig.a).
+
+                Requires Vendor Wi-Fi blobs (libnet80211.a).
+
+    endmenu  # Open-Source / Vendor Blob Selection
 endmenu
 
 menu "Power Management"
@@ -361,6 +473,32 @@ config ESP8266_WIFI_ENABLE_WPA3_SAE
         Select this option to allow the device to establish a WPA3-Personal connection with eligible AP's.
         PMF (Protected Management Frames) is a prerequisite feature for a WPA3 connection, it needs to be
         explicitly configured before attempting connection. Please refer to the Wi-Fi Driver API Guide for details.
+
+config ESP8266_WIFI_TASK_PRIO
+    int "Wi-Fi worker task priority"
+    range 1 14
+    default 13
+    help
+        FreeRTOS priority for the unified open-source Wi-Fi worker task (1..14).
+        Defaults to 13 (below the configMAX_PRIORITIES-1 = 14 ceiling) so the
+        worker runs above tcpip/application tasks while preserving one headroom
+        slot for urgent system tasks.
+
+config ESP8266_WIFI_RTC_FAST_CONNECT
+    bool "Cache STA PMK and channel in RTC_SYS across warm resets"
+    default y if !ESP8266_WIFI_NVS_ENABLED
+    default n
+    help
+        Cache the derived 32-byte WPA2 PMK, BSSID, and channel in 64 bytes of
+        RTC_SYS memory so warm resets / OTA reboots skip PBKDF2-SHA1 and probe
+        the cached channel first. Cleared automatically on power-on reset.
+
+config ESP8266_WIFI_LEGACY_CIPHERS
+    bool "Enable legacy WEP / STA-TKIP cipher support"
+    default n
+    help
+        Compile in legacy WEP40/WEP104 and STA-side TKIP framing/decap code.
+        Leave disabled on WPA2-CCMP / WPA3-SAE builds to save flash and RAM.
 
 config ESP8266_WIFI_DEBUG_LOG_ENABLE
     bool "Enable WiFi debug log"

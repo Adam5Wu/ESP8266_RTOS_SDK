@@ -1,8 +1,8 @@
 if(BOOTLOADER_BUILD)
-    # For bootloader, all we need from esp8266 is headers
+    # For bootloader, all we need from esp8266 is headers + blob-free core helpers
     set(COMPONENT_ADD_INCLUDEDIRS include)
     # set(COMPONENT_REQUIRES ${COMPONENTS})
-    set(COMPONENT_SRCS source/ets_printf.c source/crc.c source/esp_fast_boot.c)
+    set(COMPONENT_SRCS source/ets_printf.c source/crc.c source/esp_fast_boot.c source/esp_misc.c)
     register_component(esp8266)
 
     idf_build_get_property(_idf_path IDF_PATH)
@@ -18,8 +18,6 @@ if(BOOTLOADER_BUILD)
 
     set(ESP8266_BOOTLOADER_LIBS
         "${_romstrip_libgcc}"
-        "-L ${CMAKE_CURRENT_SOURCE_DIR}/lib"
-        "core"
         PARENT_SCOPE
         )
 
@@ -38,8 +36,6 @@ else()
         "source/crc.c"
         "source/phy_init.c"
         "source/reset_reason.c"
-        "source/smartconfig.c"
-        "source/smartconfig_ack.c"
         "source/startup.c"
         "source/system_api.c"
         "source/task_wdt.c"
@@ -60,6 +56,56 @@ else()
         "driver/ir_rx.c"
         "driver/ledc.c")
 
+    if(CONFIG_ESP8266_OSS_HAL)
+        list(APPEND srcs "source/xtensa_hal.S")
+    endif()
+
+    if(CONFIG_ESP8266_OSS_CORE)
+        list(APPEND srcs
+            "source/esp_clk_rtc.c"
+            "source/esp_ets_timer.c"
+            "source/esp_misc.c"
+            "source/esp_misc_nvs.c"
+            "source/esp_sys_ctrl.c")
+    endif()
+
+    if(CONFIG_ESP8266_NO_WIFI)
+        list(APPEND srcs "source/esp_no_blobs_stubs.c")
+    endif()
+
+    if(CONFIG_ESP8266_OSS_WIFI)
+        list(APPEND srcs
+            "phy/phy_i2c_pbus.c"
+            "phy/phy_clock.c"
+            "phy/phy_rf_chan.c"
+            "phy/phy_rxgain.c"
+            "phy/phy_cal_tx.c"
+            "phy/phy_adc.c"
+            "phy/phy_sleep.c"
+            "phy/phy_core.c"
+            "lmac/lmac_nmi.c"
+            "lmac/lmac_dma.c"
+            "lmac/lmac_tx.c"
+            "lmac/lmac_trc.c"
+            "lmac/lmac_crypto_vif.c"
+            "lmac/lmac_pm_compat.c"
+            "net80211/net80211_worker.c"
+            "net80211/net80211_nvs_rtc.c"
+            "net80211/net80211_supp_glue.c"
+            "net80211/net80211_scan.c"
+            "net80211/net80211_sta.c"
+            "net80211/net80211_ap.c"
+            "net80211/net80211_data.c"
+            "net80211/net80211_pm.c"
+            "net80211/net80211_api.c")
+    endif()
+
+    if(CONFIG_ESP8266_VENDOR_SMARTCONFIG)
+        list(APPEND srcs
+            "source/smartconfig.c"
+            "source/smartconfig_ack.c")
+    endif()
+
     set(include_dirs "include" "include/driver")
 
     set(requires "esp_common" "esp_event")
@@ -68,37 +114,69 @@ else()
 
     idf_component_register(SRCS "${srcs}"
                     INCLUDE_DIRS "${include_dirs}"
+                    PRIV_INCLUDE_DIRS "phy" "lmac" "net80211" "../wpa_supplicant/src/esp_supplicant"
                     REQUIRES "${requires}"
                     PRIV_REQUIRES "${priv_requires}"
                     LDFRAGMENTS "${fragments}"
                     REQUIRED_IDF_TARGETS esp8266)
 
+    if(CONFIG_ESP8266_OSS_WIFI)
+        set_source_files_properties(lmac/lmac_nmi.c PROPERTIES COMPILE_OPTIONS "-fno-jump-tables")
+    endif()
+
     idf_build_get_property(_idf_path IDF_PATH)
     include("${_idf_path}/tools/cmake/romstrip.cmake")
     esp8266_generate_romstrip_libgcc(_romstrip_libgcc)
 
-    target_link_libraries(${COMPONENT_LIB} PUBLIC "${_romstrip_libgcc}" "-L ${CMAKE_CURRENT_SOURCE_DIR}/lib" "-lstdc++")
+    target_link_libraries(${COMPONENT_LIB} PUBLIC "${_romstrip_libgcc}" "-lstdc++")
     target_compile_definitions(${COMPONENT_LIB} PUBLIC -DUSING_IBUS_FASTER_GET)
-    if(NOT CONFIG_NO_BLOBS)
-        set(blobs "hal" "phy" "rtc" "clk" "smartconfig" "ssc")
-        if(CONFIG_ESP8266_WIFI_DEBUG_LOG_ENABLE)
-            list(APPEND blobs "core_dbg" "net80211_dbg" "pp_dbg" "espnow_dbg")
-        else()
-            list(APPEND blobs "core" "net80211" "pp" "espnow")
+    if(CONFIG_ESP8266_VENDOR_BLOBS)
+        set(blobs)
+        if(CONFIG_ESP8266_VENDOR_HAL)
+            list(APPEND blobs "hal")
         endif()
-        foreach(blob ${blobs})
-            add_library(${blob} STATIC IMPORTED)
-            set_property(TARGET ${blob} PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/lib/lib${blob}.a)
-            target_link_libraries(${COMPONENT_LIB} PUBLIC ${blob})
+        if(CONFIG_ESP8266_VENDOR_CORE)
+            list(APPEND blobs "clk" "rtc")
+            if(CONFIG_ESP8266_WIFI_DEBUG_LOG_ENABLE)
+                list(APPEND blobs "core_dbg")
+            else()
+                list(APPEND blobs "core")
+            endif()
+        endif()
+        if(CONFIG_ESP8266_VENDOR_WIFI)
+            list(APPEND blobs "phy")
+            if(CONFIG_ESP8266_WIFI_DEBUG_LOG_ENABLE)
+                list(APPEND blobs "pp_dbg" "net80211_dbg")
+            else()
+                list(APPEND blobs "pp" "net80211")
+            endif()
+        endif()
+        if(CONFIG_ESP8266_VENDOR_SMARTCONFIG)
+            list(APPEND blobs "smartconfig")
+        endif()
+        if(CONFIG_ESP8266_VENDOR_ESPNOW)
+            if(CONFIG_ESP8266_WIFI_DEBUG_LOG_ENABLE)
+                list(APPEND blobs "espnow_dbg")
+            else()
+                list(APPEND blobs "espnow")
+            endif()
+        endif()
+        if(blobs)
+            target_link_libraries(${COMPONENT_LIB} PUBLIC "-L ${CMAKE_CURRENT_SOURCE_DIR}/lib")
+            foreach(blob ${blobs})
+                add_library(${blob} STATIC IMPORTED)
+                set_property(TARGET ${blob} PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/lib/lib${blob}.a)
+                target_link_libraries(${COMPONENT_LIB} PUBLIC ${blob})
 
-            foreach(_blob ${blobs})
-                if(NOT _blob STREQUAL ${blob})
-                    set_property(TARGET ${blob} APPEND PROPERTY INTERFACE_LINK_LIBRARIES ${_blob})
-                endif()
+                foreach(_blob ${blobs})
+                    if(NOT _blob STREQUAL ${blob})
+                        set_property(TARGET ${blob} APPEND PROPERTY INTERFACE_LINK_LIBRARIES ${_blob})
+                    endif()
+                endforeach()
+
+                set_property(TARGET ${blob} APPEND PROPERTY INTERFACE_LINK_LIBRARIES ${COMPONENT_LIB})
             endforeach()
-
-            set_property(TARGET ${blob} APPEND PROPERTY INTERFACE_LINK_LIBRARIES ${COMPONENT_LIB})
-        endforeach()
+        endif()
     endif()
     target_linker_script(${COMPONENT_LIB} INTERFACE "${CMAKE_CURRENT_BINARY_DIR}/esp8266_out.ld")
 

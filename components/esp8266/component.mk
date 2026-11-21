@@ -2,25 +2,73 @@
 # Component Makefile
 #
 ifdef IS_BOOTLOADER_BUILD
-COMPONENT_OBJS := source/ets_printf.o source/crc.o source/esp_fast_boot.o
+COMPONENT_OBJS := source/ets_printf.o source/crc.o source/esp_fast_boot.o source/esp_misc.o
 COMPONENT_SRCDIRS := source
 else
 COMPONENT_ADD_INCLUDEDIRS += include
-COMPONENT_PRIV_INCLUDEDIRS := include/driver
-COMPONENT_SRCDIRS := driver source
+COMPONENT_PRIV_INCLUDEDIRS := include/driver phy lmac net80211 ../wpa_supplicant/src/esp_supplicant
+COMPONENT_SRCDIRS := driver source phy lmac net80211
+
+ifndef CONFIG_ESP8266_OSS_HAL
+COMPONENT_OBJEXCLUDE += source/xtensa_hal.o
+endif
+ifndef CONFIG_ESP8266_OSS_CORE
+COMPONENT_OBJEXCLUDE += source/esp_clk_rtc.o source/esp_ets_timer.o source/esp_misc.o source/esp_misc_nvs.o source/esp_sys_ctrl.o
+endif
+ifndef CONFIG_ESP8266_NO_WIFI
+COMPONENT_OBJEXCLUDE += source/esp_no_blobs_stubs.o
+endif
+ifndef CONFIG_ESP8266_OSS_WIFI
+COMPONENT_OBJEXCLUDE += phy/phy_i2c_pbus.o phy/phy_clock.o phy/phy_rf_chan.o \
+                        phy/phy_rxgain.o phy/phy_cal_tx.o phy/phy_adc.o \
+                        phy/phy_sleep.o phy/phy_core.o \
+                        lmac/lmac_nmi.o lmac/lmac_dma.o lmac/lmac_tx.o \
+                        lmac/lmac_trc.o lmac/lmac_crypto_vif.o lmac/lmac_pm_compat.o \
+                        net80211/net80211_worker.o net80211/net80211_nvs_rtc.o \
+                        net80211/net80211_supp_glue.o net80211/net80211_scan.o \
+                        net80211/net80211_sta.o net80211/net80211_ap.o \
+                        net80211/net80211_data.o net80211/net80211_pm.o \
+                        net80211/net80211_api.o
+endif
+ifndef CONFIG_ESP8266_VENDOR_SMARTCONFIG
+COMPONENT_OBJEXCLUDE += source/smartconfig.o source/smartconfig_ack.o
+endif
 
 LIBS ?=
-ifndef CONFIG_NO_BLOBS
-ifndef CONFIG_ESP8266_WIFI_DEBUG_LOG_ENABLE
-LIBS += gcc hal core net80211 \
-        phy rtc clk pp smartconfig ssc espnow
+ifdef CONFIG_ESP8266_VENDOR_BLOBS
+ifdef CONFIG_ESP8266_VENDOR_HAL
+LIBS += hal
+endif
+ifdef CONFIG_ESP8266_VENDOR_CORE
+LIBS += clk rtc
+ifdef CONFIG_ESP8266_WIFI_DEBUG_LOG_ENABLE
+LIBS += core_dbg
 else
-LIBS += gcc hal core_dbg net80211_dbg \
-        phy rtc clk pp_dbg smartconfig ssc espnow_dbg
+LIBS += core
+endif
+endif
+ifdef CONFIG_ESP8266_VENDOR_WIFI
+LIBS += phy
+ifdef CONFIG_ESP8266_WIFI_DEBUG_LOG_ENABLE
+LIBS += pp_dbg net80211_dbg
+else
+LIBS += pp net80211
+endif
+endif
+ifdef CONFIG_ESP8266_VENDOR_SMARTCONFIG
+LIBS += smartconfig
+endif
+ifdef CONFIG_ESP8266_VENDOR_ESPNOW
+ifdef CONFIG_ESP8266_WIFI_DEBUG_LOG_ENABLE
+LIBS += espnow_dbg
+else
+LIBS += espnow
+endif
 endif
 endif
 
 CFLAGS += -DUSING_IBUS_FASTER_GET
+lmac/lmac_nmi.o: CFLAGS += -fno-jump-tables
 #Linker scripts used to link the final application.
 #Warning: These linker scripts are only used when the normal app is compiled; the bootloader
 #specifies its own scripts.
@@ -28,9 +76,11 @@ LINKER_SCRIPTS += esp8266.rom.ld esp8266.peripherals.ld
 
 COMPONENT_ADD_LDFRAGMENTS += ld/esp8266_fragments.lf ld/esp8266_bss_fragments.lf linker.lf
 
+ifneq ($(strip $(LIBS)),)
 COMPONENT_ADD_LDFLAGS += -L$(COMPONENT_PATH)/lib \
-                         $(addprefix -l,$(LIBS)) \
-                         -L $(COMPONENT_PATH)/ld \
+                         $(addprefix -l,$(LIBS))
+endif
+COMPONENT_ADD_LDFLAGS += -L $(COMPONENT_PATH)/ld \
                          -T esp8266_out.ld       \
                          -T $(COMPONENT_BUILD_DIR)/esp8266.project.ld \
                          -Wl,--no-check-sections \

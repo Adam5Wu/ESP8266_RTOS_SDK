@@ -1,0 +1,251 @@
+// Copyright 2026 Adam5Wu (ESP8266_RTOS_SDK OSS contributors)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// Hardware register map cross-checked against teatime-os (MIT, Copyright (c)
+// 2025-2026 Jonathan Waters), ESP8266 RTOS SDK eagle_soc.h, and WDEV silicon
+// specifications.
+
+#pragma once
+
+#include <stdint.h>
+#include "esp8266/eagle_soc.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+static inline __attribute__((always_inline)) uint32_t lmac_reg_read(uint32_t addr)
+{
+    uint32_t v;
+    __asm__ volatile("memw" ::: "memory");
+    v = *(volatile uint32_t *)(uintptr_t)addr;
+    return v;
+}
+
+static inline __attribute__((always_inline)) void lmac_reg_write(uint32_t addr, uint32_t val)
+{
+    __asm__ volatile("memw" ::: "memory");
+    *(volatile uint32_t *)(uintptr_t)addr = val;
+}
+
+static inline void lmac_reg_set(uint32_t addr, uint32_t mask)
+{
+    lmac_reg_write(addr, lmac_reg_read(addr) | mask);
+}
+
+static inline void lmac_reg_clr(uint32_t addr, uint32_t mask)
+{
+    lmac_reg_write(addr, lmac_reg_read(addr) & ~mask);
+}
+
+static inline void lmac_reg_rmw(uint32_t addr, uint32_t clr_mask, uint32_t set_mask)
+{
+    lmac_reg_write(addr, (lmac_reg_read(addr) & ~clr_mask) | set_mask);
+}
+
+/* --------------------------------------------------------------------------
+ * System / DPORT / Baseband Bridge Registers
+ * -------------------------------------------------------------------------- */
+
+#define LMAC_DPORT_NMI_INT_ENA      0x3FF00000U /* Bit 0 routes WDEV IRQ to Level-3 NMI */
+#define LMAC_SYS_WDEV_CLK_STATUS    0x60000710U
+#define LMAC_RTC_MAC_RESET_CTRL     0x60000D48U /* Bit 1 cleared to pulse MAC core reset */
+#define LMAC_GPIO_BT_COEX_CFG       0x600011F8U
+#define LMAC_BB_RX_SNIFFER_FILT     0x60009D44U /* Bits [29,26] = 0x24000000 cleared in sniffer */
+#define LMAC_BB_RX_SNIFFER_MASK     0x24000000U
+
+/* --------------------------------------------------------------------------
+ * WDEV Bank 0 (0x3FF20000..0x3FF201DB): RX DMA Engine, Bounds & RX BA
+ * -------------------------------------------------------------------------- */
+
+#define LMAC_WDEV_BANK0_BASE        0x3FF20000U
+#define LMAC_WDEV_BANK0_WORDS       0x77U       /* 119 dwords */
+
+#define LMAC_WDEV_RX_CONF           0x3FF20000U /* &= 0xDFFFFF00 on init */
+#define LMAC_WDEV_MAC_ENABLE        0x3FF20004U /* Bit 31: master MAC RX/TX enable */
+#define LMAC_WDEV_MAC_ENABLE_BIT    0x80000000U
+#define LMAC_WDEV_RX_LINK_HEAD      0x3FF20008U /* Circular RX lldesc head */
+#define LMAC_WDEV_RX_AMPDU_LINK     0x3FF2000CU /* A-MPDU subframe info lldesc head */
+#define LMAC_WDEV_RX_LINK_CLR       0x3FF20010U /* Written 0 on init */
+#define LMAC_WDEV_RX_LAST_DESC      0x3FF20014U /* Last HW-completed RX lldesc */
+#define LMAC_WDEV_RX_CUR_DESC       0x3FF2001CU /* Current DMA-active RX lldesc (RO) */
+#define LMAC_WDEV_RX_STAT_INFO      0x3FF20038U /* Per-frame RX status byte */
+#define LMAC_WDEV_RX_FILTER_CTRL    0x3FF2006CU /* Bits 0..2 address match, bit 4 scan hold, bit 8..10 */
+#define LMAC_WDEV_RX_BUF_END        0x3FF2007CU /* Main RX frontdata end bound */
+#define LMAC_WDEV_RX_DESC_START     0x3FF20080U /* Main RX lldesc array start bound */
+#define LMAC_WDEV_RX_AMPDU_END      0x3FF20084U /* A-MPDU RX buf end bound */
+#define LMAC_WDEV_RX_AMPDU_START    0x3FF20088U /* A-MPDU RX lldesc start bound */
+
+/* 8 Hardware RX Block-Ack Scoreboards (i = 0..7, reverse stride -0x18) */
+#define LMAC_WDEV_RXBA_CONF(i)      (0x3FF2014CU - 0x18U * (uint32_t)(i))
+#define LMAC_WDEV_RXBA_ADDR_HI(i)   (0x3FF20150U - 0x18U * (uint32_t)(i))
+#define LMAC_WDEV_RXBA_ADDR_LO(i)   (0x3FF20154U - 0x18U * (uint32_t)(i))
+#define LMAC_WDEV_RXBA_SSN_WIN(i)   (0x3FF20158U - 0x18U * (uint32_t)(i))
+
+#define LMAC_WDEV_RX_CTRL2          0x3FF20178U /* Bit 1 set on init/reset */
+#define LMAC_WDEV_RX_DATASUC_CNT    0x3FF201BCU
+#define LMAC_WDEV_RX_END_CNT        0x3FF201C0U
+#define LMAC_WDEV_DIAG6             0x3FF201D4U
+
+/* --------------------------------------------------------------------------
+ * WDEV Bank 1 (0x3FF20400..0x3FF20423): Auto-ACK/CTS Rate Response LUT
+ * -------------------------------------------------------------------------- */
+
+#define LMAC_WDEV_BANK1_BASE        0x3FF20400U
+#define LMAC_WDEV_BANK1_WORDS       9U
+
+#define LMAC_WDEV_ACK_RATE_TAB0     0x3FF20400U /* 0x76503210 normal; ch14 CCK remap */
+#define LMAC_WDEV_ACK_RATE_TAB1     0x3FF20404U /* 0xBBBBBBBB */
+#define LMAC_WDEV_ACK_RATE_TAB2     0x3FF20408U /* 0xBBBBBBBB */
+#define LMAC_WDEV_FORCE_ACK_RATE    0x3FF2040CU /* 0x70C07 normal, 0x70B00 force 6M */
+
+/* --------------------------------------------------------------------------
+ * WDEV Bank 2 (0x3FF20800..0x3FF2082F): Hardware Crypto Engine
+ * -------------------------------------------------------------------------- */
+
+#define LMAC_WDEV_BANK2_BASE        0x3FF20800U
+#define LMAC_WDEV_BANK2_WORDS       0x0CU
+
+#define LMAC_WDEV_CRYPTO_CONF0      0x3FF20800U /* VIF 0 (STA) crypto engine control */
+#define LMAC_WDEV_CRYPTO_CONF1      0x3FF20804U /* VIF 1 (SoftAP) crypto engine control */
+#define LMAC_WDEV_CRYPTO_WAPI       0x3FF20808U /* Cleared to 0 on init */
+#define LMAC_WDEV_KEY_VALID_MASK    0x3FF2080CU /* Bits [24:0] enable slots 0..24 */
+
+#define LMAC_CRYPTO_BYPASS          0x00030000U
+#define LMAC_CRYPTO_ACTIVE_STA      0x00010103U
+#define LMAC_CRYPTO_ACTIVE_SPP      0x00010303U
+#define LMAC_CRYPTO_TX_ENC          0x00020000U
+#define LMAC_CRYPTO_WEP_BIT         0x10000000U
+#define LMAC_CRYPTO_SNIFFER_RAW     0x03000000U
+#define LMAC_CRYPTO_ENG_EN          0x00010000U
+
+/* 25 Hardware Key Slots (s = 0..24, 40 B = 10 dwords each) */
+#define LMAC_HW_KEY_SLOTS           25U
+#define LMAC_KEY_SLOT_BASE(s)       (0x3FF21400U + 0x28U * (uint32_t)(s))
+#define LMAC_KEY_SLOT_ADDR(s)       (LMAC_KEY_SLOT_BASE(s) + 0x00U)
+#define LMAC_KEY_SLOT_FLAGS(s)      (LMAC_KEY_SLOT_BASE(s) + 0x04U)
+#define LMAC_KEY_SLOT_DATA(s, w)    (LMAC_KEY_SLOT_BASE(s) + 0x08U + 4U * (uint32_t)(w))
+
+/* Hardware key slot cipher codes in bits [20:18] (sub_alg in [17:16]) */
+#define LMAC_HW_ALG_NONE            0U
+#define LMAC_HW_ALG_WEP             1U /* sub_alg=0 WEP40, sub_alg=1 WEP104 */
+#define LMAC_HW_ALG_TKIP            2U
+#define LMAC_HW_ALG_CCMP            3U
+
+/* Hardware key class codes in bits [23:21] */
+#define LMAC_HW_KEY_CLASS_PTK       2U
+#define LMAC_HW_KEY_CLASS_GTK       6U
+#define LMAC_HW_KEY_CLASS_WEP       7U
+
+/* --------------------------------------------------------------------------
+ * WDEV Bank 3 (0x3FF20C00..0x3FF20E57): Clock, NMI, Filters & 8 TX Queues
+ * -------------------------------------------------------------------------- */
+
+#define LMAC_WDEV_BANK3_BASE        0x3FF20C00U
+#define LMAC_WDEV_BANK3_WORDS       0x96U       /* 150 dwords */
+
+#define LMAC_WDEV_TIME              0x3FF20C00U /* Free-running 1 MHz (1 us) MAC clock */
+#define LMAC_WDEV_NAV_CONF          0x3FF20C14U /* & 0xFFFFF000 | 0xC00000F0 */
+#define LMAC_WDEV_INT_ENA           0x3FF20C18U /* NMI enable mask (shadowed by WDEV_INTEREST_EVENT) */
+#define LMAC_WDEV_INT_RAW           0x3FF20C1CU /* Raw unmasked interrupt status */
+#define LMAC_WDEV_INT_STATUS        0x3FF20C20U /* Masked interrupt status */
+#define LMAC_WDEV_INT_CLR           0x3FF20C24U /* Write-1-to-clear interrupt acknowledge */
+
+/* Verified WDEV interrupt bits (cross-checked: wdev.o.c + eagle_soc.h + teatime-os) */
+#define LMAC_INT_SNIFFER_END        BIT(2)      /* 0x00000004: Sniffer RX end / unsupported */
+#define LMAC_INT_SNIFFER_START      BIT(3)      /* 0x00000008: Sniffer RX start / A-MPDU */
+#define LMAC_INT_RX_DONE            BIT(8)      /* 0x00000100: Main RX frame complete */
+#define LMAC_INT_RX_OVF             BIT(9)      /* 0x00000200: RX secondary / overflow */
+#define LMAC_INT_TX_DONE            BIT(19)     /* 0x00080000: TX complete / ack/cts/err */
+#define LMAC_INT_PANIC0             BIT(20)     /* 0x00100000: Hardware panic 0 */
+#define LMAC_INT_RX_MISC            BIT(23)     /* 0x00800000: RX buffer event */
+#define LMAC_INT_MACTIM1            BIT(26)     /* 0x04000000: TSF1 / MAC Timer 1 match */
+#define LMAC_INT_MACTIM0            BIT(27)     /* 0x08000000: WDEV_TSF0_REACH_INT (task_wdt) */
+#define LMAC_INT_PANIC1             BIT(28)     /* 0x10000000: Hardware panic 1 */
+#define LMAC_INT_TX_TIMEOUT         BIT(29)     /* 0x20000000: Hardware TX queue timeout */
+
+#define LMAC_WDEV_INTEREST_DEFAULT  0x2C880300U /* Bits 8, 9, 19, 23, 26, 27, 29 */
+#define LMAC_WDEV_INTEREST_SNIFFER  (LMAC_INT_SNIFFER_END | LMAC_INT_SNIFFER_START)
+
+/* Dual Hardware BSSID & Unicast MAC Address Filters (u = 0 STA, u = 1 SoftAP) */
+#define LMAC_WDEV_BSSID_LO(u)       (0x3FF20C28U + 8U * (uint32_t)(u))
+#define LMAC_WDEV_BSSID_HI(u)       (0x3FF20C2CU + 8U * (uint32_t)(u))
+#define LMAC_WDEV_BSSID_MASK_LO(u)  (0x3FF20C38U + 8U * (uint32_t)(u))
+#define LMAC_WDEV_BSSID_MASK_HI(u)  (0x3FF20C3CU + 8U * (uint32_t)(u))
+#define LMAC_WDEV_MAC_LO(u)         (0x3FF20C48U + 8U * (uint32_t)(u))
+#define LMAC_WDEV_MAC_HI(u)         (0x3FF20C4CU + 8U * (uint32_t)(u))
+#define LMAC_WDEV_MAC_MASK_LO(u)    (0x3FF20C58U + 8U * (uint32_t)(u))
+#define LMAC_WDEV_MAC_MASK_HI(u)    (0x3FF20C5CU + 8U * (uint32_t)(u))
+#define LMAC_WDEV_MATCH_ENABLE      0x00010000U
+
+#define LMAC_WDEV_SLOT_CONF0        0x3FF20C68U
+#define LMAC_WDEV_SLOT_CONF1        0x3FF20C6CU
+#define LMAC_WDEV_PHY_CTRL          0x3FF20C70U /* Bit 1: RF/RX path up; bits [7:4] reset */
+#define LMAC_WDEV_TX_ABORT          0x3FF20C74U /* Bits [31:30] TX abort strobe */
+#define LMAC_WDEV_TX_CLR            0x3FF20C78U
+#define LMAC_WDEV_TX_STATUS         0x3FF20C84U /* [31:28]=cause, [23:16]=sub, [11:8]=slot */
+#define LMAC_WDEV_RX_OPTION         0x3FF20C88U /* & 0xFFDFBFF7 | 0x8084A000 (bit 18 = protected RX!) */
+#define LMAC_WDEV_RXTX_OPTION       0x3FF20C90U /* |= 0x8 */
+#define LMAC_WDEV_TX_OPTION         0x3FF20C94U /* |= 0x3 (bit 0 = TX/ACK enable; cleared in sniffer) */
+#define LMAC_WDEV_TXQ_TIMEOUT_MASK  0x3FF20CC0U /* Bits [27:16] timed-out TX slots */
+
+/* Serialized Hardware TX Queue (q = 0: 0x3FF20DC0..0x3FF20DD4; SW priority queues VO/MGMT/BCN ahead of BE/BK) */
+#define LMAC_HW_TXQ_COUNT           1U
+#define LMAC_HW_TXQ_BASE(q)         (0x3FF20DC0U - 0x18U * (uint32_t)(q))
+#define LMAC_TXQ_CONF(q)            (LMAC_HW_TXQ_BASE(q) + 0x00U) /* [21:12] backoff slots */
+#define LMAC_TXQ_LINK(q)            (LMAC_HW_TXQ_BASE(q) + 0x04U) /* [17:0] desc, [25:24] ack, [31:30] GO */
+#define LMAC_TXQ_RATE(q)            (LMAC_HW_TXQ_BASE(q) + 0x08U) /* [11:0] air, [15:12] rate, [23:16] key, [24] 11n */
+#define LMAC_TXQ_HT_PLCP(q)         (LMAC_HW_TXQ_BASE(q) + 0x0CU) /* HT20 MCS + len + GI */
+#define LMAC_TXQ_DURATION(q)        (LMAC_HW_TXQ_BASE(q) + 0x10U) /* [31:16] duration_us */
+#define LMAC_TXQ_LIFETIME(q)        (LMAC_HW_TXQ_BASE(q) + 0x14U) /* [23:12] lifetime_tu */
+
+#define LMAC_TXQ_LINK_VALID         0x00200000U
+#define LMAC_TXQ_LINK_LEGACY        0x00400000U
+#define LMAC_TXQ_LINK_ACK_NORMAL    (1U << 24)
+#define LMAC_TXQ_LINK_ACK_BA        (3U << 24)
+#define LMAC_TXQ_LINK_USE_RTS       (1U << 27)
+#define LMAC_TXQ_LINK_USE_CTS       (1U << 28)
+#define LMAC_TXQ_LINK_GO            0xC0000000U
+
+#define LMAC_WDEV_TX_ACK_RSSI       0x3FF20E04U /* Bit 24 valid; [23:16] ACK RSSI */
+#define LMAC_WDEV_PHY_CONF          0x3FF20E08U /* &= 0xFFFFFF0F on init */
+#define LMAC_WDEV_HW_SEQ_RND        0x3FF20E44U /* Hardware PRNG / backoff seed */
+
+/* --------------------------------------------------------------------------
+ * WDEV Bank 4 (0x3FF21000..0x3FF2111B): TSF0, TSF1 & Hardware MAC Timers
+ * -------------------------------------------------------------------------- */
+
+#define LMAC_WDEV_BANK4_BASE        0x3FF21000U
+#define LMAC_WDEV_BANK4_WORDS       0x47U       /* 71 dwords */
+
+#define LMAC_WDEV_TSF0_LO           0x3FF21004U
+#define LMAC_WDEV_TSF0_HI           0x3FF21008U
+#define LMAC_WDEV_MACTIM0_CONF      0x3FF21014U /* Bit 31 enables MAC Timer 0 */
+#define LMAC_WDEV_TSF1_LO           0x3FF21048U
+#define LMAC_WDEV_TSF1_HI           0x3FF2104CU
+#define LMAC_WDEV_TSF1_CONF         0x3FF21058U /* 0xC4000000 enables TSF1 + TBTT; bit 31 = MacTim1 */
+#define LMAC_WDEV_TBTT1_LO          0x3FF2105CU
+#define LMAC_WDEV_TBTT1_HI          0x3FF21060U
+#define LMAC_WDEV_MACTIM0_ARM       0x3FF21098U /* Bit 31 arms TSF0 comparator */
+#define LMAC_WDEV_MACTIM0_TARGET_LO 0x3FF2109CU
+#define LMAC_WDEV_MACTIM0_TARGET_HI 0x3FF210A0U
+#define LMAC_WDEV_MACTIM1_ARM       0x3FF210C8U /* Bit 31 arms TSF1 comparator */
+#define LMAC_WDEV_MACTIM1_TARGET_LO 0x3FF210CCU
+#define LMAC_WDEV_MACTIM1_TARGET_HI 0x3FF210D0U
+#define LMAC_WDEV_RX_TSF_LO         0x3FF210FCU
+#define LMAC_WDEV_RX_TSF_HI         0x3FF21100U
+
+#ifdef __cplusplus
+}
+#endif

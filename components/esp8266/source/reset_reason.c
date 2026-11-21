@@ -82,7 +82,8 @@ static inline uint32_t get_reset_reason(uint32_t rtc_reset_reason, uint32_t rese
             // - ESP_RST_SW: this is set by esp_restart(), which supposedly
             //   should also have set `SW_RESET` in the RTC. However, the
             //   latest ESP8266 RTOS SDK seems to fail doing that.
-            if (reset_reason_hint == ESP_RST_SW) {
+            if (reset_reason_hint == ESP_RST_SW ||
+                reset_reason_hint == ESP_RST_FAST_SW) {
                 return reset_reason_hint;
             }
             if (reset_reason_hint != ESP_RST_UNKNOWN) {

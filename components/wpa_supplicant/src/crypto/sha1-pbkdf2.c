@@ -15,6 +15,7 @@
 #include "utils/includes.h"
 #include "utils/common.h"
 #include "sha1.h"
+#include "sha1_i.h"
 #include "md5.h"
 #include "crypto.h"
 
@@ -80,40 +81,67 @@ pbkdf2_sha1_f(const char *passphrase, const char *ssid,
         size_t ssid_len, int iterations, unsigned int count,
         u8 *digest)
 {
-	unsigned char tmp[SHA1_MAC_LEN], tmp2[SHA1_MAC_LEN];
+	unsigned char tmp[SHA1_MAC_LEN];
+	unsigned char k_pad[64];
+	unsigned char tk[SHA1_MAC_LEN];
+	struct SHA1Context ipad_ctx, opad_ctx, ctx;
 	int i, j;
 	unsigned char count_buf[4];
-	const u8 *addr[2];
-	size_t len[2];
-	size_t passphrase_len = os_strlen(passphrase);
+	const u8 *key = (const u8 *) passphrase;
+	size_t key_len = os_strlen(passphrase);
 
-	addr[0] = (u8 *) ssid;
-	len[0] = ssid_len;
-	addr[1] = count_buf;
-	len[1] = 4;
+	if (key_len > 64) {
+		SHA1Init(&ctx);
+		SHA1Update(&ctx, key, (u32)key_len);
+		SHA1Final(tk, &ctx);
+		key = tk;
+		key_len = SHA1_MAC_LEN;
+	}
+
+	/* Precompute inner/outer HMAC-SHA1 key states once for all 4096 iterations */
+	os_memset(k_pad, 0, sizeof(k_pad));
+	os_memcpy(k_pad, key, key_len);
+	for (i = 0; i < 64; i++)
+		k_pad[i] ^= 0x36;
+	SHA1Init(&ipad_ctx);
+	SHA1Update(&ipad_ctx, k_pad, 64);
+
+	os_memset(k_pad, 0, sizeof(k_pad));
+	os_memcpy(k_pad, key, key_len);
+	for (i = 0; i < 64; i++)
+		k_pad[i] ^= 0x5c;
+	SHA1Init(&opad_ctx);
+	SHA1Update(&opad_ctx, k_pad, 64);
 
 	/* F(P, S, c, i) = U1 xor U2 xor ... Uc
 	 * U1 = PRF(P, S || i)
 	 * U2 = PRF(P, U1)
 	 * Uc = PRF(P, Uc-1)
 	 */
-
 	count_buf[0] = (count >> 24) & 0xff;
 	count_buf[1] = (count >> 16) & 0xff;
 	count_buf[2] = (count >> 8) & 0xff;
 	count_buf[3] = count & 0xff;
-	if (hmac_sha1_vector((u8 *) passphrase, passphrase_len, 2, addr, len,
-			     tmp))
-		return -1;
+
+	ctx = ipad_ctx;
+	SHA1Update(&ctx, ssid, (u32)ssid_len);
+	SHA1Update(&ctx, count_buf, 4);
+	SHA1Final(tmp, &ctx);
+	ctx = opad_ctx;
+	SHA1Update(&ctx, tmp, SHA1_MAC_LEN);
+	SHA1Final(tmp, &ctx);
+
 	os_memcpy(digest, tmp, SHA1_MAC_LEN);
 
 	for (i = 1; i < iterations; i++) {
-		if (hmac_sha1((u8 *) passphrase, passphrase_len, tmp,
-			      SHA1_MAC_LEN, tmp2))
-			return -1;
-		os_memcpy(tmp, tmp2, SHA1_MAC_LEN);
+		ctx = ipad_ctx;
+		SHA1Update(&ctx, tmp, SHA1_MAC_LEN);
+		SHA1Final(tmp, &ctx);
+		ctx = opad_ctx;
+		SHA1Update(&ctx, tmp, SHA1_MAC_LEN);
+		SHA1Final(tmp, &ctx);
 		for (j = 0; j < SHA1_MAC_LEN; j++)
-			digest[j] ^= tmp2[j];
+			digest[j] ^= tmp[j];
 	}
 
 	return 0;

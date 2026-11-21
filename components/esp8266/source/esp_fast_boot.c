@@ -29,6 +29,7 @@
 #include "esp_system.h"
 #include "esp8266/rom_functions.h"
 #include "esp8266/eagle_soc.h"
+#include "driver/soc.h"
 #include "rom/uart.h"
 #include "esp_spi_flash.h"
 #include "FreeRTOS.h"
@@ -91,7 +92,7 @@ void IRAM_ATTR esp_fast_boot_restart_app(uint32_t image_start, uint32_t entry_ad
 int esp_fast_boot_restart(void)
 {
     extern void pm_goto_rf_on(void);
-    extern void clockgate_watchdog(int on);
+    extern void clockgate_watchdog(uint8_t disable);
 
     int ret;
     uint8_t region, sub_region;
@@ -166,6 +167,7 @@ int esp_fast_boot_restart(void)
 
     esp_reset_reason_set_hint(ESP_RST_FAST_SW);
 
+    soc_set_ccount(0U);
     esp_fast_boot_restart_app(image_start, image_entry, region, sub_region);
 
     return 0;

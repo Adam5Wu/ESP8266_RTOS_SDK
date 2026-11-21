@@ -102,12 +102,12 @@ esp_err_t esp_phy_rf_init(const esp_phy_init_data_t* init_data, esp_phy_calibrat
 
     int ret = register_chipv6_phy(local_init_data);
     if (ret) {
-        ESP_LOGI(TAG, "phy register error, ret:%d", ret);
+        ESP_LOGE(TAG, "phy register error, ret:%d", ret);
     }
 
     phy_disable_agc();
 
-    ESP_LOGI(TAG, "phy ver: %" PRIu32 "_%" PRIu32, (READ_PERI_REG(0x6000107C)>>16)&0xFFF, READ_PERI_REG(0x6000107C)>>28);
+    ESP_LOGD(TAG, "phy ver: %" PRIu32 "_%" PRIu32, (READ_PERI_REG(0x6000107C)>>16)&0xFFF, READ_PERI_REG(0x6000107C)>>28);
     get_data_from_rtc((uint8_t *)calibration_data);
 
     memcpy(rx_gain_dc_table, calibration_data->rx_gain_dc_table, 4 * 125);

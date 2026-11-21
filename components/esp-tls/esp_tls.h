@@ -27,9 +27,6 @@
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/error.h"
 #include "mbedtls/certs.h"
-#elif CONFIG_ESP_TLS_USING_WOLFSSL
-#include "wolfssl/wolfcrypt/settings.h"
-#include "wolfssl/ssl.h"
 #endif
 
 #ifdef __cplusplus
@@ -68,11 +65,7 @@ extern "C" {
 #define ESP_TLS_ERR_SSL_WANT_READ                          MBEDTLS_ERR_SSL_WANT_READ
 #define ESP_TLS_ERR_SSL_WANT_WRITE                         MBEDTLS_ERR_SSL_WANT_WRITE
 #define ESP_TLS_ERR_SSL_TIMEOUT                            MBEDTLS_ERR_SSL_TIMEOUT
-#elif CONFIG_ESP_TLS_USING_WOLFSSL /* CONFIG_ESP_TLS_USING_MBEDTLS */
-#define ESP_TLS_ERR_SSL_WANT_READ                          WOLFSSL_ERROR_WANT_READ
-#define ESP_TLS_ERR_SSL_WANT_WRITE                         WOLFSSL_ERROR_WANT_WRITE
-#define ESP_TLS_ERR_SSL_TIMEOUT                            WOLFSSL_CBIO_ERR_TIMEOUT
-#endif /*CONFIG_ESP_TLS_USING_WOLFSSL */
+#endif /* CONFIG_ESP_TLS_USING_MBEDTLS */
 typedef struct esp_tls_last_error* esp_tls_error_handle_t;
 
 /**
@@ -292,9 +285,6 @@ typedef struct esp_tls {
     mbedtls_pk_context serverkey;                                               /*!< Container for the private key of the server
                                                                                    certificate */
 #endif
-#elif CONFIG_ESP_TLS_USING_WOLFSSL
-    void *priv_ctx;
-    void *priv_ssl;
 #endif
     int sockfd;                                                                 /*!< Underlying socket file descriptor. */
 
