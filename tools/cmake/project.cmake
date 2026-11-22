@@ -427,5 +427,13 @@ macro(project project_name)
 
     idf_build_executable(${project_elf})
 
+    if(CONFIG_APP_COMPILE_TIME_DATE AND NOT BOOTLOADER_BUILD AND TARGET __idf_app_update)
+        add_custom_command(TARGET ${project_elf} POST_BUILD
+            COMMAND ${python} "${idf_path}/components/app_update/stamp_app_desc.py" "$<TARGET_FILE:${project_elf}>"
+            COMMENT "Stamping UTC build time into ${project_elf}"
+            VERBATIM
+        )
+    endif()
+
     __project_info("${test_components}")
 endmacro()
