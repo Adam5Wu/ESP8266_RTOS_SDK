@@ -35,6 +35,8 @@ idf.py menuconfig
 
 * Set WiFi SSID and WiFi Password and Maximal STA connections under Example Configuration Options.
 
+* Note: SmartConfig currently requires the opt-in prebuilt vendor SmartConfig (`libsmartconfig.a`) and vendor PHY/Wi-Fi (`libphy.a`, `libpp.a`, `libnet80211.a`) archives. This example ships `sdkconfig.defaults` with `CONFIG_ESP8266_VENDOR_BLOBS=y`, `CONFIG_ESP8266_VENDOR_PHY_WIFI=y`, and `CONFIG_ESP8266_VENDOR_SMARTCONFIG=y` enabled out of the box while keeping open-source `OSS_HAL` and `OSS_CORE` active.
+
 ### Build and Flash
 
 Build the project and flash it to the board, then run monitor tool to view serial output:

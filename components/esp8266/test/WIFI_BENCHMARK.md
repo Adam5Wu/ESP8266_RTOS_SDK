@@ -23,9 +23,9 @@ Build and flash whichever firmware configuration you want to measure (via serial
 
 | Variant | SDK Branch / Environment | Key Kconfig Setting (`sdkconfig`) |
 | :--- | :--- | :--- |
-| **Vendor Blobs** | `deploy/live-gcc16-oss` (or `deploy/live-gcc16`) | `CONFIG_ESP8266_VENDOR_BLOBS=y`, `CONFIG_ESP8266_VENDOR_HAL=y`, `CONFIG_ESP8266_VENDOR_CORE=y`, `CONFIG_ESP8266_VENDOR_WIFI=y` |
+| **Vendor Blobs** | `deploy/live-gcc16-oss` (or `deploy/live-gcc16`) | `CONFIG_ESP8266_VENDOR_BLOBS=y`, `CONFIG_ESP8266_VENDOR_HAL=y`, `CONFIG_ESP8266_VENDOR_CORE=y`, `CONFIG_ESP8266_VENDOR_PHY_WIFI=y` |
 | **OSS Minimal NMI** | `deploy/live-gcc16-oss` (e.g., `esp01_4m`) | Default OSS (`# CONFIG_ESP8266_VENDOR_BLOBS is not set`) + **`CONFIG_ESP8266_OSS_WIFI_MIN_NMI=y`** |
-| **OSS Default (Fast TX)** | `deploy/live-gcc16-oss` (e.g., `esp01_4m`) | Out-of-the-box defaults (`CONFIG_ESP8266_OSS_WIFI=y`, `# CONFIG_ESP8266_OSS_WIFI_MIN_NMI is not set`) |
+| **OSS Default (Fast TX)** | `deploy/live-gcc16-oss` (e.g., `esp01_4m`) | Out-of-the-box defaults (`CONFIG_ESP8266_OSS_PHY_WIFI=y`, `# CONFIG_ESP8266_OSS_WIFI_MIN_NMI is not set`) |
 
 > **Tip**: Keep all non-Wi-Fi settings identical across variants (`CONFIG_ESP8266_DEFAULT_CPU_FREQ_160=y`, `CONFIG_ESP8266_WIFI_RX_BUFFER_NUM=16`, `CONFIG_ESP8266_WIFI_TX_PKT_NUM=6`, `CONFIG_COMPILER_OPTIMIZATION_LEVEL_RELEASE=y`, `WIFI_PS_MIN_MODEM`).
 

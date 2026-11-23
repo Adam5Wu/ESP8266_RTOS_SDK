@@ -50,8 +50,6 @@ extern void phy_set_rx11b_reg(uint8_t enable);
 extern void noise_check_loop(uint8_t chan_idx, uint8_t apply_now);
 extern void tx_pwctrl_background(uint8_t apply_enable, uint8_t debug_print);
 extern int16_t phy_get_bb_freqoffset(void);
-extern void pm_rtc_clock_cali(uint32_t *pm_ctx);
-extern uint64_t pm_usec2rtc_64(uint64_t usec, uint32_t cali_q12);
 extern void pm_wakeup_init(uint32_t mode, uint32_t skip_bbpll);
 
 /* --------------------------------------------------------------------------
@@ -288,7 +286,6 @@ typedef struct {
     uint8_t              pend_noise_check;
     uint32_t             sniffer_filter;
     uint32_t             sniffer_ctrl_filter;
-    uint32_t             rtc_cali_q12;
     uint32_t             ps_lock_flags;
     uint8_t              rx_pbuf_mem_type;
     uint8_t              hk_tick_cnt;

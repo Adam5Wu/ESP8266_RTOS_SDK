@@ -14,36 +14,38 @@ entries:
 [mapping:pp]
 archive: libpp.a
 entries:
-    if ESP8266_VENDOR_WIFI = y:
+    if ESP8266_VENDOR_PHY_WIFI = y:
         if ESP8266_WIFI_DEBUG_LOG_ENABLE = n:
             * (noflash_text)
 
 [mapping:pp_dbg]
 archive: libpp_dbg.a
 entries:
-    if ESP8266_VENDOR_WIFI = y:
+    if ESP8266_VENDOR_PHY_WIFI = y:
         if ESP8266_WIFI_DEBUG_LOG_ENABLE = y:
             * (noflash_text)
 
 [mapping:phy]
 archive: libphy.a
 entries:
-    if ESP8266_VENDOR_WIFI = y:
+    if ESP8266_VENDOR_PHY_WIFI = y:
         * (noflash_text)
 
 [mapping:core]
 archive: libcore.a
 entries:
     if ESP8266_VENDOR_CORE = y:
-        if ESP8266_CORE_GLOBAL_DATA_LINK_IRAM = y:
-            * (iram_bss)
+        if ESP8266_WIFI_DEBUG_LOG_ENABLE = n:
+            if ESP8266_CORE_GLOBAL_DATA_LINK_IRAM = y:
+                * (iram_bss)
 
 [mapping:core_dbg]
 archive: libcore_dbg.a
 entries:
     if ESP8266_VENDOR_CORE = y:
-        if ESP8266_CORE_GLOBAL_DATA_LINK_IRAM = y:
-            * (iram_bss)
+        if ESP8266_WIFI_DEBUG_LOG_ENABLE = y:
+            if ESP8266_CORE_GLOBAL_DATA_LINK_IRAM = y:
+                * (iram_bss)
 
 [mapping:gcc]
 archive: libgcc_romstrip.a

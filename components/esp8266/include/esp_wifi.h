@@ -155,6 +155,12 @@ typedef struct {
 
 #define WIFI_INIT_CONFIG_MAGIC    0x1F2F3F4F
 
+#ifdef CONFIG_ESP8266_WIFI_RX_PKT_NUM
+#define WIFI_RX_PKT_NUM         CONFIG_ESP8266_WIFI_RX_PKT_NUM
+#else
+#define WIFI_RX_PKT_NUM         7
+#endif
+
 #define WIFI_INIT_CONFIG_DEFAULT() { \
     .event_handler = &esp_event_send, \
     .osi_funcs = NULL, \
@@ -167,7 +173,7 @@ typedef struct {
     .rx_buf_len = WIFI_HW_RX_BUFFER_LEN,\
     .amsdu_rx_enable = WIFI_AMSDU_RX_ENABLED,\
     .rx_buf_num = CONFIG_ESP8266_WIFI_RX_BUFFER_NUM,\
-    .rx_pkt_num = CONFIG_ESP8266_WIFI_RX_PKT_NUM,\
+    .rx_pkt_num = WIFI_RX_PKT_NUM,\
     .left_continuous_rx_buf_num = CONFIG_ESP8266_WIFI_LEFT_CONTINUOUS_RX_BUFFER_NUM,\
     .tx_buf_num = CONFIG_ESP8266_WIFI_TX_PKT_NUM,\
     .nvs_enable = WIFI_NVS_ENABLED,\

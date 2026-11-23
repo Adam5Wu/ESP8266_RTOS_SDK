@@ -156,18 +156,22 @@ extern uint8_t sleep_wake_bbpll;
 extern uint8_t software_slp_reject;
 extern uint8_t hardware_reject;
 
-/* phy_core.c */
+/* phy_soc.c */
 extern uint8_t chip6_phy_init_ctrl[80];
+
+/* phy_core.c */
 extern uint32_t *phy_rx_gain_dc_table;
 
 /* --------------------------------------------------------------------------
  * Internal Cross-TU Globals (Explicitly Initialized in Owning .c)
  * -------------------------------------------------------------------------- */
 
-/* phy_core.c */
-extern phy_sleep_params_t g_phy_sleep_params;
+/* phy_soc.c */
 extern uint8_t g_phy_sleep_mode_flag;
 extern uint8_t g_phy_wakeup_rf_flag;
+
+/* phy_core.c */
+extern phy_sleep_params_t g_phy_sleep_params;
 extern uint8_t g_phy_rx_table_renew_en;
 extern uint8_t g_phy_init_rf_no_cal;
 extern int16_t g_phy_freq_offset;
@@ -393,9 +397,15 @@ void pm_wakeup_init(uint32_t mode, uint32_t skip_bbpll);
 void pm_set_wakeup_mac(void);
 void pm_set_wakeup_btco(void);
 void pm_rtc_clock_cali(uint32_t *pm_ctx);
+uint32_t pm_rtc_clock_cali_proc(void);
 uint32_t pm_usec2rtc(uint32_t usec, uint32_t cali_q12);
 uint64_t pm_usec2rtc_64(uint64_t usec, uint32_t cali_q12);
+uint64_t pm_get_sleep_cycles_64(uint64_t usec);
 void sleep_reset_analog_rtcreg_8266(void);
+
+#ifdef CONFIG_ESP8266_OSS_PHY_ONLY
+void phy_pm_rf_off_boot(void);
+#endif
 
 void phy_pm_wait4wakeup(uint32_t mode);
 void phy_pm_wakeup_opt(uint32_t wakeup_opt, uint32_t wakeup_opt2);
@@ -407,11 +417,16 @@ void phy_pm_sleep_opt_bb_off(uint32_t mode);
 void phy_pm_sleep_opt_bb_on(uint32_t mode);
 
 /* --------------------------------------------------------------------------
- * phy_core.c — Top-Level Bring-Up, Init Data Parser & RTC Cal Storage
+ * phy_soc.c — SoC Init Data Parser
+ * -------------------------------------------------------------------------- */
+
+int register_chipv6_phy_init_param(const uint8_t *init_data);
+
+/* --------------------------------------------------------------------------
+ * phy_core.c — Top-Level Bring-Up & RTC Cal Storage
  * -------------------------------------------------------------------------- */
 
 int register_chipv6_phy(uint8_t *init_data_256);
-int register_chipv6_phy_init_param(const uint8_t *init_data);
 uint8_t phy_check_data_table(uint32_t *table, uint8_t len, uint8_t mode);
 void write_data_to_rtc(uint8_t *cal_data_128);
 void get_data_from_rtc(uint8_t *cal_data_128);

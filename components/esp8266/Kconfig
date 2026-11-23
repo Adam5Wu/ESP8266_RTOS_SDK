@@ -162,15 +162,19 @@ config RESET_REASON
         Enable this option, the reset reason function can be used, or compiler will show function linking error.
 
 config WIFI_PPT_TASKSTACK_SIZE
-    int "ppT task stack size"
+    int "ppT task stack size" if !ESP8266_OSS_PHY_ONLY
     range 2048 8192
     default 2048 if !ESP8266_WIFI_ENABLE_WPA3_SAE
     default 5120 if ESP8266_WIFI_ENABLE_WPA3_SAE
-
     help
-        Configure the "ppT task" stack size. This is the stack of the task
-        which calls promiscuous callback function. So if user's function is
-        complex, the stack must be set larger.
+        Configure the Wi-Fi worker task stack size (bytes).
+
+        - Open-source Wi-Fi: sets the n8_worker_task stack size, silently
+          floored at 3072 bytes at runtime (even if configured lower).
+        - Vendor Wi-Fi: sets the ppT task stack size (2048..8192).
+
+        This task also invokes the promiscuous RX callback; increase the
+        stack size if user callbacks are complex.
 
 config ESP8266_CORE_GLOBAL_DATA_LINK_IRAM
     bool "Link ESP8266 core internal global data to IRAM"
@@ -276,42 +280,33 @@ config ESP8266_BOOT_COPY_APP
                 depends on ESP8266_VENDOR_BLOBS
         endchoice
 
-        choice ESP8266_WIFI_IMPL
-            prompt "Wi-Fi implementation"
-            default ESP8266_OSS_WIFI
+        choice ESP8266_PHY_WIFI_IMPL
+            prompt "Wi-Fi & PHY implementation"
+            default ESP8266_OSS_PHY_WIFI
             help
-                Select the Wi-Fi RF/PHY, Lower MAC, and IEEE 802.11 stack:
+                Select the SoC PHY (BBPLL, RTC PMU/sleep, ROM-I2C/PBUS, SAR ADC)
+                and Wi-Fi RF/LMAC/802.11 implementation:
 
-                - Open-source: clean-room components/esp8266/{phy,lmac,net80211}/.
-                - Vendor blobs: prebuilt libphy.a + libpp.a + libnet80211.a
-                  (requires Allow prebuilt vendor blobs).
-                - Disabled (no Wi-Fi): minimal zero-blob build linking
-                  esp_no_blobs_stubs.c with zero Wi-Fi code.
+                - Open-source (PHY + Wi-Fi): clean-room components/esp8266/{phy,lmac,net80211}/.
+                - Vendor blobs (PHY + Wi-Fi): prebuilt monolithic libphy.a + libpp.a +
+                  libnet80211.a (requires Allow prebuilt vendor blobs).
+                - Open-source PHY only (no Wi-Fi): clean-room SoC PHY (RTC cali, BBPLL,
+                  light/deep sleep, SAR ADC/VDD33) with zero Wi-Fi RF/MAC/802.11 code
+                  or Wi-Fi blobs (100% zero-blob when Allow prebuilt vendor blobs is
+                  disabled; still mixable with Vendor HAL).
 
-            config ESP8266_OSS_WIFI
-                bool "Open-source"
-            config ESP8266_VENDOR_WIFI
-                bool "Vendor blobs"
+            config ESP8266_OSS_PHY_WIFI
+                bool "Open-source (PHY + Wi-Fi)"
+            config ESP8266_VENDOR_PHY_WIFI
+                bool "Vendor blobs (PHY + Wi-Fi)"
                 depends on ESP8266_VENDOR_BLOBS
-            config ESP8266_NO_WIFI
-                bool "Disabled (no Wi-Fi)"
+            config ESP8266_OSS_PHY_ONLY
+                bool "Open-source PHY only (no Wi-Fi)"
         endchoice
 
-        config ESP8266_OSS_WIFI_MIN_NMI
-            bool "Minimal IRAM NMI handler"
-            depends on ESP8266_OSS_WIFI
-            default n
-            help
-                Disable the IRAM Level-3 NMI fast TX retry/launch path in
-                lmac_nmi.c (wDev_ProcessFiq).
-
-                By default (n), retryable TX completions and queued TX launches
-                execute directly in IRAM NMI so TX continues uninterrupted across
-                SPI flash erase/read cache-off windows (+708 B IRAM, still ~50%
-                less IRAM than vendor blobs).
-
-                Enable (y) to defer all TX handling to the flash-resident Wi-Fi
-                worker task and reclaim those 708 B of static IRAM.
+        config ESP8266_OSS_PHY
+            bool
+            default y if !ESP8266_VENDOR_PHY_WIFI
 
         choice ESP8266_CORE_IMPL
             prompt "Core & RTC implementation"
@@ -321,37 +316,39 @@ config ESP8266_BOOT_COPY_APP
                 RTC/Clock implementation:
 
                 - Open-source: clean-room components/esp8266/source/esp_*.c
-                  (compatible with Open-source Wi-Fi, Vendor Wi-Fi, or no Wi-Fi).
+                  (compatible with Open-source (PHY + Wi-Fi),
+                  Vendor blobs (PHY + Wi-Fi), or Open-source PHY only).
                 - Vendor blobs: prebuilt libcore.a + libclk.a + librtc.a
-                  (requires Allow prebuilt vendor blobs and Vendor Wi-Fi).
+                  (requires Allow prebuilt vendor blobs and
+                  Vendor blobs (PHY + Wi-Fi)).
 
             config ESP8266_OSS_CORE
                 bool "Open-source"
             config ESP8266_VENDOR_CORE
                 bool "Vendor blobs"
-                depends on ESP8266_VENDOR_BLOBS && ESP8266_VENDOR_WIFI
+                depends on ESP8266_VENDOR_BLOBS && ESP8266_VENDOR_PHY_WIFI
         endchoice
 
         config ESP8266_VENDOR_ESPNOW
             bool "Vendor ESP-NOW"
-            depends on ESP8266_VENDOR_BLOBS && ESP8266_VENDOR_WIFI
+            depends on ESP8266_VENDOR_BLOBS && ESP8266_VENDOR_PHY_WIFI
             default n
             help
                 Link the prebuilt vendor ESP-NOW archive
                 (components/esp8266/lib/libespnow.a / libespnow_dbg.a).
 
-                Requires Vendor Wi-Fi blobs (libnet80211.a / libpp.a). When
-                disabled, links a minimal open-source esp_now_deinit() stub.
+                Requires Vendor blobs (PHY + Wi-Fi) (libnet80211.a / libpp.a).
+                When disabled, links a minimal open-source esp_now_deinit() stub.
 
         config ESP8266_VENDOR_SMARTCONFIG
             bool "Vendor SmartConfig"
-            depends on ESP8266_VENDOR_BLOBS && ESP8266_VENDOR_WIFI
+            depends on ESP8266_VENDOR_BLOBS && ESP8266_VENDOR_PHY_WIFI
             default n
             help
                 Compile SmartConfig wrappers (source/smartconfig*.c) and link
                 the prebuilt vendor archive (components/esp8266/lib/libsmartconfig.a).
 
-                Requires Vendor Wi-Fi blobs (libnet80211.a).
+                Requires Vendor blobs (PHY + Wi-Fi) (libnet80211.a).
 
     endmenu  # Open-Source / Vendor Blob Selection
 endmenu
@@ -369,23 +366,33 @@ menu "Power Management"
 endmenu
 
 menu Wi-Fi
+    visible if !ESP8266_OSS_PHY_ONLY
 
 config SCAN_AP_MAX
     int "Max scan AP number"
     range 1 100
     default 99
     help
-        Function "esp_wifi_scan_get_ap_num" return value will be less than this. It is said that user cannot
-        scan more than this.
+        Maximum number of AP records returned by a Wi-Fi scan.
 
-        User can use own function "esp_wifi_scan_get_ap_num_max" to determin how many AP to scan , too.
+        - Open-source Wi-Fi: scan result storage is capped at 64 APs
+          (net80211_scan.c), even if configured higher.
+        - Vendor Wi-Fi: honors values up to 100.
+
+        "esp_wifi_scan_get_ap_num" returns at most this count; users can also
+        query "esp_wifi_scan_get_ap_num_max" to determine the configured cap.
 
 config WIFI_TX_RATE_SEQUENCE_FROM_HIGH
     bool "Set WiFi TX rate from 54M to 1M"
     default y
     help
-        If this option is enabled, WiFi will try to send packets first from high rate(54M). If it fails, it will
-        try at low rate until the transmission is successful.
+        Configure the initial TX rate policy.
+
+        - Open-source Wi-Fi (lmac_trc.c): y initializes windowed AARF at
+          MCS7/54M (clamped on weak < -80 dBm links), and n initializes at
+          MCS4/24M.
+        - Vendor Wi-Fi: when y, sends packets starting from 54M down to 1M
+          until transmission succeeds.
 
 config ESP8266_WIFI_QOS_ENABLED
     bool "WiFi QoS"
@@ -410,6 +417,7 @@ config ESP8266_WIFI_RX_BA_WIN_SIZE
 
 config ESP8266_WIFI_AMSDU_ENABLED
     bool "WiFi AMSDU RX"
+    depends on ESP8266_VENDOR_PHY_WIFI
     default n
     help
         Select this option to enable AMSDU feature
@@ -419,45 +427,63 @@ config ESP8266_WIFI_RX_BUFFER_NUM
     range 14 28
     default 16
     help
-        Set the number of WiFi RX buffers. Each buffer takes approximately ESP8266_WIFI_RX_BUFFER_LEN bytes of RAM.
+        Set the number of Wi-Fi RX buffers.
 
-        WiFi hardware use these buffers to receive all 802.11 frames.
-        A higher number may allow higher throughput but increases memory use. If ESP8266_WIFI_AMPDU_RX_ENABLED
-        is enabled, this value is recommended to set equal or bigger than 8*1024/ESP8266_WIFI_RX_BUFFER_LEN in order
-        to achieve better throughput and compatibility with both stations and APs.
-        Most of time we should NOT change the default value unless special reason, e.g. test the maximum UDP RX
-        throughput with iperf etc. For iperf test in shieldbox, the recommended value is 26.
+        - Open-source Wi-Fi (lmac_internal.h, lmac_pm_compat.c): each buffer
+          is 524 B in a contiguous DMA arena and the count is capped at 24
+          (LMAC_MAX_RX_BUFS).
+        - Vendor Wi-Fi: honors up to 28 buffers (each ~524 B; 26 is
+          recommended for shieldbox iperf).
+
+        Most applications should keep the default unless tuning peak RX
+        throughput.
 
 config ESP8266_WIFI_LEFT_CONTINUOUS_RX_BUFFER_NUM
     int "The min number of WiFi continuous RX buffer"
     range 0 16
     default 16
     help
-        Set the number of WiFi continuous RX buffer num.
-        The smaller the value, the easier RX hang will appear. Most of time we should NOT change the default
-        value unless special reason.
+        Set the continuous RX buffer threshold.
+
+        - Open-source Wi-Fi (net80211_data.c): sets the hybrid zero-copy vs.
+          heap-copy RX threshold (free_contiguous > threshold &&
+          free_8bit > 6 KB). With defaults 16/16, free_contiguous <= 15 so
+          OSS always copies to heap and recycles DMA immediately; lowering
+          below RX_BUFFER_NUM - 1 enables zero-copy RX into lwIP.
+        - Vendor Wi-Fi: reserves minimum contiguous DMA headroom to prevent
+          vendor RX hangs.
 
 config ESP8266_WIFI_RX_PKT_NUM
     int "Max number of WiFi RX packets"
+    depends on ESP8266_VENDOR_PHY_WIFI
     range 4 16
     default 7
     help
-        Set the max number of signle WiFi packet. 
+        Set the max number of signle WiFi packet.
 
 config ESP8266_WIFI_TX_PKT_NUM
     int "Max number of WiFi TX packets"
     range 4 16
     default 6
     help
-        Set the number of WiFi TX packets. Each buffer takes approximately 1.6KB of RAM.
-        For some applications especially UDP applications, the upper layer can deliver frames faster than WiFi
-        layer can transmit. In these cases, we may run out of TX packets.
+        Set the number of Wi-Fi TX slots/packets.
+
+        - Open-source Wi-Fi (lmac_tx.c): TX slots are scatter-gather DMA
+          descriptors (~216 B/slot default, ~188 B/slot with
+          ESP8266_OSS_WIFI_MIN_NMI=y, not 1.6 KB/buffer) and the pool is
+          floored at 10 slots when ESP8266_OSS_WIFI_MIN_NMI=n (values 4..9
+          apply only when ESP8266_OSS_WIFI_MIN_NMI=y).
+        - Vendor Wi-Fi: each buffer consumes ~1.6 KB of RAM; increase for
+          bursty UDP traffic.
 
 config ESP8266_WIFI_NVS_ENABLED
     bool "WiFi NVS flash"
     default y
     help
-        Select this option to enable WiFi NVS flash
+        Select this option to enable WiFi NVS flash.
+
+        Under Open-source Wi-Fi, disabling NVS (n) causes
+        ESP8266_OSS_WIFI_RTC_FAST_CONNECT to default to y.
 
 config ESP8266_WIFI_CONNECT_OPEN_ROUTER_WHEN_PWD_IS_SET
     bool "Connect open router when wifi password is set"
@@ -474,8 +500,25 @@ config ESP8266_WIFI_ENABLE_WPA3_SAE
         PMF (Protected Management Frames) is a prerequisite feature for a WPA3 connection, it needs to be
         explicitly configured before attempting connection. Please refer to the Wi-Fi Driver API Guide for details.
 
-config ESP8266_WIFI_TASK_PRIO
-    int "Wi-Fi worker task priority"
+config ESP8266_OSS_WIFI_MIN_NMI
+    bool "Minimal IRAM NMI handler"
+    depends on ESP8266_OSS_PHY_WIFI
+    default n
+    help
+        Disable the IRAM Level-3 NMI fast TX retry/launch path in
+        lmac_nmi.c (wDev_ProcessFiq).
+
+        By default (n), retryable TX completions and queued TX launches
+        execute directly in IRAM NMI so TX continues uninterrupted across
+        SPI flash erase/read cache-off windows (+708 B IRAM, still ~50%
+        less IRAM than vendor blobs).
+
+        Enable (y) to defer all TX handling to the flash-resident Wi-Fi
+        worker task and reclaim those 708 B of static IRAM.
+
+config ESP8266_OSS_WIFI_TASK_PRIO
+    int "OSS Wi-Fi worker task priority"
+    depends on ESP8266_OSS_PHY_WIFI
     range 1 14
     default 13
     help
@@ -484,8 +527,9 @@ config ESP8266_WIFI_TASK_PRIO
         worker runs above tcpip/application tasks while preserving one headroom
         slot for urgent system tasks.
 
-config ESP8266_WIFI_RTC_FAST_CONNECT
+config ESP8266_OSS_WIFI_RTC_FAST_CONNECT
     bool "Cache STA PMK and channel in RTC_SYS across warm resets"
+    depends on ESP8266_OSS_PHY_WIFI
     default y if !ESP8266_WIFI_NVS_ENABLED
     default n
     help
@@ -493,15 +537,9 @@ config ESP8266_WIFI_RTC_FAST_CONNECT
         RTC_SYS memory so warm resets / OTA reboots skip PBKDF2-SHA1 and probe
         the cached channel first. Cleared automatically on power-on reset.
 
-config ESP8266_WIFI_LEGACY_CIPHERS
-    bool "Enable legacy WEP / STA-TKIP cipher support"
-    default n
-    help
-        Compile in legacy WEP40/WEP104 and STA-side TKIP framing/decap code.
-        Leave disabled on WPA2-CCMP / WPA3-SAE builds to save flash and RAM.
-
 config ESP8266_WIFI_DEBUG_LOG_ENABLE
     bool "Enable WiFi debug log"
+    depends on ESP8266_VENDOR_PHY_WIFI
     default n
     help
         Select this option to enable WiFi debug log
@@ -594,7 +632,7 @@ config ESP8266_WIFI_DEBUG_LOG_SUBMODULE_TIMER
         When this option is enabled, log for timer module will be enabled.
 
 config ESP8266_WIFI_DEBUG_LOG_SUBMODULE_ESPNOW
-    depends on ESP8266_WIFI_DEBUG_LOG_SUBMODULE
+    depends on ESP8266_WIFI_DEBUG_LOG_SUBMODULE && ESP8266_VENDOR_ESPNOW
     bool "ESPNOW"
     default n
     help
@@ -654,7 +692,7 @@ endmenu
 menu PHY
 
 config ESP_PHY_CALIBRATION_AND_DATA_STORAGE
-    bool "Store phy calibration data in NVS"
+    bool "Store phy calibration data in NVS" if !ESP8266_OSS_PHY_ONLY
     default y
     help
         If this option is enabled, NVS will be initialized and calibration data will be loaded from there.
@@ -672,7 +710,7 @@ config ESP_PHY_CALIBRATION_AND_DATA_STORAGE
         If unsure, choose 'y'.
 
 config ESP_PHY_INIT_DATA_IN_PARTITION
-    bool "Use a partition to store PHY init data"
+    bool "Use a partition to store PHY init data" if !ESP8266_OSS_PHY_ONLY
     default n
     help
         If enabled, PHY init data will be loaded from a partition.
@@ -699,7 +737,7 @@ config ESP_PHY_INIT_DATA_VDD33_CONST
         When the ADC reference voltage is set to the default value of 3.3V as the supply voltage, the range of vdd33_const is [0, 18] or (36, 255).
 
 config ESP8266_PHY_MAX_WIFI_TX_POWER
-    int "Max WiFi TX power (dBm)"
+    int "Max WiFi TX power (dBm)" if !ESP8266_OSS_PHY_ONLY
     range 0 21
     default 20
     help

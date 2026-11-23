@@ -156,6 +156,8 @@ static esp_err_t api_start(void *arg)
         return ESP_OK;
     }
 
+    esp_lmac_rf_open();
+
     g_n8.started = true;
     if (g_n8.mode == WIFI_MODE_STA || g_n8.mode == WIFI_MODE_APSTA) {
         esp_err_t err = n8_sta_start();
@@ -202,6 +204,7 @@ static esp_err_t api_stop(void *arg)
     esp_lmac_sniffer_disable();
     g_n8.promis_enabled = 0U;
     n8_scan_free_results();
+    esp_lmac_rf_close();
 
     g_n8.started = false;
     return ESP_OK;

@@ -1,0 +1,5 @@
+# ESP-NOW requires the opt-in prebuilt vendor PHY/Wi-Fi and ESP-NOW archives.
+# Open-source HAL and Core/RTC remain active by default.
+CONFIG_ESP8266_VENDOR_BLOBS=y
+CONFIG_ESP8266_VENDOR_PHY_WIFI=y
+CONFIG_ESP8266_VENDOR_ESPNOW=y

@@ -64,6 +64,8 @@ static bool parse_hex_pmk(const uint8_t *pass, uint8_t out_pmk[32])
  * 64-Byte RTC_SYS Fast-Connect Cache (32-Bit Aligned Word Accesses Only)
  * -------------------------------------------------------------------------- */
 
+#ifdef CONFIG_ESP8266_OSS_WIFI_RTC_FAST_CONNECT
+
 static void compute_cred_hash(const uint8_t *ssid, size_t ssid_len,
                               const uint8_t *pass, uint32_t out_hash[4])
 {
@@ -77,8 +79,6 @@ static void compute_cred_hash(const uint8_t *ssid, size_t ssid_len,
     (void)sha256_vector(3U, vecs, lens, digest);
     memcpy(out_hash, digest, 16U);
 }
-
-#ifdef CONFIG_ESP8266_WIFI_RTC_FAST_CONNECT
 
 static bool rtc_cache_read_raw(uint32_t words[16])
 {
@@ -162,7 +162,7 @@ void n8_rtc_cache_save(uint8_t channel, const uint8_t bssid[6], uint8_t authmode
     g_n8.rtc_cache_valid = 1U;
 }
 
-#else /* !CONFIG_ESP8266_WIFI_RTC_FAST_CONNECT */
+#else /* !CONFIG_ESP8266_OSS_WIFI_RTC_FAST_CONNECT */
 
 void n8_rtc_cache_clear(void)
 {
@@ -183,7 +183,7 @@ void n8_rtc_cache_save(uint8_t channel, const uint8_t bssid[6], uint8_t authmode
     (void)authmode;
 }
 
-#endif /* CONFIG_ESP8266_WIFI_RTC_FAST_CONNECT */
+#endif /* CONFIG_ESP8266_OSS_WIFI_RTC_FAST_CONNECT */
 
 /* --------------------------------------------------------------------------
  * Eager Caller-Task PMK Derivation (Never Blocks Wi-Fi Worker Task)
@@ -206,7 +206,7 @@ void n8_derive_pmk_eager(const uint8_t *ssid, size_t ssid_len, const uint8_t *pa
         return;
     }
 
-#ifdef CONFIG_ESP8266_WIFI_RTC_FAST_CONNECT
+#ifdef CONFIG_ESP8266_OSS_WIFI_RTC_FAST_CONNECT
     uint32_t words[16];
     if (rtc_cache_read_raw(words)) {
         uint32_t hash[4];

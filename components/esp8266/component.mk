@@ -15,13 +15,16 @@ endif
 ifndef CONFIG_ESP8266_OSS_CORE
 COMPONENT_OBJEXCLUDE += source/esp_clk_rtc.o source/esp_ets_timer.o source/esp_misc.o source/esp_misc_nvs.o source/esp_sys_ctrl.o
 endif
-ifndef CONFIG_ESP8266_NO_WIFI
+ifndef CONFIG_ESP8266_OSS_PHY_ONLY
 COMPONENT_OBJEXCLUDE += source/esp_no_blobs_stubs.o
 endif
-ifndef CONFIG_ESP8266_OSS_WIFI
-COMPONENT_OBJEXCLUDE += phy/phy_i2c_pbus.o phy/phy_clock.o phy/phy_rf_chan.o \
-                        phy/phy_rxgain.o phy/phy_cal_tx.o phy/phy_adc.o \
-                        phy/phy_sleep.o phy/phy_core.o \
+ifndef CONFIG_ESP8266_OSS_PHY
+COMPONENT_OBJEXCLUDE += phy/phy_soc.o phy/phy_i2c_pbus.o phy/phy_clock.o \
+                        phy/phy_adc.o phy/phy_sleep.o
+endif
+ifndef CONFIG_ESP8266_OSS_PHY_WIFI
+COMPONENT_OBJEXCLUDE += phy/phy_rf_chan.o phy/phy_rxgain.o \
+                        phy/phy_cal_tx.o phy/phy_core.o \
                         lmac/lmac_nmi.o lmac/lmac_dma.o lmac/lmac_tx.o \
                         lmac/lmac_trc.o lmac/lmac_crypto_vif.o lmac/lmac_pm_compat.o \
                         net80211/net80211_worker.o net80211/net80211_nvs_rtc.o \
@@ -47,7 +50,7 @@ else
 LIBS += core
 endif
 endif
-ifdef CONFIG_ESP8266_VENDOR_WIFI
+ifdef CONFIG_ESP8266_VENDOR_PHY_WIFI
 LIBS += phy
 ifdef CONFIG_ESP8266_WIFI_DEBUG_LOG_ENABLE
 LIBS += pp_dbg net80211_dbg

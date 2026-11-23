@@ -70,7 +70,11 @@ typedef struct sleep_proc {
     uint32_t    flush_uart : 1;         // flush UART
 } sleep_proc_t;
 
+#ifdef CONFIG_ESP8266_OSS_PHY_ONLY
+static uint16_t s_lock_cnt = 0;
+#else
 static uint16_t s_lock_cnt = 1;
+#endif
 static esp_sleep_mode_t s_sleep_mode = ESP_CPU_WAIT;
 static uint32_t s_sleep_wakup_triggers;
 static uint32_t s_sleep_duration;
@@ -98,6 +102,9 @@ uint32_t rtc_clk_to_us(uint32_t rtc_cycles, uint32_t period)
 
 uint32_t rtc_us_to_clk(uint32_t us, uint32_t period)
 {
+    if (period == 0U) {
+        return 0U;
+    }
     return (uint64_t)us * 4096 / period;
 }
 

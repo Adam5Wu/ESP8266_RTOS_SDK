@@ -39,6 +39,8 @@ uint8_t g_phy_rtc_cali_trig_en = 0U;
 uint16_t g_phy_lslp_mem_opt_8266 = 0U;
 
 static uint8_t s_sdio_slp_reject = 0U;
+static uint32_t s_rtc_cali_ctx[2] = { 0U, 0U };
+static uint32_t s_rtc_cali_q12 = 0U;
 
 /* --------------------------------------------------------------------------
  * IRAM Inline Helpers for Light-Sleep Entry / Exit
@@ -113,13 +115,19 @@ uint32_t IRAM_ATTR pm_goto_sleep(uint32_t mode)
 
     uint16_t mem_opt = g_phy_lslp_mem_opt_8266;
     s_sdio_slp_reject = pm_sdio_nidle();
+#ifdef CONFIG_ESP8266_OSS_PHY_WIFI
     software_slp_reject =
         (uint8_t)(s_sdio_slp_reject | (g_phy_periodic_cal_flag & g_phy_periodic_cal_sat));
+#else
+    software_slp_reject = s_sdio_slp_reject;
+#endif
     if (software_slp_reject != 0U) {
         return 1U;
     }
 
+#ifdef CONFIG_ESP8266_OSS_PHY_WIFI
     g_phy_bbpll_cal_flag = 1U;
+#endif
     uint32_t lslp_en = (efuse2 >> 15) & 1U;
 
     PHY_REG_WRITE(PHY_RTC_INT_CLR_REG, 0xFFFFFFFFU);
@@ -153,6 +161,7 @@ uint32_t IRAM_ATTR pm_goto_sleep(uint32_t mode)
  * Internal MAC & BT Coexistence Sleep/Wake Helpers (Flash)
  * -------------------------------------------------------------------------- */
 
+#ifdef CONFIG_ESP8266_OSS_PHY_WIFI
 static void pm_sleep_set_mac(void)
 {
     PHY_REG_WRITE(PHY_MAC_BTCO_MASK_REG, 0x00003333U);
@@ -218,6 +227,7 @@ static void pm_unmask_bt(uint8_t mode)
         PHY_REG_WRITE(PHY_MAC_BTCO_MASK_REG, s_btco_masks[mode]);
     }
 }
+#endif
 
 static void sleep_opt_bb_on_8266(void)
 {
@@ -251,12 +261,15 @@ void phy_pm_set_pll_xtal_wait_time(void)
 void phy_pm_wait4wakeup(uint32_t mode)
 {
     if (((mode == 1U) || (mode == 2U)) && (software_slp_reject == 0U)) {
-        while ((PHY_REG_READ(PHY_RTC_INT_RAW_REG) & 0x3U) == 0U) {
+        for (uint32_t t = 0U;
+             (PHY_REG_READ(PHY_RTC_INT_RAW_REG) & 0x3U) == 0U && t < 100000U;
+             t++) {
         }
         hardware_reject = (uint8_t)(PHY_REG_READ(PHY_RTC_INT_RAW_REG) & 0x2U);
     }
 }
 
+#ifdef CONFIG_ESP8266_OSS_PHY_WIFI
 void phy_pm_open_rf(void)
 {
     PHY_REG_WRITE(PHY_RTC_RF_PWR_REG, 0xFE000000U);
@@ -264,6 +277,7 @@ void phy_pm_open_rf(void)
     PHY_REG_WRITE(PHY_RTC_PLL_CTRL_REG, 0x01000000U);
     PHY_REG_CLR(PHY_RFPLL_CTRL_REG, PHY_RFPLL_SLP_HOLD);
 }
+#endif
 
 void phy_pm_sleep_opt(uint32_t slp_state1, uint32_t unused,
                       uint32_t pll_ctrl, uint32_t mode)
@@ -330,14 +344,18 @@ void phy_pm_sleep_opt_bb_on(uint32_t mode)
 void pm_set_sleep_cycles(uint32_t cycles)
 {
     PHY_REG_WRITE(PHY_RTC_SLP_VAL_REG, PHY_REG_READ(PHY_RTC_SLP_CNT_VAL_REG) + cycles);
+#ifdef CONFIG_ESP8266_OSS_PHY_WIFI
     g_phy_periodic_cal_sat = (cycles > 5000U) ? 1U : 0U;
+#endif
 }
 
 void pm_set_sleep_mode(uint32_t mode)
 {
     sleep_wake_bbpll = 1U;
+#ifdef CONFIG_ESP8266_OSS_PHY_WIFI
     noise_check_loop(1U, 0U);
     PHY_REG_SET(PHY_BB_SLEEP_REG, PHY_BB_SLEEP_RX);
+#endif
     phy_pm_set_pll_xtal_wait_time();
 
     if (mode != 4U) {
@@ -349,6 +367,7 @@ void pm_set_sleep_mode(uint32_t mode)
         }
     }
 
+#ifdef CONFIG_ESP8266_OSS_PHY_WIFI
     PHY_REG_RMW(PHY_MAC_CTRL_REG, 0x00000FFFU, 0x00000002U);
     PHY_REG_CLR(PHY_MAC_CTRL_REG, 0x40000000U);
     PHY_REG_SET(PHY_MAC_CTRL_REG, 0x80000000U);
@@ -364,13 +383,16 @@ void pm_set_sleep_mode(uint32_t mode)
             phy_pbus_force(6U, 1U, 2U);
             PHY_REG_CLR(PHY_PBUS_CTRL_REG, PHY_PBUS_DEBUG_MODE);
         }
-    } else if ((mode != 1U) && (mode != 2U)) {
+    } else
+#endif
+    if ((mode != 1U) && (mode != 2U)) {
         return;
     }
 
     PHY_REG_CLR(PHY_DPORT_CLK_EN_REG, PHY_DPORT_CLK_WIFI_GATE_MASK);
 }
 
+#ifdef CONFIG_ESP8266_OSS_PHY_WIFI
 void pm_set_wakeup_btco(void)
 {
     uint8_t btco_mode = chip6_phy_init_ctrl[0x22];
@@ -481,9 +503,12 @@ void pm_wakeup_init(uint32_t mode, uint32_t skip_bbpll)
 
     g_phy_sleep_mode_flag = 0U;
 }
+#endif
 
 void sleep_reset_analog_rtcreg_8266(void)
 {
+    PHY_REG_SET(PHY_DPORT_CLK_EN_REG, PHY_DPORT_CLK_WIFI_EN);
+    software_slp_reject = 0U;
     PHY_REG_WRITE(PHY_RTC_INT_CLR_REG, 0xFFFFFFFFU);
     sleep_opt_bb_on_8266();
     phy_pm_wakeup_opt(8U, 0U);
@@ -521,6 +546,16 @@ void sleep_reset_analog_rtcreg_8266(void)
     PHY_REG_WRITE(PHY_RTC_TRIM2_REG, 0U);
 }
 
+#ifdef CONFIG_ESP8266_OSS_PHY_ONLY
+void phy_pm_rf_off_boot(void)
+{
+    g_phy_sleep_mode_flag = 1U;
+    rom_i2c_writeReg(PHY_I2C_BLOCK_RFPLL, PHY_I2C_HOST_1, 3U, 0x01U);
+    PHY_REG_CLR(PHY_DPORT_CLK_EN_REG, PHY_DPORT_CLK_WIFI_GATE_MASK);
+    PHY_REG_WRITE(PHY_RTC_RF_PWR_REG, 0x50000000U);
+}
+#endif
+
 void pm_rtc_clock_cali(uint32_t *pm_ctx)
 {
     if (g_phy_rtc_cali_trig_en == 0U) {
@@ -553,6 +588,15 @@ void pm_rtc_clock_cali(uint32_t *pm_ctx)
     }
 }
 
+uint32_t pm_rtc_clock_cali_proc(void)
+{
+    s_rtc_cali_ctx[1] = 0U;
+    rom_i2c_writeReg(PHY_I2C_BLOCK_BIAS_RC, PHY_I2C_HOST_2, 8U, 0U);
+    pm_rtc_clock_cali(s_rtc_cali_ctx);
+    s_rtc_cali_q12 = s_rtc_cali_ctx[1];
+    return s_rtc_cali_q12;
+}
+
 uint32_t pm_usec2rtc(uint32_t usec, uint32_t cali_q12)
 {
     if (cali_q12 == 0U) {
@@ -573,4 +617,9 @@ uint64_t pm_usec2rtc_64(uint64_t usec, uint32_t cali_q12)
         return (usec / (uint64_t)cali_q12) << 12;
     }
     return (usec << 12) / (uint64_t)cali_q12;
+}
+
+uint64_t pm_get_sleep_cycles_64(uint64_t usec)
+{
+    return pm_usec2rtc_64(usec, s_rtc_cali_q12);
 }

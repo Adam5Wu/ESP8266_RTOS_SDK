@@ -84,7 +84,9 @@ void change_bbpll160_sleep(void)
     PHY_REG_WRITE(PHY_RTC_STATE0_REG, slp_start);
     phy_pm_wait4wakeup(1U);
     PHY_REG_WRITE(PHY_RTC_PLL_CTRL_REG, saved_pll_ctrl);
+#ifdef CONFIG_ESP8266_OSS_PHY_WIFI
     g_phy_sleep_params.param_flag |= PHY_PARAM_BBPLL160_DONE;
+#endif
 }
 
 void change_bbpll160(void)
@@ -116,6 +118,7 @@ void bbpll_cal(uint8_t slow)
     }
 }
 
+#ifdef CONFIG_ESP8266_OSS_PHY_WIFI
 void phy_set_crystal_uart(void)
 {
     if ((chip6_phy_init_ctrl[0] != 0U || (chip6_phy_init_ctrl[0x4CU] & 1U) != 0U) &&
@@ -132,3 +135,4 @@ void phy_set_crystal_uart(void)
         }
     }
 }
+#endif

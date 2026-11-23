@@ -358,6 +358,7 @@ void phy_dpd_bypass(void)
     rom_i2c_writeReg_Mask(PHY_I2C_BLOCK_ANA_INF, PHY_I2C_HOST_0, 0x0FU, 1U, 1U, 1U);
 }
 
+#ifdef CONFIG_ESP8266_OSS_PHY_WIFI
 void phy_dpd_scale_set(void)
 {
     uint32_t txpwr23 = PHY_REG_READ(PHY_RF_TXPWR_REG(23U));
@@ -365,6 +366,7 @@ void phy_dpd_scale_set(void)
     uint8_t scale = (uint8_t)((0U - 24U - (txpwr23 + off)) & 0xFFU);
     rom_i2c_writeReg(PHY_I2C_BLOCK_ANA_INF, PHY_I2C_HOST_0, 8U, scale);
 }
+#endif
 
 void phy_sar_init(void)
 {

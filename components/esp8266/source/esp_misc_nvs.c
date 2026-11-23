@@ -43,7 +43,7 @@ uint32_t g_log_level = 0U;
 uint32_t g_log_mod = 0U;
 uint32_t g_log_print = 0U;
 
-#ifdef CONFIG_ESP8266_VENDOR_WIFI
+#ifdef CONFIG_ESP8266_VENDOR_PHY_WIFI
 __attribute__((aligned(8))) uint8_t g_cnxMgr[1224];
 #endif
 
@@ -54,7 +54,7 @@ int misc_nvs_restore(void);
 
 static inline uint8_t misc_nvs_is_enabled(void)
 {
-#ifdef CONFIG_ESP8266_VENDOR_WIFI
+#ifdef CONFIG_ESP8266_VENDOR_PHY_WIFI
     extern const uint8_t g_wifi_menuconfig[];
     return g_wifi_menuconfig[20];
 #else

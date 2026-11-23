@@ -12,8 +12,8 @@ Most upper-layer subsystems in `ESP8266_RTOS_SDK`—including FreeRTOS, lwIP, `t
 
 ### Current Milestone Summary
 - **2nd-Stage Bootloader (`bootloader.bin`)**: **100% free of prebuilt vendor blobs** (`0` binary archives from `components/esp8266/lib/` linked; built entirely from open-source SDK C/ASM sources, toolchain `libgcc`, and ESP8266 Mask ROM symbols).
-- **Default Application Build (`CONFIG_ESP8266_VENDOR_BLOBS=n`, Full Wi-Fi STA + SoftAP + APSTA + WPA2/WPA3-SAE + Modem Sleep)**: **100% free of prebuilt vendor blobs** (`0` binary archives linked; `components/esp8266/lib/` is excluded from the link; `libgcc.a`, `libssc.a`, and obsolete 2018 `components/esp-wolfssl/wolfssl/lib/libwolfssl*.a` removed from the repository; open-source `OSS_HAL`, `OSS_CORE`, and `OSS_WIFI` enabled by default with IRAM NMI fast TX active).
-- **Opt-In Legacy Vendor Compatibility (`CONFIG_ESP8266_VENDOR_BLOBS=y`)**: Unlocks mutually exclusive vendor fallback selections (`CONFIG_ESP8266_VENDOR_HAL`, `CONFIG_ESP8266_VENDOR_WIFI`, `CONFIG_ESP8266_VENDOR_CORE`) plus optional `CONFIG_ESP8266_VENDOR_ESPNOW` and `CONFIG_ESP8266_VENDOR_SMARTCONFIG` (gated on `CONFIG_ESP8266_VENDOR_WIFI`).
+- **Default Application Build (`CONFIG_ESP8266_VENDOR_BLOBS=n`, Full Wi-Fi STA + SoftAP + APSTA + WPA2/WPA3-SAE + Modem Sleep)**: **100% free of prebuilt vendor blobs** (`0` binary archives linked; `components/esp8266/lib/` is excluded from the link; `libgcc.a`, `libssc.a`, and obsolete 2018 `components/esp-wolfssl/wolfssl/lib/libwolfssl*.a` removed from the repository; open-source `OSS_HAL`, `OSS_CORE`, and `OSS_PHY_WIFI` (including SoC `OSS_PHY`) enabled by default with IRAM NMI fast TX active).
+- **Opt-In Legacy Vendor Compatibility (`CONFIG_ESP8266_VENDOR_BLOBS=y`)**: Unlocks mutually exclusive vendor fallback selections (`CONFIG_ESP8266_VENDOR_HAL`, `CONFIG_ESP8266_VENDOR_PHY_WIFI`, `CONFIG_ESP8266_VENDOR_CORE`) plus optional `CONFIG_ESP8266_VENDOR_ESPNOW` and `CONFIG_ESP8266_VENDOR_SMARTCONFIG` (gated on `CONFIG_ESP8266_VENDOR_PHY_WIFI`).
 
 ### Master Archive Status Table
 
@@ -23,13 +23,13 @@ Most upper-layer subsystems in `ESP8266_RTOS_SDK`—including FreeRTOS, lwIP, `t
 | `libssc.a` | `11,996 B` (`2`) | **Removed** | Unreferenced | Unused legacy serial test console (`include/esp_ssc.h`) | N/A |
 | `libwolfssl.a` (`_debug`) | `1,843,000 B` / `2,127,680 B` | **Removed** | `CONFIG_ESP_TLS_USING_MBEDTLS` (`y`) | Replaced by built-in open-source `components/mbedtls/` (obsolete 2018 wolfSSL 3.15.7 blobs removed) | `Apache-2.0` (`mbedtls`) |
 | `libhal.a` | `162,888 B` (`126`) | **Replaced (Opt-In Fallback)** | `CONFIG_ESP8266_OSS_HAL` (`y`) / `VENDOR_HAL` (`n`) | `components/esp8266/source/xtensa_hal.S` | `MIT` |
-| `libclk.a` / `librtc.a` | `4,976 B` / `5,048 B` (`2`) | **Replaced (Opt-In Fallback)** | `CONFIG_ESP8266_OSS_CORE` (`y`) / `VENDOR_CORE` (`n`) | `components/esp8266/source/esp_clk_rtc.c` | `Apache-2.0` + `MIT` |
+| `libclk.a` / `librtc.a` | `4,976 B` / `5,048 B` (`2`) | **Replaced (Opt-In Fallback)** | `CONFIG_ESP8266_OSS_CORE` (`y`) / `VENDOR_CORE` (`n`) | `components/esp8266/source/esp_clk_rtc.c` | `Apache-2.0` |
 | `libcore.a` (`_dbg`) | `39,742 B` / `40,650 B` (`9`) | **Replaced (Opt-In Fallback)** | Bootloader: always OSS; App: `CONFIG_ESP8266_OSS_CORE` (`y`) / `VENDOR_CORE` (`n`) | `components/esp8266/source/{esp_ets_timer.c, esp_misc.c, esp_misc_nvs.c, esp_sys_ctrl.c}` | `Apache-2.0` |
-| `libphy.a` | `265,988 B` (`11`) | **Replaced (Opt-In Fallback)** | `CONFIG_ESP8266_OSS_WIFI` (`y`) / `VENDOR_WIFI` (`n`) | `components/esp8266/phy/` (`8` `.c` + `2` `.h`) | `Apache-2.0` + `MIT` |
-| `libpp.a` (`_dbg`) | `248,934 B` / `268,090 B` (`9`) | **Replaced (Opt-In Fallback)** | `CONFIG_ESP8266_OSS_WIFI` (`y`) / `VENDOR_WIFI` (`n`) | `components/esp8266/lmac/` (`6` `.c` + `3` `.h`) | `Apache-2.0` + `MIT` |
-| `libnet80211.a` (`_dbg`) | `485,352 B` / `544,252 B` (`30`) | **Replaced (Opt-In Fallback)** | `CONFIG_ESP8266_OSS_WIFI` (`y`) / `VENDOR_WIFI` (`n`) | `components/esp8266/net80211/` (`9` `.c` + `1` `.h`) | `Apache-2.0` + `MIT` |
-| `libsmartconfig.a` | `156,402 B` (`8`) | **Optional Vendor Blob (Off)** | `CONFIG_ESP8266_VENDOR_SMARTCONFIG` (`n`, requires `VENDOR_WIFI`) | Gates `libsmartconfig.a`, `source/smartconfig.c`, and `source/smartconfig_ack.c` | `Apache-2.0` (wrappers) |
-| `libespnow.a` (`_dbg`) | `38,660 B` (`2`) | **Optional Vendor Blob (Off)** | `CONFIG_ESP8266_VENDOR_ESPNOW` (`n`, requires `VENDOR_WIFI`) | `esp_now_deinit()` stub in `components/esp8266/source/esp_wifi.c` when disabled | `Apache-2.0` |
+| `libphy.a` | `265,988 B` (`11`) | **Replaced (Opt-In Fallback)** | `CONFIG_ESP8266_OSS_PHY` (`y`: `OSS_PHY_WIFI` / `OSS_PHY_ONLY`) / `VENDOR_PHY_WIFI` (`n`) | `components/esp8266/phy/` (`9` `.c` + `2` `.h`: SoC `phy` + Wi-Fi `phy_rf`) | `Apache-2.0` + `MIT` |
+| `libpp.a` (`_dbg`) | `248,934 B` / `268,090 B` (`9`) | **Replaced (Opt-In Fallback)** | `CONFIG_ESP8266_OSS_PHY_WIFI` (`y`) / `VENDOR_PHY_WIFI` (`n`) | `components/esp8266/lmac/` (`6` `.c` + `3` `.h`) | `Apache-2.0` + `MIT` |
+| `libnet80211.a` (`_dbg`) | `485,352 B` / `544,252 B` (`30`) | **Replaced (Opt-In Fallback)** | `CONFIG_ESP8266_OSS_PHY_WIFI` (`y`) / `VENDOR_PHY_WIFI` (`n`) | `components/esp8266/net80211/` (`9` `.c` + `1` `.h`) | `Apache-2.0` + `MIT` |
+| `libsmartconfig.a` | `156,402 B` (`8`) | **Optional Vendor Blob (Off)** | `CONFIG_ESP8266_VENDOR_SMARTCONFIG` (`n`, requires `VENDOR_PHY_WIFI`) | Gates `libsmartconfig.a`, `source/smartconfig.c`, and `source/smartconfig_ack.c` | `Apache-2.0` (wrappers) |
+| `libespnow.a` (`_dbg`) | `38,660 B` (`2`) | **Optional Vendor Blob (Off)** | `CONFIG_ESP8266_VENDOR_ESPNOW` (`n`, requires `VENDOR_PHY_WIFI`) | `esp_now_deinit()` stub in `components/esp8266/source/esp_wifi.c` when disabled | `Apache-2.0` |
 
 ---
 
@@ -103,8 +103,8 @@ Most upper-layer subsystems in `ESP8266_RTOS_SDK`—including FreeRTOS, lwIP, `t
 
 #### What Was Removed / Replaced
 - **`libssc.a` (`11,996 B`)**: Unreferenced legacy serial AT/test console archive removed from `components/esp8266/lib/`, `CMakeLists.txt`, and `component.mk`.
-- **`libsmartconfig.a` (`156,402 B`)**: Optional sniffer-based Wi-Fi provisioning archive (and wrapper sources `source/smartconfig.c`, `source/smartconfig_ack.c`) gated behind `CONFIG_ESP8266_VENDOR_SMARTCONFIG` (default `n`; requires `CONFIG_ESP8266_VENDOR_BLOBS && CONFIG_ESP8266_VENDOR_WIFI`).
-- **`libespnow.a` / `libespnow_dbg.a` (`38,660 B`)**: Optional vendor Action-frame protocol archive gated behind `CONFIG_ESP8266_VENDOR_ESPNOW` (default `n`; requires `CONFIG_ESP8266_VENDOR_BLOBS && CONFIG_ESP8266_VENDOR_WIFI`).
+- **`libsmartconfig.a` (`156,402 B`)**: Optional sniffer-based Wi-Fi provisioning archive (and wrapper sources `source/smartconfig.c`, `source/smartconfig_ack.c`) gated behind `CONFIG_ESP8266_VENDOR_SMARTCONFIG` (default `n`; requires `CONFIG_ESP8266_VENDOR_BLOBS && CONFIG_ESP8266_VENDOR_PHY_WIFI`).
+- **`libespnow.a` / `libespnow_dbg.a` (`38,660 B`)**: Optional vendor Action-frame protocol archive gated behind `CONFIG_ESP8266_VENDOR_ESPNOW` (default `n`; requires `CONFIG_ESP8266_VENDOR_BLOBS && CONFIG_ESP8266_VENDOR_PHY_WIFI`).
 - **`libwolfssl.a` / `libwolfssl_debug.a` (`1,843,000 B` / `2,127,680 B`)**: Removed obsolete 2018 wolfSSL 3.15.7 component (`components/esp-wolfssl/`) and wolfSSL glue from `components/esp-tls/`, standardizing on the built-in open-source `mbedTLS` backend (`CONFIG_ESP_TLS_USING_MBEDTLS`).
 
 #### Replacement Implementation
@@ -124,17 +124,16 @@ Most upper-layer subsystems in `ESP8266_RTOS_SDK`—including FreeRTOS, lwIP, `t
 #### What Was Removed / Replaced
 - Replaced the prebuilt archives `components/esp8266/lib/libclk.a` (`4,976 B`, `1` object member) and `components/esp8266/lib/librtc.a` (`5,048 B`, `1` object member) (retained only as opt-in fallback under `CONFIG_ESP8266_VENDOR_CORE`), covering all **6 exported RTC/light-sleep clock primitives**:
   - `rtc_init_clk`, `phy_open_rf`, `rtc_wakeup_init`, `rtc_lightsleep_init`, `rtc_set_sleep_time`, `rtc_light_sleep_start`.
-- Also provides `sleep_reset_analog_rtcreg_8266()` under `CONFIG_ESP8266_NO_WIFI` for standalone RTC analog reset without Wi-Fi/PHY.
 
 #### Replacement Implementation
 - Implemented in `components/esp8266/source/esp_clk_rtc.c` (`0 B` IRAM; all functions in `.flash.text`), enabled by default via `CONFIG_ESP8266_OSS_CORE`.
-- Preserves the `librtc.a` `chip6_phy_init_ctrl[0]` / `[76]` BBPLL trigger and `g_phyFuns` (`offset 0x98`) RF I2C dispatch (`(0x62, 1, 3, 1)`), together with `libclk.a`'s defensive bitfield masks (`wakeup_opt & 0x3FU`, `reject_opt & 0x01U`) in `rtc_light_sleep_start()`, plus clean-room MMIO/ROM-I2C RTC analog reset and 26 MHz BBPLL init fallback paths when `CONFIG_ESP8266_NO_WIFI=y`.
+- Preserves the `librtc.a` `chip6_phy_init_ctrl[0]` / `[76]` BBPLL trigger and `g_phyFuns` (`offset 0x98`) RF I2C dispatch (`(0x62, 1, 3, 1)`), together with `libclk.a`'s defensive bitfield masks (`wakeup_opt & 0x3FU`, `reject_opt & 0x01U`) in `rtc_light_sleep_start()`, delegating RTC analog reset, BBPLL lock/relock, and (under `CONFIG_ESP8266_OSS_PHY_ONLY=y`) RF-off boot/wake hygiene (`phy_pm_rf_off_boot()`) directly to the SoC `phy` layer in all configurations.
 
 #### Origin & License Compliance
-- Authored as clean-room C under **`Apache-2.0`** using public SDK headers (`esp8266/eagle_soc.h`, `esp8266/rtc_register.h`, `esp8266/rom_functions.h`, `driver/rtc.h`, `rom/ets_sys.h`), with the standalone `CONFIG_ESP8266_NO_WIFI` RTC analog reset and BBPLL initialization sequences adapted from `teatime-os` under its preserved **`MIT`** license notice.
+- Authored as clean-room C under **`Apache-2.0`** using public SDK headers (`esp8266/eagle_soc.h`, `esp8266/rtc_register.h`, `esp8266/rom_functions.h`, `driver/rtc.h`, `rom/ets_sys.h`), delegating all hardware RTC/BBPLL sequences to SoC `phy` (`components/esp8266/phy/`).
 
 #### Test Strength & Robustness
-- Compiled cleanly with `0` compiler warnings under GCC 16.2 (`-fno-common`) in both default Wi-Fi (`CONFIG_ESP8266_OSS_WIFI=y`) and non-Wi-Fi (`CONFIG_ESP8266_NO_WIFI=y`) configurations, with `0` references to `libclk.a` or `librtc.a` in linker maps.
+- Compiled cleanly with `0` compiler warnings under GCC 16.2 (`-fno-common`) in both default Wi-Fi (`CONFIG_ESP8266_OSS_PHY_WIFI=y`) and SoC PHY-only (`CONFIG_ESP8266_OSS_PHY_ONLY=y`) configurations, with `0` references to `libclk.a` or `librtc.a` in linker maps.
 - Validated on physical ESP8266 hardware across cold/software resets, 80 MHz / 160 MHz CPU clock transitions, RF/Wi-Fi STA + SoftAP operation, and standalone zero-blob boot/restart cycles.
 
 ---
@@ -145,9 +144,9 @@ Most upper-layer subsystems in `ESP8266_RTOS_SDK`—including FreeRTOS, lwIP, `t
 - Replaced the prebuilt archives `components/esp8266/lib/libcore.a` (`39,742 B`, `9` object members) and `components/esp8266/lib/libcore_dbg.a` (`40,650 B`, `9` object members) (retained only as opt-in fallback under `CONFIG_ESP8266_VENDOR_CORE`), covering all application SoC core routines across four modular files:
   - **`components/esp8266/source/esp_ets_timer.c`**: `FRC2`-backed software timer subsystem (`ets_timer_setfn`/`os_timer_setfn`, `ets_timer_disarm`/`os_timer_disarm`, `ets_timer_arm`/`os_timer_arm`, `ets_timer_arm_us`/`os_timer_arm_us`, `ets_timer_arm_ms_us`, `ets_timer_done`, `ets_timer_proc`, `ets_timer_init`) with `28 B` `ETSTimer` ABI parity and `0 B` IRAM.
   - **`components/esp8266/source/esp_misc.c`**: Unified bootloader + app primitives (`phy_reg_default`, `rtc_get_reset_reason`, `uart_div_modify`, `os_delay_us`, `ets_delay_us`) plus app-only helpers (`esp_get_cpu_frequency`, `_putc1`, `os_install_putc1`, `os_putc`, `gpio_output_set`, `bit_popcount`, `uart_buff_switch`, `Uart_Init`), retiring `bootloader_core.c`.
-  - **`components/esp8266/source/esp_misc_nvs.c`**: `misc` NVS namespace manager (`misc_nvs_load`, `misc_nvs_deinit`, `misc_nvs_init`, `misc_nvs_restore`), `36 B` `misc_nvs_t` ABI, Wi-Fi debug log globals (`g_log_level`, `g_log_mod`, `g_log_print`), `1,224 B` 8-byte aligned `g_cnxMgr` storage (for mixed `OSS_CORE` + `VENDOR_WIFI` compatibility), and full `CONFIG_ESP8266_WIFI_DEBUG_LOG_ENABLE` verbose/warn logging parity.
+  - **`components/esp8266/source/esp_misc_nvs.c`**: `misc` NVS namespace manager (`misc_nvs_load`, `misc_nvs_deinit`, `misc_nvs_init`, `misc_nvs_restore`), `36 B` `misc_nvs_t` ABI, Wi-Fi debug log globals (`g_log_level`, `g_log_mod`, `g_log_print`), `1,224 B` 8-byte aligned `g_cnxMgr` storage (for mixed `OSS_CORE` + `VENDOR_PHY_WIFI` compatibility), and full `CONFIG_ESP8266_WIFI_DEBUG_LOG_ENABLE` verbose/warn logging parity.
   - **`components/esp8266/source/esp_sys_ctrl.c`**: ADC/VDD33 scaling (`system_adc_read`, `system_adc_read_fast`, `system_get_vdd33`), flash size map (`system_get_flash_size_map`), CPU frequency scaling (`esp_set_cpu_freq`), microsecond clock (`esp_get_time`), UART TX flush (`user_uart_wait_tx_fifo_empty`), eFuse/RF calibration checksum (`flash_data_check`), hardware init helpers (`rtc_init`, `mac_init`, `base_gpio_init`, `wifi_timer_init`), software restart (`esp_restart` + IRAM `__esp_soc_restart`), and deep sleep (`system_deep_sleep_instant`, `esp_deep_sleep` + IRAM `__esp_soc_deep_sleep`).
-  - **`components/esp8266/source/esp_no_blobs_stubs.c`**: Minimal non-Wi-Fi symbols (`CONFIG_ESP8266_NO_WIFI=y` only) so non-Wi-Fi firmware links with zero vendor `.a` archives.
+  - **`components/esp8266/source/esp_no_blobs_stubs.c`**: Minimal non-Wi-Fi symbols (`CONFIG_ESP8266_OSS_PHY_ONLY=y` only) so non-Wi-Fi firmware links with zero vendor `.a` archives.
 
 #### Replacement Implementation & Robustness Fixes
 - Enabled by default via `CONFIG_ESP8266_OSS_CORE`, with `components/esp8266/linker.lf` (`[mapping:esp8266]`) honoring `CONFIG_ESP8266_CORE_GLOBAL_DATA_LINK_IRAM` to keep core `.bss` in `.iram0.bss` with zero IRAM or DRAM regression (`+0 B` IRAM, `+0 B` DRAM, `-16 B` flash binary size).
@@ -156,42 +155,43 @@ Most upper-layer subsystems in `ESP8266_RTOS_SDK`—including FreeRTOS, lwIP, `t
   1. **`misc_nvs_deinit()` NULL-dereference guard**: checks `g_misc_nvs != NULL` before reading `nvs_handle` or freeing.
   2. **`esp_restart()` `g_wifi_nvs` NULL guard**: guards dereferencing `g_wifi_nvs` when restarting before Wi-Fi initialization.
   3. **`esp_deep_sleep()` 64-bit cycle overflow check**: uses full 64-bit return from `pm_get_sleep_cycles_64()` with `> 0xFFFFFFFFULL` overflow rejection and 1-tick minimum clamp.
-  4. **`__esp_soc_restart()` Mask ROM jump hygiene**: clears `INTENABLE` and Xtensa hardware watchpoint `DBREAKC0` and resets `a1` to top-of-DRAM (`0x3fffffb0`) before jumping to Mask ROM (`0x40000080`), preventing spurious UART interrupts and FreeRTOS end-of-stack watchpoint traps during 2nd-stage bootloader loading on low-DRAM (`CONFIG_ESP8266_NO_WIFI=y`) images.
+  4. **`__esp_soc_restart()` Mask ROM jump hygiene**: clears `INTENABLE` and Xtensa hardware watchpoint `DBREAKC0` and resets `a1` to top-of-DRAM (`0x3fffffb0`) before jumping to Mask ROM (`0x40000080`), preventing spurious UART interrupts and FreeRTOS end-of-stack watchpoint traps during 2nd-stage bootloader loading on low-DRAM (`CONFIG_ESP8266_OSS_PHY_ONLY=y`) images.
 
 #### Origin & License Compliance
 - Authored as clean-room C under **`Apache-2.0`**, referencing public SDK headers (`rom/ets_sys.h`, `esp_system.h`, `esp_private/esp_system_internal.h`, `esp8266/*_register.h`, `nvs.h`, `esp_heap_caps.h`, `esp_log.h`, `driver/soc.h`).
 
 #### Test Strength & Robustness
-- Compiled with `0` compiler warnings under GCC 16.2 (`-fno-common`) across default Wi-Fi builds, `CONFIG_ESP8266_WIFI_DEBUG_LOG_ENABLE=y` builds (all 4 debug log sites verified), 2nd-stage bootloader builds, mixed `OSS_CORE` + `VENDOR_WIFI` builds, and `CONFIG_ESP8266_NO_WIFI=y` builds, with `0` references to `libcore.a` or `libcore_dbg.a`.
-- Validated on physical ESP8266 hardware across both full Wi-Fi/HTTP/WebDAV/dual-slot OTA workloads (`+0 B` static IRAM, `+0 B` static DRAM, `-16 B` flash) and a standalone zero-blob (`CONFIG_ESP8266_NO_WIFI=y`) validation image exercising 160 MHz CPU scaling, FreeRTOS `vTaskDelay` (`200 ms`) vs. `esp_timer_get_time()` timing, NVS read/write, LittleFS mount/read, GPIO output, and live `esp_restart()` software reboot (`EXT -> SW`).
+- Compiled with `0` compiler warnings under GCC 16.2 (`-fno-common`) across default Wi-Fi builds, `CONFIG_ESP8266_WIFI_DEBUG_LOG_ENABLE=y` builds (all 4 debug log sites verified), 2nd-stage bootloader builds, mixed `OSS_CORE` + `VENDOR_PHY_WIFI` builds, and `CONFIG_ESP8266_OSS_PHY_ONLY=y` builds, with `0` references to `libcore.a` or `libcore_dbg.a`.
+- Validated on physical ESP8266 hardware across both full Wi-Fi/HTTP/WebDAV/dual-slot OTA workloads (`+0 B` static IRAM, `+0 B` static DRAM, `-16 B` flash) and a standalone zero-blob (`CONFIG_ESP8266_OSS_PHY_ONLY=y`) validation image exercising 160 MHz CPU scaling, FreeRTOS `vTaskDelay` (`200 ms`) vs. `esp_timer_get_time()` timing, NVS read/write, LittleFS mount/read, GPIO output, and live `esp_restart()` software reboot (`EXT -> SW`).
 
 ---
 
 ### 2.7 RF / Baseband / PHY Driver (`libphy.a` -> `components/esp8266/phy/`)
 
 #### What Was Removed / Replaced
-- Removed the prebuilt GCC 5.2.0 archive `components/esp8266/lib/libphy.a` (`265,988 B`, `11` object members) and replaced its entire RF, PLL, PBUS, SAR ADC, modem-sleep, TX power/calibration, and RX gain driver with **48 exported cross-boundary symbols** across eight modular C sources and two internal headers in `components/esp8266/phy/`:
+- Removed the prebuilt GCC 5.2.0 archive `components/esp8266/lib/libphy.a` (`265,988 B`, `11` object members) and replaced its entire RF, PLL, PBUS, SAR ADC, modem-sleep, TX power/calibration, and RX gain driver with **48 exported cross-boundary symbols** across nine modular C sources and two internal headers in `components/esp8266/phy/`, partitioned into **SoC `phy`** (`CONFIG_ESP8266_OSS_PHY`: 5 `.c` files) and **Wi-Fi `phy_rf`** (`CONFIG_ESP8266_OSS_PHY_WIFI`: 4 `.c` files):
   - `phy_regs.h` & `phy_internal.h` — hardware register banks (`APB`, `DPORT`, `SAR`, `I2C`, `WDEV`, `NRX`/`FE`, `RTC`), ABI `_Static_assert` guards for `phy_sleep_params_t` (`96 B`) and `esp_phy_funs_t` (`280 B`), explicit data initialization (zero `SHN_COMMON` globals), and internal prototypes.
-  - `phy_i2c_pbus.c` — Mask ROM I2C bus arbitration (`rom_i2c_readReg`, `rom_i2c_readReg_Mask`, `rom_i2c_writeReg`, `rom_i2c_writeReg_Mask`), PBUS register access, SAR ADC bias control, and `phy_get_mactime()`.
-  - `phy_clock.c` — Crystal frequency configuration, `bbpll_cal()`, `change_bbpll160()`, `change_bbpll160_sleep()`, and peripheral clock gating.
-  - `phy_rf_chan.c` — RF power-on/close (`phy_close_rf()`), pure-integer RFPLL fractional-N sigma-delta tuning and digital spur cancellation (`phy_change_channel()`), and baseband RX path setup (`phy_set_rx11b_reg()`).
-  - `phy_rxgain.c` — Dual-window baseband RX gain RAM table construction (`phy_rx_gain_dc_table`), `chip_v6_rxmax_ext()`, `phy_enable_agc()` / `phy_disable_agc()`, and hardware noise-floor measurement (`read_hw_noisefloor()`, `noise_check_loop()`).
-  - `phy_cal_tx.c` — Full/partial I/Q, TX DC, RC filter, and loopback RX I/Q calibration, baseband EVM (`phy_get_bb_evm()`), frequency-offset readout (`phy_get_bb_freqoffset()`, preserving the signed `int16_t` return ABI in `a2` for `wDev_ProcessFiq`), SPI flash cache erratum helper (`phy_fix_cache_bug()`), VDD33 PA power ceiling (`phy_set_most_tpw()`, `phy_get_most_tpw()`, `phy_vdd33_set_tpw()`), and background TX power control (`tx_pwctrl_background()`).
-  - `phy_sleep.c` — Modem/light/deep-sleep state transitions (`pm_set_sleep_mode()`, `pm_set_sleep_cycles()`, `pm_goto_sleep()`, `pm_wakeup_init()`, `pm_set_wakeup_mac()`, `pm_set_wakeup_btco()`), two-step RTC clock calibration (`pm_rtc_clock_cali()`), 64-bit microsecond-to-RTC tick conversion (`pm_usec2rtc()`, `pm_usec2rtc_64()`), `deep_sleep_set_option()`, `clockgate_watchdog()`, and `sleep_reset_analog_rtcreg_8266()`.
-  - `phy_adc.c` — SAR ADC sampling (`test_tout()`, `phy_adc_read_fast()`, `phy_get_vdd33()`) and `adc_rand_noise` entropy collection.
-  - `phy_core.c` — `esp_phy_init_data_t` (`128 B`) validation and application (`phy_check_data_table()`, `register_chipv6_phy_init_param()`), `g_phyFuns` dispatch table export (`phy_get_romfunc_addr()`), NVS calibration state load/save, and top-level PHY initialization (`register_chipv6_phy()`).
+  - `phy_soc.c` *(SoC `phy`)* — owns `chip6_phy_init_ctrl[80]`, `g_phy_sleep_mode_flag` (`1U` under `OSS_PHY_ONLY`, `0U` under `OSS_PHY_WIFI`), `g_phy_wakeup_rf_flag`, and `register_chipv6_phy_init_param()` (moved out of `phy_core.c`).
+  - `phy_i2c_pbus.c` *(SoC `phy`)* — Mask ROM I2C bus arbitration (`rom_i2c_readReg`, `rom_i2c_readReg_Mask`, `rom_i2c_writeReg`, `rom_i2c_writeReg_Mask`), `g_phyFuns` dispatch table export (`phy_get_romfunc_addr()`), PBUS register access, SAR ADC bias control, and `phy_get_mactime()`.
+  - `phy_clock.c` *(SoC `phy`)* — Crystal frequency configuration, `bbpll_cal()`, `change_bbpll160()`, `change_bbpll160_sleep()`, and peripheral clock gating.
+  - `phy_rf_chan.c` *(Wi-Fi `phy_rf`)* — RF power-on/close (`phy_close_rf()`), pure-integer RFPLL fractional-N sigma-delta tuning and digital spur cancellation (`phy_change_channel()`), and baseband RX path setup (`phy_set_rx11b_reg()`).
+  - `phy_rxgain.c` *(Wi-Fi `phy_rf`)* — Dual-window baseband RX gain RAM table construction (`phy_rx_gain_dc_table`), `chip_v6_rxmax_ext()`, `phy_enable_agc()` / `phy_disable_agc()`, and hardware noise-floor measurement (`read_hw_noisefloor()`, `noise_check_loop()`).
+  - `phy_cal_tx.c` *(Wi-Fi `phy_rf`)* — Full/partial I/Q, TX DC, RC filter, and loopback RX I/Q calibration, baseband EVM (`phy_get_bb_evm()`), frequency-offset readout (`phy_get_bb_freqoffset()`, preserving the signed `int16_t` return ABI in `a2` for `wDev_ProcessFiq`), SPI flash cache erratum helper (`phy_fix_cache_bug()`), VDD33 PA power ceiling (`phy_set_most_tpw()`, `phy_get_most_tpw()`, `phy_vdd33_set_tpw()`), and background TX power control (`tx_pwctrl_background()`).
+  - `phy_sleep.c` *(SoC `phy`)* — Modem/light/deep-sleep state transitions (`pm_set_sleep_mode()`, `pm_set_sleep_cycles()`, `pm_goto_sleep()`, `pm_wakeup_init()`, `pm_set_wakeup_mac()`, `pm_set_wakeup_btco()`), two-step RTC clock calibration (`pm_rtc_clock_cali()`, `pm_rtc_clock_cali_proc()`), 64-bit microsecond-to-RTC tick conversion (`pm_usec2rtc()`, `pm_usec2rtc_64()`, `pm_get_sleep_cycles_64()`), `clockgate_watchdog()`, `sleep_reset_analog_rtcreg_8266()`, and `phy_pm_rf_off_boot()` (`OSS_PHY_ONLY`).
+  - `phy_adc.c` *(SoC `phy`)* — SAR ADC sampling (`test_tout()`, `phy_adc_read_fast()`, `phy_get_vdd33()`) and `adc_rand_noise` entropy collection.
+  - `phy_core.c` *(Wi-Fi `phy_rf`)* — `esp_phy_init_data_t` (`128 B`) validation (`phy_check_data_table()`), RTC calibration RAM backup/recovery and `deep_sleep_set_option()`, NVS calibration state load/save, and top-level PHY initialization (`register_chipv6_phy()`).
 
 #### Replacement Implementation
-- Compiled cleanly with GCC 16.2 (`-fno-common`), enabled by default via `CONFIG_ESP8266_OSS_WIFI`, with shared coexistence guards in `components/esp8266/source/esp_clk_rtc.c`, `esp_sys_ctrl.c`, and `esp_no_blobs_stubs.c` for both Wi-Fi and standalone `CONFIG_ESP8266_NO_WIFI=y` configurations.
-- Replaces `libphy.a`'s blanket `* (noflash_text)` IRAM mapping (`linker.lf`, now gated under `CONFIG_ESP8266_VENDOR_WIFI`) with targeted `IRAM_ATTR` placement strictly on the **10 IRAM-safe hot-path and flash-disabled functions** (`rom_i2c_readReg`, `rom_i2c_readReg_Mask`, `rom_i2c_writeReg`, `rom_i2c_writeReg_Mask`, `phy_get_mactime`, `clockgate_watchdog`, `pm_goto_sleep`, `phy_get_bb_evm`, `phy_fix_cache_bug`, `phy_get_bb_freqoffset`), keeping calibration, channel tuning, and gain tables in flash.
+- Compiled cleanly with GCC 16.2 (`-fno-common`), split into **SoC `phy`** (`phy_soc.c`, `phy_i2c_pbus.c`, `phy_clock.c`, `phy_adc.c`, `phy_sleep.c` — active whenever `CONFIG_ESP8266_OSS_PHY`, i.e., `OSS_PHY_WIFI || OSS_PHY_ONLY`, avoiding symbol collisions with monolithic vendor `libphy.a` under `OSS_CORE + VENDOR_PHY_WIFI` while remaining mixable with `VENDOR_HAL`) and **Wi-Fi `phy_rf`** (`phy_rf_chan.c`, `phy_rxgain.c`, `phy_cal_tx.c`, `phy_core.c` — active under `CONFIG_ESP8266_OSS_PHY_WIFI` only), with coexistence guards in `components/esp8266/source/esp_clk_rtc.c`, `esp_sleep.c`, `esp_sys_ctrl.c`, and `esp_no_blobs_stubs.c`.
+- Replaces `libphy.a`'s blanket `* (noflash_text)` IRAM mapping (`linker.lf`, now gated under `CONFIG_ESP8266_VENDOR_PHY_WIFI`) with targeted `IRAM_ATTR` placement strictly on the **10 IRAM-safe hot-path and flash-disabled functions** (`rom_i2c_readReg`, `rom_i2c_readReg_Mask`, `rom_i2c_writeReg`, `rom_i2c_writeReg_Mask`, `phy_get_mactime`, `clockgate_watchdog`, `pm_goto_sleep`, `phy_get_bb_evm`, `phy_fix_cache_bug`, `phy_get_bb_freqoffset`), keeping calibration, channel tuning, and gain tables in flash.
 - Uses 100% pure-integer 64-bit arithmetic for RFPLL sigma-delta synthesis, spur cancellation, and RTC clock scaling with **0 soft-float helper imports**.
 
 #### Origin & License Compliance
-- Authored as clean-room C under **`Apache-2.0`** (`phy_internal.h`, `phy_adc.c`, `phy_core.c`, and shared SDK/build integration) against public SDK headers (`esp_phy_init.h`, `driver/rtc.h`, `esp8266/eagle_soc.h`, `esp8266/rom_functions.h`, `esp8266/rtc_register.h`, `phy_init_data.h`).
+- Authored as clean-room C under **`Apache-2.0`** (`phy_internal.h`, `phy_soc.c`, `phy_adc.c`, `phy_core.c`, and shared SDK/build integration) against public SDK headers (`esp_phy_init.h`, `driver/rtc.h`, `esp8266/eagle_soc.h`, `esp8266/rom_functions.h`, `esp8266/rtc_register.h`, `phy_init_data.h`).
 - Preserves upstream **`MIT`** license notices (`Copyright (c) 2025-2026 Jonathan Waters`, `teatime-os`) alongside **`Apache-2.0`** on modules containing adapted RF/PBUS/PLL/calibration/gain/sleep hardware sequences and register definitions (`phy_regs.h`, `phy_i2c_pbus.c`, `phy_clock.c`, `phy_rf_chan.c`, `phy_rxgain.c`, `phy_cal_tx.c`, `phy_sleep.c`).
 
 #### Test Strength & Robustness
-- Compiled with `0` compiler warnings under GCC 16.2 (`-Wall -Wextra -Werror -fno-common`) in both default Wi-Fi (`CONFIG_ESP8266_OSS_WIFI=y`) and `CONFIG_ESP8266_NO_WIFI=y` configurations, with `48/48` expected cross-boundary exports linked cleanly, `0` `libphy.a` references, `0` `SHN_COMMON` globals, and `0` soft-float helpers; reduced static IRAM by `1,216 B` (`+1,220 B` runtime IRAM heap headroom), static DRAM by `56 B`, and application binary size by `2,944 B`.
+- Compiled with `0` compiler warnings under GCC 16.2 (`-Wall -Wextra -Werror -fno-common`) in both default Wi-Fi (`CONFIG_ESP8266_OSS_PHY_WIFI=y`) and `CONFIG_ESP8266_OSS_PHY_ONLY=y` configurations, with `48/48` expected cross-boundary exports linked cleanly, `0` `libphy.a` references, `0` `SHN_COMMON` globals, and `0` soft-float helpers; reduced static IRAM by `1,216 B` (`+1,220 B` runtime IRAM heap headroom), static DRAM by `56 B`, and application binary size by `2,944 B`.
 - Validated on physical ESP8266 hardware across erased-NVS cold-boot full RF calibration (`phy ver: 1167_0`) with NVS persistence, warm-reboot partial calibration reload (`checksum PASS`), multi-channel AP scanning, `WIFI_PS_MIN_MODEM` modem sleep/wake cycles, simultaneous STA + SoftAP operation, HTTP/WebDAV workloads, and dual-slot OTA upgrades.
 
 ---
@@ -199,17 +199,17 @@ Most upper-layer subsystems in `ESP8266_RTOS_SDK`—including FreeRTOS, lwIP, `t
 ### 2.8 Lower MAC / WDEV Driver (`libpp.a` / `libpp_dbg.a` -> `components/esp8266/lmac/`)
 
 #### What Was Removed / Replaced
-- Replaced the prebuilt archives `components/esp8266/lib/libpp.a` (`248,934 B`, `9` object members) and `components/esp8266/lib/libpp_dbg.a` (`268,090 B`, `9` object members) (retained only as opt-in fallback under `CONFIG_ESP8266_VENDOR_WIFI`, with `[mapping:pp]` and `[mapping:pp_dbg]` gated accordingly in `components/esp8266/linker.lf`), replacing the entire WDEV lower-MAC hardware driver with six modular C sources and three headers in `components/esp8266/lmac/`:
+- Replaced the prebuilt archives `components/esp8266/lib/libpp.a` (`248,934 B`, `9` object members) and `components/esp8266/lib/libpp_dbg.a` (`268,090 B`, `9` object members) (retained only as opt-in fallback under `CONFIG_ESP8266_VENDOR_PHY_WIFI`, with `[mapping:pp]` and `[mapping:pp_dbg]` gated accordingly in `components/esp8266/linker.lf`), replacing the entire WDEV lower-MAC hardware driver with six modular C sources and three headers in `components/esp8266/lmac/`:
   - `esp_lmac.h`, `lmac_regs.h`, `lmac_internal.h` — clean public LMAC interface, `0x3FF20000` WDEV MMIO register definitions, and internal descriptor/state structures.
   - `lmac_nmi.c` — strict IRAM-only Level-3 NMI handler (`wDev_ProcessFiq`, compiled with `-fno-jump-tables` and `0 B` `.rodata`) and Level-1 SoftISR bridge (`MacIsrSigPostDefHdl`), respecting `xtensa_vectors.S` / `port.c` `NMIIrqIsOn` invariants. By default (`CONFIG_ESP8266_OSS_WIFI_MIN_NMI=n`), handles division-free TX re-arming, ACK/CTS retries, and queued next-slot launch directly inside `wDev_ProcessFiq` across SPI flash cache-disable windows (`2,762 B` IRAM, still recovering `~10.3 KB` of IRAM vs. `libpp.a`'s blanket `noflash_text` placement); setting `CONFIG_ESP8266_OSS_WIFI_MIN_NMI=y` trims this to `2,054 B` (`-708 B` IRAM).
   - `lmac_dma.c` — contiguous DMA-capable RX buffer ring (`CONFIG_ESP8266_WIFI_RX_BUFFER_NUM`), hardware wrap-around linearization, 4-byte FCS stripping, and calibrated RSSI readout.
   - `lmac_tx.c` — serialized hardware `TXQ0` engine with FIFO-preserving software priority (`VO/MGMT/BCN` ahead of `VI/BE/BK`), 12-byte scatter-gather DMA descriptor chains supporting arbitrary unaligned DRAM payload segments (`esp_lmac_tx_submit`), retry/timeout/hang recovery, and completion callbacks.
   - `lmac_trc.c` — windowed AARF 11b/11g/HT20 MCS transmit rate control (TRC) with mode-scoped peer tables (`STA` single peer + dynamically allocated SoftAP peer pool).
   - `lmac_crypto_vif.c` — hardware WEP/TKIP/CCMP key-table programming (including STA/SoftAP PTK/GTK and software CCMP/BIP fallback paths), dual-VIF MAC/BSSID filters, scan wildcard matching, SoftAP TBTT beacon timer/template engine, promiscuous sniffer hook, and 5-bank hardware MAC reset.
-  - `lmac_pm_compat.c` — modem-sleep hooks (`pm_rtc_clock_cali_proc`, `wdev_get_tsf_time`, `wDev_MacTimSetFunc`, `reset_noise_timer`) and FreeRTOS/SDK runtime glue (`esp_wifi_post_timer_from_isr` with bounded `ets_timer_proc_one()`).
+  - `lmac_pm_compat.c` — modem-sleep hooks (`wdev_get_tsf_time`, `wDev_MacTimSetFunc`, `reset_noise_timer`; RTC calibration wrappers `pm_rtc_clock_cali_proc` / `pm_get_sleep_cycles_64` now reside in `phy/phy_sleep.c`) and FreeRTOS/SDK runtime glue (`esp_wifi_post_timer_from_isr` with bounded `ets_timer_proc_one()`).
 
 #### Replacement Implementation
-- Enabled by default via `CONFIG_ESP8266_OSS_WIFI`, compiled with GCC 16.2 (`-fno-common`, `0` `SHN_COMMON` globals).
+- Enabled by default via `CONFIG_ESP8266_OSS_PHY_WIFI`, compiled with GCC 16.2 (`-fno-common`, `0` `SHN_COMMON` globals).
 - Only the Level-3 NMI path and SoftISR trampoline in `lmac_nmi.c` (`2,762 B` default / `2,054 B` with `CONFIG_ESP8266_OSS_WIFI_MIN_NMI=y`) reside in IRAM; all DMA ring management, TX submission, rate control, crypto key programming, and beacon management execute from `.flash.text`.
 
 #### Origin & License Compliance
@@ -225,7 +225,7 @@ Most upper-layer subsystems in `ESP8266_RTOS_SDK`—including FreeRTOS, lwIP, `t
 ### 2.9 IEEE 802.11 MAC Stack (`libnet80211.a` / `libnet80211_dbg.a` -> `components/esp8266/net80211/`)
 
 #### What Was Removed / Replaced
-- Replaced the prebuilt archives `components/esp8266/lib/libnet80211.a` (`485,352 B`, `30` object members) and `components/esp8266/lib/libnet80211_dbg.a` (`544,252 B`, `30` object members) (retained only as opt-in fallback under `CONFIG_ESP8266_VENDOR_WIFI`), replacing the entire 802.11 management/data stack and `esp_wifi_*` public API with nine modular C sources and one internal header in `components/esp8266/net80211/`:
+- Replaced the prebuilt archives `components/esp8266/lib/libnet80211.a` (`485,352 B`, `30` object members) and `components/esp8266/lib/libnet80211_dbg.a` (`544,252 B`, `30` object members) (retained only as opt-in fallback under `CONFIG_ESP8266_VENDOR_PHY_WIFI`), replacing the entire 802.11 management/data stack and `esp_wifi_*` public API with nine modular C sources and one internal header in `components/esp8266/net80211/`:
   - `net80211_internal.h` — internal 802.11 state, frame constants, and subsystem interfaces (`0` `SHN_COMMON` globals, retiring `g_cnxMgr`).
   - `net80211_worker.c` — single serialized FreeRTOS Wi-Fi worker task, bounded `ets_timer` drain, 100 ms housekeeping ticker, and minimal `128 B` IRAM ISR wakeup bridge.
   - `net80211_nvs_rtc.c` — Kconfig-gated `nvs.net80211` persistence, `64 B` `RTC_SYS` warm-reboot fast-connect PMK + channel cache (`esp_wifi_rtc_cache_t` in `rtc_sys_info`), and eager caller-task PBKDF2-SHA1 derivation so the Wi-Fi worker task never stalls during key derivation.
@@ -238,7 +238,7 @@ Most upper-layer subsystems in `ESP8266_RTOS_SDK`—including FreeRTOS, lwIP, `t
   - `net80211_api.c` — complete public `esp_wifi_*` and `esp_wifi_internal_*` API surface (mode/config/scan/connect/disconnect/AP STA list/country/protocol/bandwidth/TX power/promiscuous/PS/internal netif hooks).
 
 #### Replacement Implementation
-- Enabled by default via `CONFIG_ESP8266_OSS_WIFI`, compiled with GCC 16.2 (`-fno-common`, `0` `SHN_COMMON` globals).
+- Enabled by default via `CONFIG_ESP8266_OSS_PHY_WIFI`, compiled with GCC 16.2 (`-fno-common`, `0` `SHN_COMMON` globals).
 - Combined with `esp8266_lmac` and `esp8266_phy`, eliminates all proprietary Wi-Fi/MAC blobs from default builds (`CONFIG_ESP8266_VENDOR_BLOBS=n`), reducing application IRAM by `~13.1 KB` (`-50.2%`, or `~13.8 KB` with `CONFIG_ESP8266_OSS_WIFI_MIN_NMI=y`), static DRAM by `~3.06 KB` (`-25.8%`), and firmware binary size by `~86.0 KB` (`-14.8%`), while increasing runtime free heap by `~19.9 KB` (`+34.7%`).
 
 #### Origin & License Compliance
@@ -257,40 +257,63 @@ All open-source and opt-in vendor blob toggles live in `components/esp8266/Kconf
 
 ```text
 Component config
-└── ESP8266-specific
-    └── Open-Source / Vendor Blob Selection
-        ├── [ ] CONFIG_ESP8266_VENDOR_BLOBS                             (default: n)
-        │       Master gate unlocking prebuilt archives in components/esp8266/lib/.
-        │       When disabled (default), 0 vendor blobs are linked.
-        │
-        ├── (choice) HAL implementation
-        │   ├── (*) CONFIG_ESP8266_OSS_HAL                              (default)
-        │   │       Clean-room xtensa_hal.S (mixable with OSS or Vendor Core/Wi-Fi).
-        │   └── ( ) CONFIG_ESP8266_VENDOR_HAL                           [depends on: VENDOR_BLOBS]
-        │           Prebuilt libhal.a.
-        │
-        ├── (choice) Wi-Fi implementation
-        │   ├── (*) CONFIG_ESP8266_OSS_WIFI                             (default)
-        │   │       Open-source phy/ + lmac/ + net80211/ stack.
-        │   │   └── [ ] CONFIG_ESP8266_OSS_WIFI_MIN_NMI                 (default: n) [depends on: OSS_WIFI]
-        │   │           Minimal IRAM NMI handler; defers TX retries/launch to worker (-708 B IRAM).
-        │   ├── ( ) CONFIG_ESP8266_VENDOR_WIFI                          [depends on: VENDOR_BLOBS]
-        │   │       Prebuilt libphy.a + libpp.a + libnet80211.a.
-        │   └── ( ) CONFIG_ESP8266_NO_WIFI
-        │           Minimal non-Wi-Fi zero-blob build (esp_no_blobs_stubs.c).
-        │
-        ├── (choice) Core & RTC implementation
-        │   ├── (*) CONFIG_ESP8266_OSS_CORE                             (default)
-        │   │       Open-source source/esp_*.c (works with OSS_WIFI, VENDOR_WIFI, or NO_WIFI).
-        │   └── ( ) CONFIG_ESP8266_VENDOR_CORE                          [depends on: VENDOR_BLOBS && VENDOR_WIFI]
-        │           Prebuilt libcore.a + libclk.a + librtc.a.
-        │
-        ├── [ ] CONFIG_ESP8266_VENDOR_ESPNOW                            (default: n) [depends on: VENDOR_BLOBS && VENDOR_WIFI]
-        │       Link prebuilt libespnow.a (_dbg). When off, links OSS esp_now_deinit() stub.
-        │
-        └── [ ] CONFIG_ESP8266_VENDOR_SMARTCONFIG                       (default: n) [depends on: VENDOR_BLOBS && VENDOR_WIFI]
-                Compile smartconfig*.c and link prebuilt libsmartconfig.a.
+├── ESP8266-specific
+│   └── Open-Source / Vendor Blob Selection
+│       ├── [ ] CONFIG_ESP8266_VENDOR_BLOBS                             (default: n)
+│       │       Master gate unlocking prebuilt archives in components/esp8266/lib/.
+│       │       When disabled (default), 0 vendor blobs are linked.
+│       │
+│       ├── (choice) HAL implementation
+│       │   ├── (*) CONFIG_ESP8266_OSS_HAL                              (default)
+│       │   │       Clean-room xtensa_hal.S (mixable with OSS or Vendor Core/Wi-Fi).
+│       │   └── ( ) CONFIG_ESP8266_VENDOR_HAL                           [depends on: VENDOR_BLOBS]
+│       │           Prebuilt libhal.a.
+│       │
+│       ├── (choice) Wi-Fi & PHY implementation
+│       │   │   (sets hidden CONFIG_ESP8266_OSS_PHY=y whenever !VENDOR_PHY_WIFI)
+│       │   ├── (*) CONFIG_ESP8266_OSS_PHY_WIFI                         (default)
+│       │   │       Open-source phy/ (SoC + Wi-Fi RF) + lmac/ + net80211/ stack.
+│       │   ├── ( ) CONFIG_ESP8266_VENDOR_PHY_WIFI                      [depends on: VENDOR_BLOBS]
+│       │   │       Prebuilt libphy.a + libpp.a (_dbg) + libnet80211.a (_dbg).
+│       │   └── ( ) CONFIG_ESP8266_OSS_PHY_ONLY
+│       │           Open-source SoC phy/ (RTC cali, BBPLL, sleep, SAR ADC/VDD33) +
+│       │           esp_no_blobs_stubs.c with zero Wi-Fi code or Wi-Fi blobs.
+│       │
+│       ├── (choice) Core & RTC implementation
+│       │   ├── (*) CONFIG_ESP8266_OSS_CORE                             (default)
+│       │   │       Open-source source/esp_*.c (works with OSS_PHY_WIFI, VENDOR_PHY_WIFI, or OSS_PHY_ONLY).
+│       │   └── ( ) CONFIG_ESP8266_VENDOR_CORE                          [depends on: VENDOR_BLOBS && VENDOR_PHY_WIFI]
+│       │           Prebuilt libcore.a (_dbg) + libclk.a + librtc.a.
+│       │
+│       ├── [ ] CONFIG_ESP8266_VENDOR_ESPNOW                            (default: n) [depends on: VENDOR_BLOBS && VENDOR_PHY_WIFI]
+│       │       Link prebuilt libespnow.a (_dbg). When off, links OSS esp_now_deinit() stub.
+│       │
+│       └── [ ] CONFIG_ESP8266_VENDOR_SMARTCONFIG                       (default: n) [depends on: VENDOR_BLOBS && VENDOR_PHY_WIFI]
+│               Compile smartconfig*.c and link prebuilt libsmartconfig.a.
+│
+├── Wi-Fi                                                               [visible if: !OSS_PHY_ONLY]
+│   ├── [ ] CONFIG_ESP8266_OSS_WIFI_MIN_NMI                             (default: n) [depends on: OSS_PHY_WIFI]
+│   │       Minimal IRAM NMI handler; defers TX retries/launch to worker (-708 B IRAM).
+│   ├── (13) CONFIG_ESP8266_OSS_WIFI_TASK_PRIO                          (1..14)      [depends on: OSS_PHY_WIFI]
+│   │       FreeRTOS priority for n8_worker_task.
+│   ├── [ ] CONFIG_ESP8266_OSS_WIFI_RTC_FAST_CONNECT                    (default: y if !WIFI_NVS_ENABLED) [depends on: OSS_PHY_WIFI]
+│   │       Cache STA PMK + channel in 64 B of RTC_SYS across warm resets.
+│   ├── [ ] CONFIG_ESP8266_WIFI_AMSDU_ENABLED                           (default: n) [depends on: VENDOR_PHY_WIFI]
+│   ├── (7) CONFIG_ESP8266_WIFI_RX_PKT_NUM                              (4..16)      [depends on: VENDOR_PHY_WIFI]
+│   └── [ ] CONFIG_ESP8266_WIFI_DEBUG_LOG_ENABLE                        (default: n) [depends on: VENDOR_PHY_WIFI]
+│           Vendor *_dbg.a log level & submodules (SUBMODULE_ESPNOW also depends on VENDOR_ESPNOW).
+│
+└── PHY
+    ├── [*] CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE                 [prompt visible if: !OSS_PHY_ONLY]
+    ├── [ ] CONFIG_ESP_PHY_INIT_DATA_IN_PARTITION                       [prompt visible if: !OSS_PHY_ONLY]
+    ├── (33) CONFIG_ESP_PHY_INIT_DATA_VDD33_CONST                       (0..255; always visible for SAR ADC / VDD33)
+    └── (20) CONFIG_ESP8266_PHY_MAX_WIFI_TX_POWER                       (0..21 dBm)  [prompt visible if: !OSS_PHY_ONLY]
 ```
+
+> **Hand-Edited `sdkconfig` / `sdkconfig.defaults` Notes**:
+> 1. Every `CONFIG_ESP8266_VENDOR_*=y` requires `CONFIG_ESP8266_VENDOR_BLOBS=y` (otherwise `confgen.py` silently falls back to OSS).
+> 2. Unsetting a `choice` option (`# CONFIG_ESP8266_VENDOR_PHY_WIFI is not set`) does **not** revert an earlier choice in `sdkconfig.defaults` — explicitly set `CONFIG_ESP8266_OSS_PHY_WIFI=y` / `CONFIG_ESP8266_OSS_PHY_ONLY=y`, or unset `CONFIG_ESP8266_VENDOR_BLOBS`.
+> 3. `CONFIG_ESP8266_WIFI_DEBUG_LOG_ENABLE`, `CONFIG_ESP8266_WIFI_AMSDU_ENABLED`, and `CONFIG_ESP8266_WIFI_RX_PKT_NUM` are gated on `CONFIG_ESP8266_VENDOR_PHY_WIFI`; `menu Wi-Fi` and the 3 Wi-Fi-RF PHY prompts are hidden when `CONFIG_ESP8266_OSS_PHY_ONLY=y` (leaving `ESP_PHY_INIT_DATA_VDD33_CONST` visible for SAR ADC / VDD33).
 
 ---
 
@@ -301,9 +324,9 @@ Component config
 | `components/esp8266/net80211/*.{c,h}` | `Apache-2.0` | Clean-room `ESP8266_RTOS_SDK` IEEE 802.11 STA/SoftAP/APSTA/PS/scan/data stack and `wpa_supplicant` / `esp_wifi_*` API layer authored against public SDK headers. |
 | `components/esp8266/lmac/{lmac_regs.h, lmac_nmi.c, lmac_dma.c, lmac_tx.c, lmac_crypto_vif.c}` | `Apache-2.0` + `MIT` | Clean-room `ESP8266_RTOS_SDK` Lower MAC subsystem (`Apache-2.0`) incorporating WDEV register definitions and DMA/FIQ/CCMP hardware programming sequences adapted from `teatime-os` (`MIT`, Copyright (c) 2025-2026 Jonathan Waters). |
 | `components/esp8266/lmac/{esp_lmac.h, lmac_internal.h, lmac_trc.c, lmac_pm_compat.c}` | `Apache-2.0` | Clean-room `ESP8266_RTOS_SDK` LMAC public API, rate control (TRC), and sleep/runtime compatibility layer. |
-| `components/esp8266/phy/{phy_regs.h, phy_i2c_pbus.c, phy_clock.c, phy_rf_chan.c, phy_rxgain.c, phy_cal_tx.c, phy_sleep.c}` | `Apache-2.0` + `MIT` | Clean-room `ESP8266_RTOS_SDK` RF/PHY subsystem (`Apache-2.0`) incorporating hardware register definitions and RF/PBUS/PLL/calibration/gain/sleep sequences adapted from `teatime-os` (`MIT`, Copyright (c) 2025-2026 Jonathan Waters). |
-| `components/esp8266/phy/{phy_internal.h, phy_adc.c, phy_core.c}` | `Apache-2.0` | Clean-room `ESP8266_RTOS_SDK` PHY ABI/header, SAR ADC, and NVS/init-parameter orchestration authored against public SDK headers and `g_phyFuns` / `phy_init_data.h` interfaces. |
-| `components/esp8266/source/esp_clk_rtc.c` | `Apache-2.0` + `MIT` | Clean-room `ESP8266_RTOS_SDK` RTC/clock driver (`Apache-2.0`) with standalone `CONFIG_ESP8266_NO_WIFI` RTC analog reset and BBPLL init sequences adapted from `teatime-os` (`MIT`, Copyright (c) 2025-2026 Jonathan Waters). |
+| `components/esp8266/phy/{phy_regs.h, phy_i2c_pbus.c, phy_clock.c, phy_rf_chan.c, phy_rxgain.c, phy_cal_tx.c, phy_sleep.c}` | `Apache-2.0` + `MIT` | Clean-room `ESP8266_RTOS_SDK` RF/PHY subsystem (`Apache-2.0`) incorporating hardware register definitions and RF/PBUS/PLL/calibration/gain/sleep sequences adapted from `teatime-os` (`MIT`, Copyright (c) 2025-2026 Jonathan Waters). Note: `phy_i2c_pbus.c`, `phy_clock.c`, `phy_sleep.c` belong to SoC `phy`; `phy_rf_chan.c`, `phy_rxgain.c`, `phy_cal_tx.c` belong to Wi-Fi `phy_rf`. |
+| `components/esp8266/phy/{phy_internal.h, phy_soc.c, phy_adc.c, phy_core.c}` | `Apache-2.0` | Clean-room `ESP8266_RTOS_SDK` PHY ABI/header, SoC state/init (`phy_soc.c` in SoC `phy`), SAR ADC (`phy_adc.c` in SoC `phy`), and NVS/init-parameter orchestration (`phy_core.c` in Wi-Fi `phy_rf`) authored against public SDK headers and `g_phyFuns` / `phy_init_data.h` interfaces. |
+| `components/esp8266/source/esp_clk_rtc.c` | `Apache-2.0` | Clean-room `ESP8266_RTOS_SDK` RTC/clock driver delegating RTC analog reset, BBPLL lock/relock, and `OSS_PHY_ONLY` RF-off hygiene to SoC `phy` (`components/esp8266/phy/`). |
 | `components/esp8266/source/{esp_ets_timer.c, esp_misc.c, esp_misc_nvs.c, esp_sys_ctrl.c, esp_no_blobs_stubs.c, esp_wifi.c}`, `tools/cmake/romstrip.cmake`, `tools/cmake/scripts/strip_rom_libgcc.py` | `Apache-2.0` | Clean-room `ESP8266_RTOS_SDK` implementations authored against public SDK register headers and Mask ROM symbol definitions (`esp8266.rom.ld`, `esp8266.bootloader.rom.ld`). |
 | `components/esp8266/source/xtensa_hal.S` | `MIT` | Clean-room Call0 Xtensa LX106 HAL authored against MIT-licensed Tensilica / Cadence headers in `components/esp8266/include/xtensa/`. |
 | `${CMAKE_BINARY_DIR}/rom_stripped_lib/libgcc_romstrip.a` | `GPL-3.0-with-GCC-Runtime-Library-Exception` | Active `xtensa-esp-elf` GCC 16.2 compiler runtime (`libgcc.a`) with Mask ROM duplicate `.o` members stripped at configure time. |

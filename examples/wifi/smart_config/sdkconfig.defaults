@@ -1,0 +1,5 @@
+# SmartConfig requires the opt-in prebuilt vendor PHY/Wi-Fi and SmartConfig archives.
+# Open-source HAL and Core/RTC remain active by default.
+CONFIG_ESP8266_VENDOR_BLOBS=y
+CONFIG_ESP8266_VENDOR_PHY_WIFI=y
+CONFIG_ESP8266_VENDOR_SMARTCONFIG=y

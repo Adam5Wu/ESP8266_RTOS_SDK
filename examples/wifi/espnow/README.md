@@ -27,4 +27,6 @@ to make ESPNOW data more safe and more reliable.
 *Note:* The two devices can be set as either station or softap or station+softap mode. If the receiving device is in station mode only
 and it connects to an AP, modem sleep should be disabled.
 
+*Note (Vendor Blobs):* ESP-NOW currently requires the opt-in prebuilt vendor ESP-NOW (`libespnow.a` / `libespnow_dbg.a`) and vendor PHY/Wi-Fi (`libphy.a`, `libpp.a`, `libnet80211.a`) archives. This example provides `sdkconfig.defaults` enabling `CONFIG_ESP8266_VENDOR_BLOBS=y`, `CONFIG_ESP8266_VENDOR_PHY_WIFI=y`, and `CONFIG_ESP8266_VENDOR_ESPNOW=y` while keeping open-source `OSS_HAL` and `OSS_CORE` active.
+
 More info in the code [espnow_example_main.c](./main/espnow_example_main.c).

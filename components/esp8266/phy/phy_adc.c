@@ -198,11 +198,15 @@ uint16_t phy_get_vdd33(void)
 
     PHY_REG_SET(PHY_RTC_RF_PWR_REG, 0xD6000000U);
 
+#ifdef CONFIG_ESP8266_OSS_PHY_WIFI
     if (g_phy_sleep_mode_flag == 0U) {
         pm_set_sleep_mode(4U);
-    } else {
+    } else
+#endif
+    {
         phy_sar_init();
         PHY_REG_SET(PHY_DPORT_CLK_EN_REG, PHY_DPORT_CLK_WIFI_SUB);
+        PHY_REG_CLR(PHY_RF_CAL_MODE_REG, 0x08000000U);
     }
 
     if (chip6_phy_init_ctrl[0x47] == 0xFFU) {
@@ -214,9 +218,12 @@ uint16_t phy_get_vdd33(void)
     PHY_REG_CLR(PHY_SAR_MUX_CTRL_REG, PHY_SAR_MUX_VDD33_EN);
     sar_pwdet_rearm_pulse();
 
+#ifdef CONFIG_ESP8266_OSS_PHY_WIFI
     if (g_phy_sleep_mode_flag == 0U) {
         pm_wakeup_init(4U, 0U);
-    } else {
+    } else
+#endif
+    {
         PHY_REG_CLR(PHY_DPORT_CLK_EN_REG, PHY_DPORT_CLK_WIFI_GATE_MASK);
     }
 
@@ -236,8 +243,18 @@ uint16_t test_tout(uint8_t no_sleep_mode)
         phy_sar_init();
     }
 
+#ifdef CONFIG_ESP8266_OSS_PHY_WIFI
     if ((g_phy_sleep_mode_flag == 0U) && (no_sleep_mode == 0U)) {
         pm_set_sleep_mode(4U);
+    }
+#else
+    (void)no_sleep_mode;
+#endif
+
+    uint32_t saved_clk = 0U;
+    if (g_phy_sleep_mode_flag != 0U) {
+        saved_clk = PHY_REG_READ(PHY_DPORT_CLK_EN_REG) & PHY_DPORT_CLK_WIFI_GATE_MASK;
+        PHY_REG_SET(PHY_DPORT_CLK_EN_REG, PHY_DPORT_CLK_WIFI_SUB);
     }
 
     rom_i2c_writeReg_Mask(PHY_I2C_BLOCK_SAR, PHY_I2C_HOST_2, 0U, 5U, 5U, 1U);
@@ -263,9 +280,15 @@ uint16_t test_tout(uint8_t no_sleep_mode)
     PHY_REG_CLR(PHY_SAR_MUX_CTRL_REG, PHY_SAR_MUX_TOUT_EN);
     sar_pwdet_rearm_pulse();
 
+    if (g_phy_sleep_mode_flag != 0U) {
+        PHY_REG_RMW(PHY_DPORT_CLK_EN_REG, PHY_DPORT_CLK_WIFI_GATE_MASK, saved_clk);
+    }
+
+#ifdef CONFIG_ESP8266_OSS_PHY_WIFI
     if ((g_phy_sleep_mode_flag == 0U) && (no_sleep_mode == 0U)) {
         pm_wakeup_init(4U, 0U);
     }
+#endif
 
     PHY_REG_WRITE(PHY_RTC_RF_PWR_REG, saved_rf_pwr);
     g_phy_tout_dis_txpwr_track = 0U;
@@ -283,6 +306,12 @@ void phy_adc_read_fast(uint16_t *dst, uint16_t len, uint8_t clk_div)
     g_phy_tout_dis_txpwr_track = 1U;
     if (clk_div < 2U) {
         clk_div = 2U;
+    }
+
+    uint32_t saved_clk = 0U;
+    if (g_phy_sleep_mode_flag != 0U) {
+        saved_clk = PHY_REG_READ(PHY_DPORT_CLK_EN_REG) & PHY_DPORT_CLK_WIFI_GATE_MASK;
+        PHY_REG_SET(PHY_DPORT_CLK_EN_REG, PHY_DPORT_CLK_WIFI_SUB);
     }
 
     uint32_t saved_ctrl = PHY_REG_READ(PHY_SAR_CTRL_REG);
@@ -321,6 +350,10 @@ void phy_adc_read_fast(uint16_t *dst, uint16_t len, uint8_t clk_div)
     sar_wait_idle();
     PHY_REG_CLR(PHY_SAR_MUX_CTRL_REG, PHY_SAR_MUX_TOUT_EN);
     sar_pwdet_rearm_pulse();
+
+    if (g_phy_sleep_mode_flag != 0U) {
+        PHY_REG_RMW(PHY_DPORT_CLK_EN_REG, PHY_DPORT_CLK_WIFI_GATE_MASK, saved_clk);
+    }
 
     PHY_REG_WRITE(PHY_RTC_RF_PWR_REG, saved_rf_pwr);
     g_phy_tout_dis_txpwr_track = 0U;

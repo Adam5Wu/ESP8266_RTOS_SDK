@@ -30,9 +30,9 @@
 
 _Static_assert(sizeof(ETSTimer) == 28, "ETSTimer ABI");
 
-#if defined(CONFIG_ESP8266_OSS_WIFI)
+#if defined(CONFIG_ESP8266_OSS_PHY_WIFI)
 extern int esp_wifi_post_timer_from_isr(void);
-#elif defined(CONFIG_ESP8266_VENDOR_WIFI)
+#elif defined(CONFIG_ESP8266_VENDOR_PHY_WIFI)
 extern int pp_post_from_isr(uint32_t sig, uint32_t par);
 #endif
 
@@ -59,6 +59,7 @@ static void ets_rtc_timer_arm(uint32_t alarm_ticks)
         target = REG_READ(FRC2_COUNT_ADDRESS) + 100U;
     }
     REG_WRITE(FRC2_ALARM_ADDRESS, target);
+    REG_WRITE(FRC2_CTRL_ADDRESS, 0x84U);
 }
 
 static void ets_timer_intr_set(uint32_t expire_ticks)
@@ -80,9 +81,9 @@ static void ets_timer_intr_set(uint32_t expire_ticks)
 static void ets_timer_handler_dsr(void *arg)
 {
     (void)arg;
-#if defined(CONFIG_ESP8266_OSS_WIFI)
+#if defined(CONFIG_ESP8266_OSS_PHY_WIFI)
     (void)esp_wifi_post_timer_from_isr();
-#elif defined(CONFIG_ESP8266_VENDOR_WIFI)
+#elif defined(CONFIG_ESP8266_VENDOR_PHY_WIFI)
     (void)pp_post_from_isr(0x10U, 0U);
 #endif
 }
@@ -159,6 +160,10 @@ void ets_timer_disarm(ETSTimer *ptimer)
                 s_timer_list = ptimer->timer_next;
                 if (s_timer_list != NULL) {
                     ets_timer_intr_set(s_timer_list->timer_expire);
+                } else {
+                    REG_WRITE(FRC2_CTRL_ADDRESS, 0x04U);
+                    REG_WRITE(FRC2_ALARM_ADDRESS, REG_READ(FRC2_COUNT_ADDRESS) + 0x7FFFFFFFU);
+                    REG_WRITE(FRC2_INT_ADDRESS, TIMER_FRC2_INT_CLR_MASK);
                 }
             }
             break;
@@ -287,6 +292,10 @@ bool ets_timer_proc_one(void)
         } else {
             ets_timer_intr_set(s_timer_list->timer_expire);
         }
+    } else {
+        REG_WRITE(FRC2_CTRL_ADDRESS, 0x04U);
+        REG_WRITE(FRC2_ALARM_ADDRESS, REG_READ(FRC2_COUNT_ADDRESS) + 0x7FFFFFFFU);
+        REG_WRITE(FRC2_INT_ADDRESS, TIMER_FRC2_INT_CLR_MASK);
     }
     XTOS_RESTORE_INTLEVEL(ps);
     return more;
@@ -301,9 +310,10 @@ void ets_timer_proc(void)
 void ets_timer_init(void)
 {
     _xt_isr_attach(10, ets_timer_handler_dsr, NULL);
-    REG_WRITE(FRC2_ALARM_ADDRESS, 0U);
-    REG_WRITE(FRC2_CTRL_ADDRESS, 0x84U);
+    REG_WRITE(FRC2_CTRL_ADDRESS, 0x04U);
     REG_WRITE(FRC2_LOAD_ADDRESS, 0U);
+    REG_WRITE(FRC2_ALARM_ADDRESS, 0x7FFFFFFFU);
+    REG_WRITE(FRC2_INT_ADDRESS, TIMER_FRC2_INT_CLR_MASK);
     SET_PERI_REG_MASK(EDGE_INT_ENABLE_REG, BIT(2));
     _xt_isr_unmask(1U << 10);
 }

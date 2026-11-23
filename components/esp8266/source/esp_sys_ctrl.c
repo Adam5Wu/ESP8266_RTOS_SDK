@@ -60,9 +60,8 @@ int wifi_timer_init(void);
 
 uint16_t system_adc_read(void)
 {
-#ifndef CONFIG_ESP8266_NO_WIFI
-    extern uint16_t test_tout(bool flag);
-    uint16_t raw = test_tout(false);
+    extern uint16_t test_tout(uint8_t no_sleep_mode);
+    uint16_t raw = test_tout(0U);
 
     if (raw != 0xFFFFU) {
         uint16_t val = (uint16_t)(((int32_t)raw * 12) / 11);
@@ -71,13 +70,11 @@ uint16_t system_adc_read(void)
         }
         return val;
     }
-#endif
     return 0xFFFFU;
 }
 
 void system_adc_read_fast(uint16_t *adc_addr, uint16_t adc_num, uint8_t adc_clk_div)
 {
-#ifndef CONFIG_ESP8266_NO_WIFI
     extern void phy_adc_read_fast(uint16_t *adc_addr, uint16_t adc_num, uint8_t adc_clk_div);
     uint16_t i;
 
@@ -92,23 +89,16 @@ void system_adc_read_fast(uint16_t *adc_addr, uint16_t adc_num, uint8_t adc_clk_
             adc_addr[i] = v;
         }
     }
-#else
-    (void)adc_addr;
-    (void)adc_num;
-    (void)adc_clk_div;
-#endif
 }
 
 uint16_t system_get_vdd33(void)
 {
-#ifndef CONFIG_ESP8266_NO_WIFI
     extern uint16_t phy_get_vdd33(void);
     uint16_t raw = phy_get_vdd33();
 
     if (raw != 0xFFFFU) {
         return (uint16_t)(((int32_t)raw * 12) / 11);
     }
-#endif
     return 0xFFFFU;
 }
 
@@ -147,17 +137,17 @@ void IRAM_ATTR __attribute__((noreturn)) __esp_soc_restart(void (*reboot_fn)(voi
 void esp_restart(void)
 {
     extern void sleep_reset_analog_rtcreg_8266(void);
-#if defined(CONFIG_ESP8266_OSS_WIFI)
-    extern void pm_goto_rf_on(void);
+    extern void clockgate_watchdog(uint8_t en);
+    extern void bbpll_cal(uint8_t mode);
+#if defined(CONFIG_ESP8266_OSS_PHY_WIFI)
     (void)esp_wifi_stop();
     vTaskDelay(pdMS_TO_TICKS(70U));
-#elif defined(CONFIG_ESP8266_VENDOR_WIFI)
+#elif defined(CONFIG_ESP8266_VENDOR_PHY_WIFI)
     extern const uint8_t *g_wifi_nvs;
     extern bool wifi_station_stop(void);
     extern bool wifi_softap_stop(void);
     extern void __wifi_task_delay(uint32_t tick);
     extern uint32_t __wifi_task_ms_to_ticks(uint32_t ms);
-    extern void pm_goto_rf_on(void);
 
     if (g_wifi_nvs != NULL) {
         uint8_t opmode = *g_wifi_nvs;
@@ -173,18 +163,13 @@ void esp_restart(void)
 
     SET_PERI_REG_MASK(PERIPHS_IO_MUX_MTDI_U, PERIPHS_IO_MUX_PULLUP);
 
-#ifndef CONFIG_ESP8266_NO_WIFI
+#ifndef CONFIG_ESP8266_OSS_PHY_ONLY
     {
         extern void pm_goto_rf_on(void);
         pm_goto_rf_on();
     }
 #endif
-#ifndef CONFIG_ESP8266_NO_WIFI
-    {
-        extern void clockgate_watchdog(uint8_t en);
-        clockgate_watchdog(0U);
-    }
-#endif
+    clockgate_watchdog(0U);
 
     REG_WRITE(PERIPHS_DPORT_BASEADDR + 0x18U, 0xFFFF00FFU);
     user_uart_wait_tx_fifo_empty(0U, 500000U);
@@ -198,19 +183,8 @@ void esp_restart(void)
     sleep_reset_analog_rtcreg_8266();
     rom_i2c_writeReg(0x67U, 4U, 1U, 0x08U);
     rom_i2c_writeReg(0x67U, 4U, 2U, 0x81U);
-#ifndef CONFIG_ESP8266_NO_WIFI
-    {
-        extern void bbpll_cal(uint8_t mode);
-        bbpll_cal(1U);
-    }
-#else
-    CLEAR_PERI_REG_MASK(DPORT_CTL_REG, DPORT_CTL_DOUBLE_CLK);
-    REG_WRITE(0x60000D40U, (REG_READ(0x60000D40U) & ~0x0CU) | 0x08U);
-    os_delay_us(1000U);
-    REG_WRITE(0x60000D40U, (REG_READ(0x60000D40U) & ~0x0CU) | 0x04U);
-    os_delay_us(1U);
-#endif
-#ifdef CONFIG_ESP8266_NO_WIFI
+    bbpll_cal(1U);
+#ifdef CONFIG_ESP8266_OSS_PHY_ONLY
     CLEAR_PERI_REG_MASK(EDGE_INT_ENABLE_REG, BIT(0));
     _xt_isr_mask(1U << ETS_WDT_INUM);
     CLEAR_WDT_REG_MASK(WDT_CTL_ADDRESS, WDT_CTL_EN_MASK);
@@ -243,7 +217,7 @@ void IRAM_ATTR __esp_soc_deep_sleep(void)
 
 void system_deep_sleep_instant(uint32_t sleep_cycles)
 {
-#ifndef CONFIG_ESP8266_NO_WIFI
+#ifndef CONFIG_ESP8266_OSS_PHY_ONLY
     extern void deep_sleep_set_option(uint8_t opt);
     deep_sleep_set_option(0U);
 #endif
@@ -288,11 +262,7 @@ void system_deep_sleep_instant(uint32_t sleep_cycles)
     /* Stage D: Program final sleep duration and enter deep sleep */
     REG_WRITE(PERIPHS_RTC_BASEADDR + 0x40U, 0xFFFFFFFFU);
     REG_WRITE(PERIPHS_RTC_BASEADDR + 0x44U, 0x20U);
-#ifndef CONFIG_ESP8266_NO_WIFI
     pm_set_sleep_cycles(sleep_cycles);
-#else
-    REG_WRITE(RTC_SLP_VAL, REG_READ(RTC_SLP_CNT_VAL) + sleep_cycles);
-#endif
     if (sleep_cycles == 0U) {
         REG_WRITE(RTC_STATE2, 0U);
     } else {
@@ -305,7 +275,6 @@ void system_deep_sleep_instant(uint32_t sleep_cycles)
 
 void esp_deep_sleep(uint64_t time_in_us)
 {
-#ifndef CONFIG_ESP8266_NO_WIFI
     extern uint64_t pm_get_sleep_cycles_64(uint64_t time_in_us);
     uint64_t cycles;
 
@@ -318,24 +287,11 @@ void esp_deep_sleep(uint64_t time_in_us)
     if (time_in_us != 0ULL && cycles == 0ULL) {
         cycles = 1ULL;
     }
-#ifndef CONFIG_ESP8266_NO_WIFI
+#ifndef CONFIG_ESP8266_OSS_PHY_ONLY
     (void)esp_wifi_stop();
 #endif
     vTaskDelay(pdMS_TO_TICKS(100U));
     system_deep_sleep_instant((uint32_t)cycles);
-#else
-    uint64_t cycles = (time_in_us * 15ULL) / 100ULL;
-
-    if (cycles > 0xFFFFFFFFULL) {
-        printf("deep sleep time too long\n");
-        return;
-    }
-    if (time_in_us != 0ULL && cycles == 0ULL) {
-        cycles = 1ULL;
-    }
-    vTaskDelay(pdMS_TO_TICKS(100U));
-    system_deep_sleep_instant((uint32_t)cycles);
-#endif
 }
 
 void esp_set_cpu_freq(esp_cpu_freq_t cpu_freq)
@@ -417,7 +373,7 @@ int rtc_init(void)
 
 esp_err_t mac_init(void)
 {
-#ifdef CONFIG_ESP8266_VENDOR_WIFI
+#ifdef CONFIG_ESP8266_VENDOR_PHY_WIFI
     extern uint8_t g_ic[];
     (void)esp_read_mac(&g_ic[0x199], ESP_MAC_WIFI_STA);
     (void)esp_read_mac(&g_ic[0x193], ESP_MAC_WIFI_SOFTAP);
@@ -436,7 +392,7 @@ int wifi_timer_init(void)
 {
     extern void ets_timer_init(void);
     ets_timer_init();
-#ifdef CONFIG_ESP8266_VENDOR_WIFI
+#ifdef CONFIG_ESP8266_VENDOR_PHY_WIFI
     extern void pp_noise_test(void);
     pp_noise_test();
 #endif

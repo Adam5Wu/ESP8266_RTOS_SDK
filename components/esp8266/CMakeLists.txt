@@ -69,19 +69,24 @@ else()
             "source/esp_sys_ctrl.c")
     endif()
 
-    if(CONFIG_ESP8266_NO_WIFI)
+    if(CONFIG_ESP8266_OSS_PHY_ONLY)
         list(APPEND srcs "source/esp_no_blobs_stubs.c")
     endif()
 
-    if(CONFIG_ESP8266_OSS_WIFI)
+    if(CONFIG_ESP8266_OSS_PHY)
         list(APPEND srcs
+            "phy/phy_soc.c"
             "phy/phy_i2c_pbus.c"
             "phy/phy_clock.c"
+            "phy/phy_adc.c"
+            "phy/phy_sleep.c")
+    endif()
+
+    if(CONFIG_ESP8266_OSS_PHY_WIFI)
+        list(APPEND srcs
             "phy/phy_rf_chan.c"
             "phy/phy_rxgain.c"
             "phy/phy_cal_tx.c"
-            "phy/phy_adc.c"
-            "phy/phy_sleep.c"
             "phy/phy_core.c"
             "lmac/lmac_nmi.c"
             "lmac/lmac_dma.c"
@@ -120,7 +125,7 @@ else()
                     LDFRAGMENTS "${fragments}"
                     REQUIRED_IDF_TARGETS esp8266)
 
-    if(CONFIG_ESP8266_OSS_WIFI)
+    if(CONFIG_ESP8266_OSS_PHY_WIFI)
         set_source_files_properties(lmac/lmac_nmi.c PROPERTIES COMPILE_OPTIONS "-fno-jump-tables")
     endif()
 
@@ -143,7 +148,7 @@ else()
                 list(APPEND blobs "core")
             endif()
         endif()
-        if(CONFIG_ESP8266_VENDOR_WIFI)
+        if(CONFIG_ESP8266_VENDOR_PHY_WIFI)
             list(APPEND blobs "phy")
             if(CONFIG_ESP8266_WIFI_DEBUG_LOG_ENABLE)
                 list(APPEND blobs "pp_dbg" "net80211_dbg")

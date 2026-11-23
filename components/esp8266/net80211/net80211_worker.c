@@ -265,7 +265,7 @@ esp_err_t n8_worker_start(void)
     if (stk_bytes < 3072U) {
         stk_bytes = 3072U;
     }
-    UBaseType_t prio = (UBaseType_t)CONFIG_ESP8266_WIFI_TASK_PRIO;
+    UBaseType_t prio = (UBaseType_t)CONFIG_ESP8266_OSS_WIFI_TASK_PRIO;
     if (prio >= configMAX_PRIORITIES) {
         prio = configMAX_PRIORITIES - 1U;
     }

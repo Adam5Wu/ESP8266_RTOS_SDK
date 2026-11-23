@@ -23,15 +23,10 @@
 #include "esp_private/wifi.h"
 #include "lmac_internal.h"
 
-extern void rom_i2c_writeReg(uint8_t block, uint8_t host_id, uint8_t reg_add, uint8_t data);
-
 #define TAG "lmac"
 
 /* Single zero-initialized global LMAC context (explicitly initialized — 0 SHN_COMMON) */
 lmac_ctx_t g_lmac = {0};
-
-/* RTC calibration scratch array expected by pm_rtc_clock_cali() (pm_ctx[1] = cali_q12) */
-static uint32_t s_rtc_cali_ctx[4] = {0};
 
 /* --------------------------------------------------------------------------
  * Lifecycle: esp_lmac_init / esp_lmac_deinit
@@ -46,14 +41,12 @@ esp_err_t esp_lmac_init(const esp_lmac_config_t *cfg, const esp_lmac_callbacks_t
         return ESP_OK;
     }
 
-    /* Preserve ps_lock_flags, rtc_cali_q12, and rx_pbuf_mem_type across re-init */
+    /* Preserve ps_lock_flags and rx_pbuf_mem_type across re-init */
     uint32_t saved_ps_lock = g_lmac.ps_lock_flags;
-    uint32_t saved_cali = g_lmac.rtc_cali_q12;
     uint8_t saved_pbuf_type = g_lmac.rx_pbuf_mem_type;
 
     memset(&g_lmac, 0, sizeof(g_lmac));
     g_lmac.ps_lock_flags = saved_ps_lock;
-    g_lmac.rtc_cali_q12 = saved_cali;
     g_lmac.rx_pbuf_mem_type = saved_pbuf_type;
 
     g_lmac.cfg = *cfg;
@@ -109,6 +102,7 @@ esp_err_t esp_lmac_deinit(void)
         esp_lmac_sniffer_disable();
     }
 
+    esp_lmac_rf_open();
     esp_lmac_vif_disable(ESP_LMAC_VIF_STA);
     esp_lmac_vif_disable(ESP_LMAC_VIF_AP);
 
@@ -294,7 +288,20 @@ esp_err_t esp_lmac_set_channel(uint8_t primary_chan)
 
 void esp_lmac_rf_open(void)
 {
+    extern uint8_t g_phy_sleep_mode_flag;
+
     if (!g_lmac.rf_closed) {
+        if (g_phy_sleep_mode_flag != 0U) {
+            /* Light sleep (esp_light_sleep_start) closed PHY/RF without
+             * toggling g_lmac.rf_closed or s_lock_cnt; wake PHY without
+             * double-incrementing s_lock_cnt. */
+            clockgate_watchdog(0U);
+            phy_open_rf();
+            if (g_lmac.cur_channel >= 1U && g_lmac.cur_channel <= 14U) {
+                esp_lmac_set_channel(g_lmac.cur_channel);
+            }
+            lmac_wdev_update_mac_enable();
+        }
         return;
     }
 
@@ -377,22 +384,6 @@ bool esp_lmac_ps_is_locked(void)
  * External SDK Compatibility Exports (Consumed by esp_clk_rtc, esp_sleep,
  * esp_wifi, tcpip_adapter, phy)
  * -------------------------------------------------------------------------- */
-
-uint32_t pm_rtc_clock_cali_proc(void)
-{
-    /* Cross-checked against libpp pm_rtc_clock_cali_proc disassembly:
-     * s_rtc_cali_ctx[1] = 0; rom_i2c_writeReg(0x6a, 2, 8, 0); pm_rtc_clock_cali(...) */
-    s_rtc_cali_ctx[1] = 0U;
-    rom_i2c_writeReg(0x6AU, 2U, 8U, 0U);
-    pm_rtc_clock_cali(s_rtc_cali_ctx);
-    g_lmac.rtc_cali_q12 = s_rtc_cali_ctx[1];
-    return g_lmac.rtc_cali_q12;
-}
-
-uint64_t pm_get_sleep_cycles_64(uint64_t usec)
-{
-    return pm_usec2rtc_64(usec, g_lmac.rtc_cali_q12);
-}
 
 void pm_goto_rf_on(void)
 {
