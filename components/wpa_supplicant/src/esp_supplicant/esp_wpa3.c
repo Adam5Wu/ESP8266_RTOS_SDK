@@ -127,6 +127,11 @@ void esp_wpa3_free_sae_data(void)
         wpabuf_free(g_sae_confirm);
         g_sae_confirm = NULL;
     }
+
+    if (g_sae_token) {
+        wpabuf_free(g_sae_token);
+        g_sae_token = NULL;
+    }
     sae_clear_data(&g_sae_data);
 }
 
@@ -165,6 +170,9 @@ static int wpa3_parse_sae_commit(u8 *buf, u32 len, u16 status)
     }
 
     if (status == WLAN_STATUS_ANTI_CLOGGING_TOKEN_REQ) {
+        if (len < 2) {
+            return ESP_FAIL;
+        }
         if (g_sae_token)
             wpabuf_free(g_sae_token);
         g_sae_token = wpabuf_alloc_copy(buf + 2, len - 2);

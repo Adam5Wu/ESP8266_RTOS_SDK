@@ -80,6 +80,10 @@ _Static_assert(sizeof(lmac_lldesc_t) == 12U, "lmac_lldesc_t must be 12 bytes");
 #define LMAC_NMI_RING_SIZE   32U
 #define LMAC_NMI_RING_MASK   (LMAC_NMI_RING_SIZE - 1U)
 
+#define LMAC_RXSTATE_OK      ESP_LMAC_RXSTATE_OK
+#define LMAC_RXSTATE_ALT1    ESP_LMAC_RXSTATE_ALT1
+#define LMAC_RXSTATE_ALT2    ESP_LMAC_RXSTATE_TKIP_MIC_FAIL
+
 typedef enum {
     LMAC_NMI_EVT_NONE = 0,
     LMAC_NMI_EVT_RX_DESC,
@@ -109,6 +113,10 @@ _Static_assert(sizeof(lmac_nmi_evt_t) == 8U, "lmac_nmi_evt_t must be 8 bytes");
 #define LMAC_TX_MAX_DESCS           (1U + LMAC_TX_MAX_SG_SEGS + 1U) /* hdr + 2 segs + trailer/FCS */
 #define LMAC_TX_DEFAULT_MAX_RETRIES 7U
 #define LMAC_TX_LIFETIME_US         500000U
+
+#define LMAC_FC1_PROTECTED          0x40U
+#define LMAC_KEY_SLOT_AP_BIT        0x80U
+#define LMAC_KEY_SLOT_MASK          0x7FU
 
 #define LMAC_HW_Q_BE                2U
 #define LMAC_HW_Q_BK                3U
@@ -292,6 +300,7 @@ typedef struct {
     uint32_t             last_rx_end_cnt;
     uint8_t              rx_hang_ticks;
     uint8_t              rx_ba_used_mask;
+    uint8_t              sw_prot_bypass_vif; /* 0=none, 1=CONF0, 2=CONF1 temporarily bypassed */
 
     /* Telemetry */
     esp_lmac_stats_t     stats;

@@ -178,6 +178,16 @@ static void tx_arm_hw_slot(uint8_t q, lmac_tx_slot_t *slot)
     lmac_reg_write(LMAC_TXQ_CONF(q), (backoff & 0x3FFU) << 12);
 
     txq->launch_us = lmac_reg_read(LMAC_WDEV_TIME);
+    if ((slot->hdr_buf[1] & LMAC_FC1_PROTECTED) != 0U &&
+        (slot->hw_key_slot & LMAC_KEY_SLOT_MASK) == 0U) {
+        uint32_t creg = ((slot->hw_key_slot & LMAC_KEY_SLOT_AP_BIT) != 0U)
+                        ? LMAC_WDEV_CRYPTO_CONF1
+                        : LMAC_WDEV_CRYPTO_CONF0;
+        if ((lmac_reg_read(creg) & LMAC_CRYPTO_TX_ENC) == 0U) {
+            lmac_reg_set(creg, LMAC_CRYPTO_TX_ENC);
+            g_lmac.sw_prot_bypass_vif = ((slot->hw_key_slot & LMAC_KEY_SLOT_AP_BIT) != 0U) ? 2U : 1U;
+        }
+    }
     lmac_reg_set(LMAC_TXQ_LINK(q), LMAC_TXQ_LINK_GO);
 }
 #endif
@@ -327,6 +337,9 @@ esp_err_t esp_lmac_tx_submit(const esp_lmac_tx_req_t *req)
     }
 
     memcpy(slot->hdr_buf, req->hdr, req->hdr_len);
+    if (req->hdr_len < 2U) {
+        slot->hdr_buf[1] = 0U;
+    }
 
     /* Trailer scratch holds optional crypto MIC/ICV + 4-byte FCS padding */
     uint8_t trail_total = (uint8_t)(req->trailer_len + 4U);
@@ -388,9 +401,20 @@ esp_err_t esp_lmac_tx_submit(const esp_lmac_tx_req_t *req)
     slot->max_retries = ((req->flags & ESP_LMAC_TX_FLAG_NO_ACK) != 0U)
                         ? 0U
                         : LMAC_TX_DEFAULT_MAX_RETRIES;
-    slot->hw_key_slot = (req->cipher == ESP_LMAC_CIPHER_NONE)
-                        ? 0U
-                        : lmac_crypto_lookup_tx_slot(req->vif, req->peer_id, req->cipher, req->key_idx);
+    /*
+     * When software crypto already set FC Protected=1 (cipher == NONE, e.g. 802.11w
+     * SW CCMP mgmt or raw 802.11 TX), steer hw_key_slot to the opposite VIF's CONF
+     * register (0x80 for STA -> CONF1; 0x00 for AP -> CONF0) so WDEV TX bypasses
+     * HW encryption instead of touching Slot 0.
+     */
+    if (req->cipher == ESP_LMAC_CIPHER_NONE && req->hdr_len >= 2U &&
+        (req->hdr[1] & LMAC_FC1_PROTECTED) != 0U) {
+        slot->hw_key_slot = (req->vif == ESP_LMAC_VIF_AP) ? 0x00U : LMAC_KEY_SLOT_AP_BIT;
+    } else {
+        slot->hw_key_slot = (req->cipher == ESP_LMAC_CIPHER_NONE)
+                            ? 0U
+                            : lmac_crypto_lookup_tx_slot(req->vif, req->peer_id, req->cipher, req->key_idx);
+    }
 
     g_lmac.stats.tx_submitted++;
 
@@ -538,6 +562,11 @@ void lmac_tx_on_done_evt(const lmac_nmi_evt_t *ev)
         /* TX success (ACK received or NO_ACK sent) */
         txq->cw = txq->cw_min;
         txq->active = NULL;
+        if (g_lmac.sw_prot_bypass_vif != 0U) {
+            lmac_reg_clr(LMAC_WDEV_CRYPTO_CONF0 + (((uint32_t)g_lmac.sw_prot_bypass_vif - 1U) << 2),
+                         LMAC_CRYPTO_TX_ENC);
+            g_lmac.sw_prot_bypass_vif = 0U;
+        }
         tx_finish_slot(slot, 1U, ack_rssi);
         tx_kick_queue(q);
         return;
@@ -564,6 +593,11 @@ void lmac_tx_on_done_evt(const lmac_nmi_evt_t *ev)
              (unsigned)slot->retries, (unsigned)slot->hw_rate);
     txq->cw = txq->cw_min;
     txq->active = NULL;
+    if (g_lmac.sw_prot_bypass_vif != 0U) {
+        lmac_reg_clr(LMAC_WDEV_CRYPTO_CONF0 + (((uint32_t)g_lmac.sw_prot_bypass_vif - 1U) << 2),
+                     LMAC_CRYPTO_TX_ENC);
+        g_lmac.sw_prot_bypass_vif = 0U;
+    }
     tx_finish_slot(slot, 0U, (int8_t)0x7F);
     tx_kick_queue(q);
 }
@@ -581,6 +615,13 @@ static void tx_abort_hw_queue(uint8_t q)
     lmac_reg_clr(LMAC_TXQ_LINK(q), BIT(30));
     lmac_reg_clr(LMAC_WDEV_TX_ABORT, 0xC0000000U);
     lmac_reg_clr(LMAC_TXQ_LINK(q), BIT(31));
+    if (g_lmac.sw_prot_bypass_vif != 0U) {
+        uint32_t creg = (g_lmac.sw_prot_bypass_vif == 1U)
+                        ? LMAC_WDEV_CRYPTO_CONF0
+                        : LMAC_WDEV_CRYPTO_CONF1;
+        lmac_reg_clr(creg, LMAC_CRYPTO_TX_ENC);
+        g_lmac.sw_prot_bypass_vif = 0U;
+    }
     vPortETSIntrUnlock();
 }
 

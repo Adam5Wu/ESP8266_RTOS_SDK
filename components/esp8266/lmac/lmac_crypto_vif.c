@@ -95,6 +95,16 @@ static void hw_key_write_slot(uint8_t slot, uint8_t vif, uint8_t hw_alg, uint8_t
     lmac_reg_set(LMAC_WDEV_KEY_VALID_MASK, (1U << slot));
 }
 
+/**
+ * @brief Update the per-VIF hardware crypto engine control register (CONF0/CONF1).
+ *
+ * Scans user key slots (2..24) for active keys belonging to @p vif and writes
+ * either bypass mode or active STA/SoftAP crypto mode (plus the WEP flag when
+ * any WEP key is installed). Preserves LMAC_CRYPTO_TX_ENC across key updates
+ * whenever an opposite-VIF software-protected frame is active in hardware TX.
+ *
+ * @param vif  Virtual interface index (ESP_LMAC_VIF_STA or ESP_LMAC_VIF_AP).
+ */
 static void hw_crypto_update_vif_reg(esp_lmac_vif_t vif)
 {
     if (vif >= ESP_LMAC_VIF_MAX || g_lmac.sniffer_mode != 0U) {
@@ -115,17 +125,47 @@ static void hw_crypto_update_vif_reg(esp_lmac_vif_t vif)
         }
     }
 
+    /* Cross-checked against wDev_Crypto_Conf (wdev.o.c) & teatime-os (wifi_ccmp.c) */
+    uint32_t val;
     if (!has_key) {
-        lmac_reg_write(reg, LMAC_CRYPTO_BYPASS);
-        return;
+        val = LMAC_CRYPTO_BYPASS;
+    } else {
+        val = (vif == ESP_LMAC_VIF_STA) ? LMAC_CRYPTO_ACTIVE_STA : LMAC_CRYPTO_ACTIVE_SPP;
+        if (is_wep) {
+            val |= LMAC_CRYPTO_WEP_BIT;
+        }
     }
 
-    /* Cross-checked against wDev_Crypto_Conf (wdev.o.c) & teatime-os (wifi_ccmp.c) */
-    uint32_t val = (vif == ESP_LMAC_VIF_STA) ? LMAC_CRYPTO_ACTIVE_STA : LMAC_CRYPTO_ACTIVE_SPP;
-    if (is_wep) {
-        val |= LMAC_CRYPTO_WEP_BIT;
+    vPortETSIntrLock();
+    bool sw_bypass_active = (g_lmac.sw_prot_bypass_vif == (uint8_t)(vif + 1U));
+    if (!sw_bypass_active) {
+        for (uint8_t q = 0U; q < LMAC_HW_TXQ_COUNT; q++) {
+            const lmac_tx_slot_t *act = g_lmac.hw_txq[q].active;
+            if (act != NULL &&
+                (act->hdr_buf[1] & LMAC_FC1_PROTECTED) != 0U &&
+                (act->hw_key_slot & LMAC_KEY_SLOT_MASK) == 0U) {
+                esp_lmac_vif_t target_vif = ((act->hw_key_slot & LMAC_KEY_SLOT_AP_BIT) != 0U)
+                                            ? ESP_LMAC_VIF_AP
+                                            : ESP_LMAC_VIF_STA;
+                if (target_vif == vif) {
+                    sw_bypass_active = true;
+                    break;
+                }
+            }
+        }
+    }
+    if (sw_bypass_active) {
+        if (!has_key) {
+            /* LMAC_CRYPTO_BYPASS already sets TX_ENC=1; prevent TX-done from clearing it */
+            g_lmac.sw_prot_bypass_vif = 0U;
+        } else {
+            /* Keep TX_ENC=1 while an opposite-VIF SW-protected TX is in flight */
+            val |= LMAC_CRYPTO_TX_ENC;
+            g_lmac.sw_prot_bypass_vif = (uint8_t)(vif + 1U);
+        }
     }
     lmac_reg_write(reg, val);
+    vPortETSIntrUnlock();
 }
 
 static void cipher_to_hw_alg(esp_lmac_cipher_t cipher, uint8_t *hw_alg, uint8_t *sub_alg)
@@ -360,32 +400,38 @@ esp_err_t esp_lmac_key_read_slot(uint8_t slot, uint8_t *vif_out, esp_lmac_cipher
 uint8_t lmac_crypto_lookup_tx_slot(esp_lmac_vif_t vif, esp_lmac_peer_id_t peer_id,
                                    esp_lmac_cipher_t cipher, uint8_t key_idx)
 {
+    uint8_t slot = 0U;
     if (cipher == ESP_LMAC_CIPHER_NONE || vif >= ESP_LMAC_VIF_MAX) {
         return 0U; /* Bypass */
     }
     if (cipher == ESP_LMAC_CIPHER_WEP40 || cipher == ESP_LMAC_CIPHER_WEP104) {
-        uint8_t slot = (uint8_t)(2U + (key_idx & 3U));
-        return g_lmac.keys[slot].in_use ? slot : 0U;
-    }
-    if (peer_id != ESP_LMAC_PEER_INVALID) {
+        uint8_t wslot = (uint8_t)(2U + (key_idx & 3U));
+        slot = g_lmac.keys[wslot].in_use ? wslot : 0U;
+    } else if (peer_id != ESP_LMAC_PEER_INVALID) {
         lmac_peer_t *p = lmac_trc_get_peer(peer_id);
         if (p != NULL && p->ptk_hw_slot < LMAC_HW_KEY_SLOTS && g_lmac.keys[p->ptk_hw_slot].in_use) {
-            return p->ptk_hw_slot;
+            slot = p->ptk_hw_slot;
+        }
+    } else {
+        /* Multicast/broadcast GTK lookup */
+        uint8_t base = (vif == ESP_LMAC_VIF_STA) ? 2U : 4U;
+        for (uint8_t s = base; s < (uint8_t)(base + 2U); s++) {
+            if (g_lmac.keys[s].in_use && g_lmac.keys[s].vif == vif && g_lmac.keys[s].key_idx == key_idx) {
+                slot = s;
+                break;
+            }
+        }
+        if (slot == 0U && g_lmac.vif[vif].gtk_active_slot >= base &&
+            g_lmac.vif[vif].gtk_active_slot < (uint8_t)(base + 2U) &&
+            g_lmac.keys[g_lmac.vif[vif].gtk_active_slot].in_use) {
+            slot = g_lmac.vif[vif].gtk_active_slot;
         }
     }
-    /* Multicast/broadcast GTK lookup */
-    uint8_t base = (vif == ESP_LMAC_VIF_STA) ? 2U : 4U;
-    for (uint8_t s = base; s < (uint8_t)(base + 2U); s++) {
-        if (g_lmac.keys[s].in_use && g_lmac.keys[s].vif == vif && g_lmac.keys[s].key_idx == key_idx) {
-            return s;
-        }
+    /* Match vendor ieee80211_output.o: set bit 7 (0x80) on SoftAP encrypted TX slot */
+    if (slot != 0U && vif == ESP_LMAC_VIF_AP) {
+        slot |= LMAC_KEY_SLOT_AP_BIT;
     }
-    if (g_lmac.vif[vif].gtk_active_slot >= base &&
-        g_lmac.vif[vif].gtk_active_slot < (uint8_t)(base + 2U) &&
-        g_lmac.keys[g_lmac.vif[vif].gtk_active_slot].in_use) {
-        return g_lmac.vif[vif].gtk_active_slot;
-    }
-    return 0U;
+    return slot;
 }
 
 /* --------------------------------------------------------------------------

@@ -704,6 +704,20 @@ void n8_ap_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, const uint8_t *frame, uint16_
             pos = (uint16_t)(pos + 2U + elen);
         }
 
+        /* Clear stale security/LMAC/replay state when a STA re-associates in-place */
+        if (sta->wpa_sm != NULL && g_n8.wpa_cb != NULL && g_n8.wpa_cb->wpa_ap_remove != NULL) {
+            (void)g_n8.wpa_cb->wpa_ap_remove(sta->wpa_sm);
+            sta->wpa_sm = NULL;
+        }
+        if (sta->peer_id != ESP_LMAC_PEER_INVALID) {
+            esp_lmac_peer_remove(sta->peer_id);
+            sta->peer_id = ESP_LMAC_PEER_INVALID;
+        }
+        sta->ptk_cipher = (uint8_t)ESP_LMAC_CIPHER_NONE;
+        sta->authorized = 0U;
+        sta->last_rx_seq_valid = 0U;
+        memset(sta->ptk_pn, 0, sizeof(sta->ptk_pn));
+
         /* Register peer in LMAC TRC */
         esp_lmac_peer_caps_t pcaps = {0};
         memcpy(pcaps.mac, sta->mac, 6U);

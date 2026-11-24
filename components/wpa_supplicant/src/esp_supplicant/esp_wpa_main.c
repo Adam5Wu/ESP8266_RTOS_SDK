@@ -183,9 +183,12 @@ int wpa_parse_wpa_ie_wrapper(const u8 *wpa_ie, size_t wpa_ie_len, wifi_wpa_ie_t 
 
 static void wpa_sta_disconnected_cb(uint8_t reason_code)
 {
+    esp_wpa3_free_sae_data();
+
     switch (reason_code) {
         case WIFI_REASON_UNSPECIFIED:
         case WIFI_REASON_AUTH_EXPIRE:
+        case WIFI_REASON_ASSOC_EXPIRE:
         case WIFI_REASON_NOT_AUTHED:
         case WIFI_REASON_NOT_ASSOCED:
         case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
@@ -194,7 +197,6 @@ static void wpa_sta_disconnected_cb(uint8_t reason_code)
         case WIFI_REASON_ASSOC_FAIL:
         case WIFI_REASON_CONNECTION_FAIL:
         case WIFI_REASON_HANDSHAKE_TIMEOUT:
-            esp_wpa3_free_sae_data();
             wpa_sta_clear_curr_pmksa();
             break;
         default:

@@ -20,19 +20,35 @@
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_system.h"
+#include "os.h"
 #include "net80211_internal.h"
 
 #define TAG "wifi_sta"
 
+/* From wpa_supplicant/src/crypto/ccmp.c (compiled with -DCONFIG_IEEE80211W) */
+extern u8 *ccmp_decrypt(const u8 *tk, const u8 *hdr, const u8 *data,
+                        size_t data_len, size_t *decrypted_len, bool espnow_pkt);
+extern u8 *ccmp_encrypt(const u8 *tk, u8 *frame, size_t len, size_t hdrlen,
+                        u8 *pn, int keyid, size_t *encrypted_len);
+
 #define SAE_MSG_COMMIT_TYPE                 1U
 #define SAE_MSG_CONFIRM_TYPE                2U
 #define WLAN_STATUS_SUCCESS_CODE            0U
+#define WLAN_STATUS_REQUEST_DECLINED        37U
 #define WLAN_STATUS_ANTI_CLOGGING_CODE      76U
 
 #define N8_STA_AUTH_TIMEOUT_TICKS           2U   /* 200 ms */
+#define N8_STA_SAE_AUTH_TIMEOUT_TICKS       10U  /* 1000 ms per SAE Commit/Confirm step */
 #define N8_STA_ASSOC_TIMEOUT_TICKS          2U   /* 200 ms */
 #define N8_STA_4WAY_TIMEOUT_TICKS           50U  /* 5.0 s */
 #define N8_STA_MAX_AUTH_RETRIES             6U
+#define N8_STA_SA_QUERY_RETRY_TICKS         2U   /* 200 ms */
+#define N8_STA_SA_QUERY_TIMEOUT_TICKS       10U  /* 1000 ms */
+#define N8_STA_ADDBA_WIN_MASK               0x3FFU
+#define N8_STA_PROT_HDR_LEN                 (IEEE80211_HDR_LEN + IEEE80211_CCMP_HDR_LEN)
+#define N8_STA_ACTION_HDR_LEN               2U
+#define N8_STA_LMAC_SCRATCH_MAX             96U
 
 static const uint8_t s_sta_rates_ie[] = {
     0x01U, 0x08U, 0x82U, 0x84U, 0x8BU, 0x96U, 0x0CU, 0x12U, 0x18U, 0x24U,
@@ -65,38 +81,158 @@ void n8_mgmt_free_tx_cb(void *ctx, const esp_lmac_tx_status_t *st)
     }
 }
 
+/**
+ * @brief Free an os_malloc'd management frame buffer upon LMAC TX completion.
+ *
+ * @param ctx Pointer to the buffer allocated by ccmp_encrypt().
+ * @param st  LMAC TX status (unused).
+ */
+static void sta_os_free_tx_cb(void *ctx, const esp_lmac_tx_status_t *st)
+{
+    (void)st;
+    if (ctx != NULL) {
+        os_free(ctx);
+    }
+}
+
+/**
+ * @brief Classify an 802.11 Action category as Robust per IEEE 802.11 Table 9-51.
+ *
+ * @param cat Action category octet.
+ * @return true if the category is a Robust Management Action frame; false otherwise.
+ */
+static bool sta_is_robust_action(uint8_t cat)
+{
+    if (cat == IEEE80211_CAT_PUBLIC || cat == IEEE80211_CAT_HT ||
+        cat == IEEE80211_CAT_UNPROT_WNM || cat == IEEE80211_CAT_SELF_PROT ||
+        cat == IEEE80211_CAT_WMM || cat == IEEE80211_CAT_UNPROT_DMG ||
+        cat == IEEE80211_CAT_VHT || cat == IEEE80211_CAT_VENDOR ||
+        (cat & IEEE80211_CAT_ERR_BIT) != 0U) {
+        return false;
+    }
+    return true;
+}
+
+/**
+ * @brief Software-decrypt and replay-check a PMF CCMP-protected unicast management frame.
+ *
+ * @param frame   Full 802.11 management frame starting at Frame Control.
+ * @param len     Total MPDU length in bytes.
+ * @param out_len Output decrypted body length in bytes.
+ * @return Heap buffer from os_malloc() on success (caller must os_free()), or NULL on failure.
+ */
+static uint8_t *sta_decrypt_pmf_mgmt(const uint8_t *frame, uint16_t len, size_t *out_len)
+{
+    if (g_n8.sta_ptk_key_valid == 0U ||
+        g_n8.sta_ptk_cipher != (uint8_t)ESP_LMAC_CIPHER_CCMP ||
+        len < (IEEE80211_HDR_LEN + IEEE80211_CCMP_HDR_LEN + IEEE80211_CCMP_MIC_LEN)) {
+        return NULL;
+    }
+
+    uint64_t pn = n8_ccmp_iv_to_pn(frame + IEEE80211_HDR_LEN);
+    if (g_n8.sta_rx_mgmt_pn_valid != 0U && pn <= g_n8.sta_rx_mgmt_pn) {
+        return NULL;
+    }
+
+    u8 *plain = ccmp_decrypt(g_n8.sta_ptk_key, frame, frame + IEEE80211_HDR_LEN,
+                             (size_t)(len - IEEE80211_HDR_LEN), out_len, false);
+    if (plain == NULL) {
+        return NULL;
+    }
+
+    g_n8.sta_rx_mgmt_pn = pn;
+    g_n8.sta_rx_mgmt_pn_valid = 1U;
+    return (uint8_t *)plain;
+}
+
 static esp_err_t sta_tx_mgmt(uint8_t subtype, const uint8_t *body, uint16_t body_len,
                              bool force_lowest, bool protected_mgmt)
 {
-    uint8_t hdr[32];
-    uint16_t hdr_len = 24U;
-    memset(hdr, 0, sizeof(hdr));
+    if (protected_mgmt) {
+        if (g_n8.sta_pmf_active == 0U || g_n8.sta_ptk_key_valid == 0U ||
+            g_n8.sta_ptk_cipher != (uint8_t)ESP_LMAC_CIPHER_CCMP) {
+            return ESP_ERR_INVALID_STATE;
+        }
 
-    hdr[0] = (uint8_t)(IEEE80211_FC_TYPE_MGMT | subtype);
-    hdr[1] = protected_mgmt ? IEEE80211_FC1_PROTECTED : 0U;
-    memcpy(hdr + 4U, g_n8.sta_bssid, 6U);
-    memcpy(hdr + 10U, g_n8.sta_mac, 6U);
-    memcpy(hdr + 16U, g_n8.sta_bssid, 6U);
-    uint16_t seq = n8_sta_next_seq();
-    hdr[22] = (uint8_t)(seq & 0xFFU);
-    hdr[23] = (uint8_t)(seq >> 8);
+        size_t plain_len = (size_t)IEEE80211_HDR_LEN + (size_t)body_len;
+        uint8_t *plain = (uint8_t *)os_malloc(plain_len);
+        if (plain == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
+        memset(plain, 0, IEEE80211_HDR_LEN);
+        plain[0] = (uint8_t)(IEEE80211_FC_TYPE_MGMT | subtype);
+        plain[1] = IEEE80211_FC1_PROTECTED;
+        memcpy(plain + IEEE80211_HDR_ADDR1_OFF, g_n8.sta_bssid, IEEE80211_ADDR_LEN);
+        memcpy(plain + IEEE80211_HDR_ADDR2_OFF, g_n8.sta_mac, IEEE80211_ADDR_LEN);
+        memcpy(plain + IEEE80211_HDR_ADDR3_OFF, g_n8.sta_bssid, IEEE80211_ADDR_LEN);
+        uint16_t seq = n8_sta_next_seq();
+        plain[IEEE80211_HDR_SEQ_OFF] = (uint8_t)(seq & 0xFFU);
+        plain[IEEE80211_HDR_SEQ_OFF + 1U] = (uint8_t)(seq >> 8);
+        if (body != NULL && body_len > 0U) {
+            memcpy(plain + IEEE80211_HDR_LEN, body, body_len);
+        }
 
-    esp_lmac_cipher_t cipher = ESP_LMAC_CIPHER_NONE;
-    uint8_t trailer_len = 0U;
-    if (protected_mgmt && g_n8.sta_ptk_cipher == ESP_LMAC_CIPHER_CCMP) {
-        uint64_t pn = g_n8.sta_tx_pn++;
-        hdr[24] = (uint8_t)(pn & 0xFFU);
-        hdr[25] = (uint8_t)((pn >> 8) & 0xFFU);
-        hdr[26] = 0U;
-        hdr[27] = 0x20U; /* ExtIV=1, KeyID=0 */
-        hdr[28] = (uint8_t)((pn >> 16) & 0xFFU);
-        hdr[29] = (uint8_t)((pn >> 24) & 0xFFU);
-        hdr[30] = (uint8_t)((pn >> 32) & 0xFFU);
-        hdr[31] = (uint8_t)((pn >> 40) & 0xFFU);
-        hdr_len = 32U;
-        cipher = ESP_LMAC_CIPHER_CCMP;
-        trailer_len = 8U;
+        uint64_t pn_val = g_n8.sta_tx_mgmt_pn++;
+        uint8_t pn_be[IEEE80211_PN_BYTES] = {
+            (uint8_t)((pn_val >> 40) & 0xFFU),
+            (uint8_t)((pn_val >> 32) & 0xFFU),
+            (uint8_t)((pn_val >> 24) & 0xFFU),
+            (uint8_t)((pn_val >> 16) & 0xFFU),
+            (uint8_t)((pn_val >> 8) & 0xFFU),
+            (uint8_t)(pn_val & 0xFFU),
+        };
+        size_t enc_len = 0U;
+        u8 *crypt = ccmp_encrypt(g_n8.sta_ptk_key, plain, plain_len,
+                                 IEEE80211_HDR_LEN, pn_be, 0, &enc_len);
+        os_free(plain);
+        if (crypt == NULL || enc_len <= N8_STA_PROT_HDR_LEN) {
+            if (crypt != NULL) {
+                os_free(crypt);
+            }
+            return ESP_ERR_NO_MEM;
+        }
+
+        esp_lmac_sg_seg_t seg = {0};
+        esp_lmac_tx_req_t tx = {0};
+        tx.vif = ESP_LMAC_VIF_STA;
+        tx.peer_id = g_n8.sta_peer_id;
+        tx.ac = ESP_LMAC_AC_MGMT;
+        tx.cipher = ESP_LMAC_CIPHER_NONE; /* SW CCMP already applied */
+        tx.flags = force_lowest ? ESP_LMAC_TX_FLAG_FORCE_LOWEST_RATE : 0U;
+        tx.hdr = crypt;
+        tx.trailer_len = 0U;
+
+        if (enc_len + 4U <= N8_STA_LMAC_SCRATCH_MAX) {
+            tx.hdr_len = (uint16_t)enc_len;
+            esp_err_t err = esp_lmac_tx_submit(&tx);
+            os_free(crypt);
+            return err;
+        }
+
+        tx.hdr_len = N8_STA_PROT_HDR_LEN;
+        seg.ptr = crypt + N8_STA_PROT_HDR_LEN;
+        seg.len = (uint16_t)(enc_len - N8_STA_PROT_HDR_LEN);
+        tx.segs = &seg;
+        tx.seg_cnt = 1U;
+        tx.done_cb = sta_os_free_tx_cb;
+        tx.done_ctx = crypt;
+        esp_err_t err = esp_lmac_tx_submit(&tx);
+        if (err != ESP_OK) {
+            os_free(crypt);
+        }
+        return err;
     }
+
+    uint8_t hdr[IEEE80211_HDR_LEN];
+    memset(hdr, 0, sizeof(hdr));
+    hdr[0] = (uint8_t)(IEEE80211_FC_TYPE_MGMT | subtype);
+    hdr[1] = 0U;
+    memcpy(hdr + IEEE80211_HDR_ADDR1_OFF, g_n8.sta_bssid, IEEE80211_ADDR_LEN);
+    memcpy(hdr + IEEE80211_HDR_ADDR2_OFF, g_n8.sta_mac, IEEE80211_ADDR_LEN);
+    memcpy(hdr + IEEE80211_HDR_ADDR3_OFF, g_n8.sta_bssid, IEEE80211_ADDR_LEN);
+    uint16_t seq = n8_sta_next_seq();
+    hdr[IEEE80211_HDR_SEQ_OFF] = (uint8_t)(seq & 0xFFU);
+    hdr[IEEE80211_HDR_SEQ_OFF + 1U] = (uint8_t)(seq >> 8);
 
     uint8_t *copy = NULL;
     esp_lmac_sg_seg_t seg = {0};
@@ -112,15 +248,15 @@ static esp_err_t sta_tx_mgmt(uint8_t subtype, const uint8_t *body, uint16_t body
 
     esp_lmac_tx_req_t tx = {0};
     tx.vif = ESP_LMAC_VIF_STA;
-    tx.peer_id = protected_mgmt ? g_n8.sta_peer_id : ESP_LMAC_PEER_INVALID;
+    tx.peer_id = ESP_LMAC_PEER_INVALID;
     tx.ac = ESP_LMAC_AC_MGMT;
-    tx.cipher = cipher;
+    tx.cipher = ESP_LMAC_CIPHER_NONE;
     tx.flags = force_lowest ? ESP_LMAC_TX_FLAG_FORCE_LOWEST_RATE : 0U;
     tx.hdr = hdr;
-    tx.hdr_len = hdr_len;
+    tx.hdr_len = sizeof(hdr);
     tx.segs = (copy != NULL) ? &seg : NULL;
     tx.seg_cnt = (copy != NULL) ? 1U : 0U;
-    tx.trailer_len = trailer_len;
+    tx.trailer_len = 0U;
     tx.done_cb = (copy != NULL) ? n8_mgmt_free_tx_cb : NULL;
     tx.done_ctx = copy;
 
@@ -131,11 +267,41 @@ static esp_err_t sta_tx_mgmt(uint8_t subtype, const uint8_t *body, uint16_t body
     return err;
 }
 
+/**
+ * @brief Transmit a PMF-protected 802.11w SA-Query Request or Response frame.
+ *
+ * @param action IEEE80211_SA_QUERY_REQ or IEEE80211_SA_QUERY_RESP.
+ * @param tid    2-byte Transaction Identifier.
+ */
+static void sta_send_sa_query(uint8_t action, const uint8_t tid[2])
+{
+    uint8_t body[4] = { IEEE80211_CAT_SA_QUERY, action, tid[0], tid[1] };
+    (void)sta_tx_mgmt(IEEE80211_SUBTYPE_ACTION, body, sizeof(body), false,
+                      (g_n8.sta_pmf_active != 0U));
+}
+
+/**
+ * @brief Initiate STA-side 802.11w SA-Query procedure upon unprotected Deauth/Disassoc.
+ */
+static void sta_start_sa_query(void)
+{
+    if (g_n8.sa_query_active != 0U) {
+        return;
+    }
+    uint32_t rnd = esp_random();
+    g_n8.sa_query_tid[0] = (uint8_t)(rnd & 0xFFU);
+    g_n8.sa_query_tid[1] = (uint8_t)((rnd >> 8) & 0xFFU);
+    g_n8.sa_query_active = 1U;
+    g_n8.sa_query_ticks = 0U;
+    sta_send_sa_query(IEEE80211_SA_QUERY_REQ, g_n8.sa_query_tid);
+}
+
 static void sta_send_deauth(uint8_t reason)
 {
     uint8_t body[2] = { reason, 0U };
     bool prot = (g_n8.sta_state == N8_STA_RUN) && (g_n8.sta_pmf_active != 0U) &&
-                (g_n8.sta_ptk_cipher == ESP_LMAC_CIPHER_CCMP);
+                (g_n8.sta_ptk_key_valid != 0U) &&
+                (g_n8.sta_ptk_cipher == (uint8_t)ESP_LMAC_CIPHER_CCMP);
     (void)sta_tx_mgmt(IEEE80211_SUBTYPE_DEAUTH, body, sizeof(body), true, prot);
 }
 
@@ -352,6 +518,19 @@ void n8_sta_disconnect(uint8_t reason, bool send_deauth, bool notify_event)
     g_n8.sta_connect_req = 0U;
     g_n8.sta_ptk_cipher = (uint8_t)ESP_LMAC_CIPHER_NONE;
     g_n8.sta_gtk_cipher = (uint8_t)ESP_LMAC_CIPHER_NONE;
+    memset(g_n8.sta_ptk_key, 0, sizeof(g_n8.sta_ptk_key));
+    g_n8.sta_ptk_key_valid = 0U;
+    g_n8.sta_tx_mgmt_pn = 0ULL;
+    g_n8.sta_rx_mgmt_pn = 0ULL;
+    g_n8.sta_rx_mgmt_pn_valid = 0U;
+    g_n8.sta_rx_bip_ipn = 0ULL;
+    g_n8.sta_rx_bip_ipn_valid = 0U;
+    g_n8.sta_last_rx_seq_valid = 0U;
+    memset(g_n8.sta_rx_ptk_pn, 0, sizeof(g_n8.sta_rx_ptk_pn));
+    memset(g_n8.sta_rx_gtk_pn, 0, sizeof(g_n8.sta_rx_gtk_pn));
+    g_n8.sa_query_active = 0U;
+    g_n8.sa_query_ticks = 0U;
+    memset(g_n8.sa_query_tid, 0, sizeof(g_n8.sa_query_tid));
     g_n8.sta_igtk_valid = 0U;
     g_n8.sta_pmf_active = 0U;
     g_n8.sta_aid = 0U;
@@ -410,13 +589,16 @@ static void sta_begin_auth(const n8_scan_entry_t *ap)
     g_n8.sta_group_cipher = (uint8_t)ap->rec.group_cipher;
     g_n8.sta_mgmt_cipher = ap->mgmt_cipher ? ap->mgmt_cipher : (uint8_t)WIFI_CIPHER_TYPE_AES_CMAC128;
 
-    bool use_sae = false;
+    bool sae_allowed = false;
 #ifdef CONFIG_ESP8266_WIFI_ENABLE_WPA3_SAE
-    if (ap->akm_sae && (g_n8.sta_cfg.sta.pmf_cfg.capable || g_n8.sta_cfg.sta.pmf_cfg.required ||
-                        ap->rec.authmode == WIFI_AUTH_WPA3_PSK)) {
+    sae_allowed = (g_n8.init_cfg.wpa3_sae_enable != 0U);
+#endif
+    bool use_sae = false;
+    if (sae_allowed && ap->akm_sae &&
+        (g_n8.sta_cfg.sta.pmf_cfg.capable || g_n8.sta_cfg.sta.pmf_cfg.required ||
+         ap->rec.authmode == WIFI_AUTH_WPA3_PSK)) {
         use_sae = true;
     }
-#endif
 
     if (ap->rec.authmode == WIFI_AUTH_OPEN) {
         g_n8.sta_wpa_proto = 0U;
@@ -429,8 +611,10 @@ static void sta_begin_auth(const n8_scan_entry_t *ap)
         g_n8.sta_authmode = WIFI_AUTH_WPA3_PSK;
     } else if ((ap->wpa_proto & 2U) != 0U) {
         g_n8.sta_wpa_proto = 2U;
-        bool pmf_on = (ap->pmf_required != 0U) ||
-                      (ap->pmf_capable != 0U && g_n8.sta_cfg.sta.pmf_cfg.capable);
+        bool pmf_on = (ap->pmf_capable != 0U &&
+                       (g_n8.sta_cfg.sta.pmf_cfg.capable || g_n8.sta_cfg.sta.pmf_cfg.required)) ||
+                      (ap->pmf_required != 0U) ||
+                      (ap->rec.authmode == WIFI_AUTH_WPA3_PSK);
         g_n8.sta_pmf_active = pmf_on ? 1U : 0U;
         g_n8.sta_supp_authmode = (pmf_on && ap->akm_psk_sha256) ? WPA2_AUTH_PSK_SHA256 : WPA2_AUTH_PSK;
     } else if ((ap->wpa_proto & 1U) != 0U) {
@@ -550,59 +734,89 @@ void n8_sta_on_auth_done(void)
 
 static void sta_handle_action(const uint8_t *frame, uint16_t len)
 {
-    if (len < 26U) {
-        return;
-    }
-    uint16_t body_off = 24U;
+    bool is_bcast = (frame[IEEE80211_HDR_ADDR1_OFF] & N8_MAC_MCAST_BIT) != 0U;
     bool is_prot = (frame[1] & IEEE80211_FC1_PROTECTED) != 0U;
-    if (is_prot) {
-        if (len < 24U + 8U + 2U + 8U) {
+    uint8_t *plain = NULL;
+    const uint8_t *body = NULL;
+    uint16_t blen = 0U;
+
+    if (is_bcast) {
+        if (is_prot || len < (IEEE80211_HDR_LEN + N8_STA_ACTION_HDR_LEN)) {
             return;
         }
-        body_off = 32U;
-        len = (uint16_t)(len - 8U);
+        uint8_t cat = frame[IEEE80211_HDR_LEN];
+        if (g_n8.sta_state == N8_STA_RUN && g_n8.sta_pmf_active != 0U &&
+            sta_is_robust_action(cat)) {
+            if (!n8_verify_bip_mmie(frame, len)) {
+                return;
+            }
+            if (len < (IEEE80211_HDR_LEN + N8_STA_ACTION_HDR_LEN + IEEE80211_MMIE_LEN)) {
+                return;
+            }
+            blen = (uint16_t)(len - IEEE80211_HDR_LEN - IEEE80211_MMIE_LEN);
+        } else {
+            blen = (uint16_t)(len - IEEE80211_HDR_LEN);
+        }
+        body = frame + IEEE80211_HDR_LEN;
+    } else if (is_prot) {
+        size_t dlen = 0U;
+        plain = sta_decrypt_pmf_mgmt(frame, len, &dlen);
+        if (plain == NULL || dlen < N8_STA_ACTION_HDR_LEN) {
+            if (plain != NULL) {
+                os_free(plain);
+            }
+            return;
+        }
+        body = plain;
+        blen = (uint16_t)dlen;
+    } else {
+        if (len < (IEEE80211_HDR_LEN + N8_STA_ACTION_HDR_LEN)) {
+            return;
+        }
+        uint8_t cat = frame[IEEE80211_HDR_LEN];
+        if (g_n8.sta_pmf_active != 0U && g_n8.sta_state >= N8_STA_ASSOC &&
+            sta_is_robust_action(cat)) {
+            return;
+        }
+        body = frame + IEEE80211_HDR_LEN;
+        blen = (uint16_t)(len - IEEE80211_HDR_LEN);
     }
 
-    const uint8_t *body = frame + body_off;
-    uint16_t blen = (uint16_t)(len - body_off);
     uint8_t cat = body[0];
     uint8_t act = body[1];
 
-    /* 802.11w SA-Query Request -> reply with SA-Query Response */
-    if (cat == IEEE80211_CAT_SA_QUERY && act == IEEE80211_SA_QUERY_REQ && blen >= 4U) {
-        uint8_t resp[4] = { IEEE80211_CAT_SA_QUERY, IEEE80211_SA_QUERY_RESP, body[2], body[3] };
-        (void)sta_tx_mgmt(IEEE80211_SUBTYPE_ACTION, resp, sizeof(resp), false,
-                          (g_n8.sta_pmf_active != 0U));
+    /* 802.11w SA-Query Request/Response */
+    if (cat == IEEE80211_CAT_SA_QUERY && blen >= 4U) {
+        if (g_n8.sta_state == N8_STA_RUN &&
+            (g_n8.sta_pmf_active == 0U || g_n8.sta_ptk_key_valid != 0U)) {
+            if (act == IEEE80211_SA_QUERY_REQ) {
+                sta_send_sa_query(IEEE80211_SA_QUERY_RESP, &body[2]);
+            } else if (act == IEEE80211_SA_QUERY_RESP && g_n8.sa_query_active != 0U &&
+                       body[2] == g_n8.sa_query_tid[0] && body[3] == g_n8.sa_query_tid[1]) {
+                g_n8.sa_query_active = 0U;
+                g_n8.sa_query_ticks = 0U;
+                memset(g_n8.sa_query_tid, 0, sizeof(g_n8.sa_query_tid));
+            }
+        }
+        if (plain != NULL) {
+            os_free(plain);
+        }
         return;
     }
 
-    /* 802.11n Block Ack (Milestone 6C) */
-    if (cat == IEEE80211_CAT_BA) {
+    /* 802.11n Block Ack (declined in P1 until Phase 3 NMI A-MPDU demux) */
+    if (cat == IEEE80211_CAT_BA && g_n8.sta_state == N8_STA_RUN &&
+        (g_n8.sta_pmf_active == 0U || g_n8.sta_ptk_key_valid != 0U)) {
         if (act == IEEE80211_BA_ACTION_ADDBA_REQ && blen >= 9U) {
             uint8_t dialog = body[2];
             uint16_t ba_param = (uint16_t)((uint16_t)body[3] | ((uint16_t)body[4] << 8));
             uint8_t tid = (uint8_t)((ba_param >> 2) & 0x0FU);
-            uint8_t win = (uint8_t)((ba_param >> 6) & 0x3FU);
+            uint16_t req_win = (uint16_t)((ba_param >> 6) & N8_STA_ADDBA_WIN_MASK);
             uint16_t timeout = (uint16_t)((uint16_t)body[5] | ((uint16_t)body[6] << 8));
-            uint16_t ssn = (uint16_t)(((uint16_t)body[7] | ((uint16_t)body[8] << 8)) >> 4);
-
-            uint16_t status = 37U; /* Declined by default when AMPDU RX disabled */
-#ifdef CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
-            uint8_t max_win = (uint8_t)CONFIG_ESP8266_WIFI_RX_BA_WIN_SIZE;
-            if (max_win == 0U) {
-                max_win = 6U;
-            }
-            if (win == 0U || win > max_win) {
-                win = max_win;
-            }
-            if (esp_lmac_add_rx_ba(g_n8.sta_peer_id, tid, ssn, win) == ESP_OK) {
-                status = 0U; /* Success */
-            }
-#else
-            (void)ssn;
-            (void)win;
-#endif
-            uint16_t resp_param = (uint16_t)(((uint16_t)win << 6) | ((uint16_t)tid << 2) | 0x02U);
+            uint16_t status = WLAN_STATUS_REQUEST_DECLINED;
+            (void)req_win;
+            uint16_t resp_param = (uint16_t)(((req_win & N8_STA_ADDBA_WIN_MASK) << 6) |
+                                             ((uint16_t)tid << 2) | 0x02U);
             uint8_t resp[9] = {
                 IEEE80211_CAT_BA, IEEE80211_BA_ACTION_ADDBA_RESP,
                 dialog,
@@ -610,12 +824,17 @@ static void sta_handle_action(const uint8_t *frame, uint16_t len)
                 (uint8_t)(resp_param & 0xFFU), (uint8_t)(resp_param >> 8),
                 (uint8_t)(timeout & 0xFFU), (uint8_t)(timeout >> 8)
             };
-            (void)sta_tx_mgmt(IEEE80211_SUBTYPE_ACTION, resp, sizeof(resp), false, false);
+            (void)sta_tx_mgmt(IEEE80211_SUBTYPE_ACTION, resp, sizeof(resp), false,
+                              (g_n8.sta_pmf_active != 0U));
         } else if (act == IEEE80211_BA_ACTION_DELBA && blen >= 6U) {
             uint16_t del_param = (uint16_t)((uint16_t)body[2] | ((uint16_t)body[3] << 8));
             uint8_t tid = (uint8_t)((del_param >> 12) & 0x0FU);
             esp_lmac_del_rx_ba(g_n8.sta_peer_id, tid);
         }
+    }
+
+    if (plain != NULL) {
+        os_free(plain);
     }
 }
 
@@ -770,23 +989,42 @@ void n8_sta_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, const uint8_t *frame, uint16
             }
             return;
         }
-        bool is_bcast = (frame[4] & 1U) != 0U;
+        bool is_bcast = (frame[IEEE80211_HDR_ADDR1_OFF] & N8_MAC_MCAST_BIT) != 0U;
         bool is_prot = (frame[1] & IEEE80211_FC1_PROTECTED) != 0U;
+        uint8_t reason = WIFI_REASON_UNSPECIFIED;
 
         /* 802.11w Protected Management Frame enforcement when PMF is active */
-        if (g_n8.sta_state == N8_STA_RUN && g_n8.sta_pmf_active) {
+        if (g_n8.sta_state == N8_STA_RUN && g_n8.sta_pmf_active != 0U) {
             if (is_bcast) {
-                if (!n8_verify_bip_mmie(frame, len)) {
+                if (is_prot || !n8_verify_bip_mmie(frame, len)) {
                     return; /* Drop spoofed broadcast deauth/disassoc */
                 }
+                reason = (len >= IEEE80211_HDR_LEN + 2U) ? frame[IEEE80211_HDR_LEN] : WIFI_REASON_UNSPECIFIED;
             } else if (!is_prot) {
-                /* Unprotected unicast deauth while PMF active: ignore (per 802.11w) */
+                /* Unprotected unicast deauth/disassoc under PMF: verify AP liveness via SA-Query */
+                sta_start_sa_query();
+                return;
+            } else {
+                size_t dlen = 0U;
+                uint8_t *plain = sta_decrypt_pmf_mgmt(frame, len, &dlen);
+                if (plain == NULL) {
+                    return; /* Drop forged Protected=1 frame on CCMP MIC/replay failure */
+                }
+                reason = (dlen >= 2U) ? plain[0] : WIFI_REASON_UNSPECIFIED;
+                os_free(plain);
+            }
+        } else if (is_prot) {
+            size_t dlen = 0U;
+            uint8_t *plain = sta_decrypt_pmf_mgmt(frame, len, &dlen);
+            if (plain == NULL) {
                 return;
             }
+            reason = (dlen >= 2U) ? plain[0] : WIFI_REASON_UNSPECIFIED;
+            os_free(plain);
+        } else {
+            reason = (len >= IEEE80211_HDR_LEN + 2U) ? frame[IEEE80211_HDR_LEN] : WIFI_REASON_UNSPECIFIED;
         }
 
-        uint16_t body_off = is_prot ? 32U : 24U;
-        uint8_t reason = (len >= body_off + 2U) ? frame[body_off] : WIFI_REASON_UNSPECIFIED;
         ESP_LOGW(TAG, "RX %s from AP (reason=%u)",
                  (subtype == IEEE80211_SUBTYPE_DEAUTH) ? "deauth" : "disassoc", (unsigned)reason);
         n8_sta_disconnect(reason, false, true);
@@ -810,7 +1048,10 @@ void n8_sta_on_tick_100ms(void)
 
     g_n8.sta_state_ticks++;
 
-    if (g_n8.sta_state == N8_STA_AUTH && g_n8.sta_state_ticks >= N8_STA_AUTH_TIMEOUT_TICKS) {
+    uint16_t auth_tmo = (g_n8.sta_supp_authmode == WPA3_AUTH_PSK)
+                        ? N8_STA_SAE_AUTH_TIMEOUT_TICKS
+                        : N8_STA_AUTH_TIMEOUT_TICKS;
+    if (g_n8.sta_state == N8_STA_AUTH && g_n8.sta_state_ticks >= auth_tmo) {
         g_n8.sta_state_ticks = 0U;
         g_n8.sta_auth_retries++;
         if (g_n8.sta_auth_retries >= N8_STA_MAX_AUTH_RETRIES) {
@@ -833,6 +1074,19 @@ void n8_sta_on_tick_100ms(void)
     } else if (g_n8.sta_state == N8_STA_4WAY && g_n8.sta_state_ticks >= N8_STA_4WAY_TIMEOUT_TICKS) {
         n8_sta_disconnect(WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT, true, true);
     } else if (g_n8.sta_state == N8_STA_RUN) {
+        if (g_n8.sa_query_active != 0U) {
+            g_n8.sa_query_ticks++;
+            if (g_n8.sa_query_ticks >= N8_STA_SA_QUERY_TIMEOUT_TICKS) {
+                g_n8.sa_query_active = 0U;
+                g_n8.sa_query_ticks = 0U;
+                memset(g_n8.sa_query_tid, 0, sizeof(g_n8.sa_query_tid));
+                n8_sta_disconnect(WIFI_REASON_UNSPECIFIED, false, true);
+                return;
+            }
+            if ((g_n8.sa_query_ticks % N8_STA_SA_QUERY_RETRY_TICKS) == 0U) {
+                sta_send_sa_query(IEEE80211_SA_QUERY_REQ, g_n8.sa_query_tid);
+            }
+        }
         if (!g_n8.scan_active) {
             g_n8.sta_bcn_miss_ticks++;
             uint16_t max_miss = (uint16_t)(g_n8.inactive_sec[0] * 10U);

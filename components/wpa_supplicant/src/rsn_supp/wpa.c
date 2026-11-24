@@ -2139,6 +2139,10 @@ int wpa_set_bss(char *macddr, char * bssid, u8 pairwise_cipher, u8 group_cipher,
 
         esp_wifi_get_config(ESP_IF_WIFI_STA, &wifi_cfg);
         sm->pmf_cfg = wifi_cfg.sta.pmf_cfg;
+        sm->pmf_cfg.capable = true;
+        if (sm->key_mgmt == WPA_KEY_MGMT_SAE) {
+            sm->pmf_cfg.required = true;
+        }
         sm->mgmt_group_cipher = cipher_type_map_public_to_supp(esp_wifi_sta_get_mgmt_group_cipher());
     } else {
         memset(&sm->pmf_cfg, 0, sizeof(sm->pmf_cfg));

@@ -239,6 +239,23 @@ int wpa_parse_wpa_ie_rsn(const u8 *rsn_ie, size_t rsn_ie_len,
 		}
 	}
 
+#ifdef CONFIG_IEEE80211W
+	if (left >= RSN_SELECTOR_LEN) {
+		data->mgmt_group_cipher = rsn_selector_to_bitfield(pos);
+		if (data->mgmt_group_cipher != WPA_CIPHER_AES_128_CMAC) {
+			return -10;
+		}
+		pos += RSN_SELECTOR_LEN;
+		left -= RSN_SELECTOR_LEN;
+	} else if (left == 0 && (data->capabilities & WPA_CAPABILITY_MFPC)) {
+		data->mgmt_group_cipher = WPA_CIPHER_AES_128_CMAC;
+	} else if (left > 0) {
+		return -10;
+	} else {
+		data->mgmt_group_cipher = WPA_CIPHER_NONE;
+	}
+#endif
+
 	if (left > 0) {
 	    #ifdef DEBUG_PRINT	
 		wpa_printf(MSG_DEBUG, "%s: ie has %u trailing bytes - ignored",

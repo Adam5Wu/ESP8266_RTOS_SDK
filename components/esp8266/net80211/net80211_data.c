@@ -29,77 +29,6 @@
 
 static const uint8_t s_rfc1042_hdr[6] = { 0xAAU, 0xAAU, 0x03U, 0x00U, 0x00U, 0x00U };
 
-/* --------------------------------------------------------------------------
- * Compact IEEE 802.11i Michael MIC (for SoftAP TKIP GTK & Optional Legacy TKIP)
- * -------------------------------------------------------------------------- */
-
-static inline uint32_t rotl32(uint32_t v, uint8_t n) { return (v << n) | (v >> (32U - n)); }
-static inline uint32_t rotr32(uint32_t v, uint8_t n) { return (v >> n) | (v << (32U - n)); }
-static inline uint32_t xswap32(uint32_t v)           { return ((v & 0x00FF00FFU) << 8) | ((v & 0xFF00FF00U) >> 8); }
-
-static inline uint32_t get_le32(const uint8_t *p)
-{
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-
-static inline void put_le32(uint8_t *p, uint32_t v)
-{
-    p[0] = (uint8_t)(v & 0xFFU);
-    p[1] = (uint8_t)((v >> 8) & 0xFFU);
-    p[2] = (uint8_t)((v >> 16) & 0xFFU);
-    p[3] = (uint8_t)((v >> 24) & 0xFFU);
-}
-
-static void michael_block(uint32_t *l, uint32_t *r)
-{
-    *r ^= rotl32(*l, 17U); *l += *r;
-    *r ^= xswap32(*l);     *l += *r;
-    *r ^= rotl32(*l, 3U);  *l += *r;
-    *r ^= rotr32(*l, 2U);  *l += *r;
-}
-
-void n8_michael_mic(const uint8_t key[8], const uint8_t da[6], const uint8_t sa[6],
-                    uint8_t prio, const uint8_t *data, size_t len, uint8_t out_mic[8])
-{
-    uint32_t l = get_le32(key);
-    uint32_t r = get_le32(key + 4U);
-
-    /* Pseudo-header: DA(6) | SA(6) | prio(1) | 0,0,0(3) = 4 words */
-    uint8_t phdr[16];
-    memcpy(phdr, da, 6U);
-    memcpy(phdr + 6U, sa, 6U);
-    phdr[12] = prio;
-    phdr[13] = 0U;
-    phdr[14] = 0U;
-    phdr[15] = 0U;
-    for (uint8_t i = 0U; i < 16U; i += 4U) {
-        l ^= get_le32(&phdr[i]);
-        michael_block(&l, &r);
-    }
-
-    size_t pos = 0U;
-    while (pos + 4U <= len) {
-        l ^= get_le32(&data[pos]);
-        michael_block(&l, &r);
-        pos += 4U;
-    }
-
-    uint8_t tail[4] = { 0x5AU, 0U, 0U, 0U };
-    size_t rem = len - pos;
-    for (size_t i = 0U; i < rem; i++) {
-        tail[i] = data[pos + i];
-    }
-    tail[rem] = 0x5AU;
-    l ^= get_le32(tail);
-    michael_block(&l, &r);
-
-    /* Final zero padding word */
-    michael_block(&l, &r);
-
-    put_le32(out_mic, l);
-    put_le32(out_mic + 4U, r);
-}
-
 static void write_ccmp_hdr(uint8_t out[8], uint64_t pn, uint8_t key_idx)
 {
     out[0] = (uint8_t)(pn & 0xFFU);
@@ -123,6 +52,89 @@ static void write_tkip_hdr(uint8_t out[8], uint64_t tsc, uint8_t key_idx)
     out[5] = (uint8_t)((tsc >> 24) & 0xFFU);
     out[6] = (uint8_t)((tsc >> 32) & 0xFFU);
     out[7] = (uint8_t)((tsc >> 40) & 0xFFU);
+}
+
+/**
+ * @brief Extract a 48-bit CCMP Packet Number (PN) from an 8-byte CCMP header.
+ *
+ * @param iv Pointer to the 8-byte CCMP IV immediately following the MAC header.
+ * @return 48-bit little-endian CCMP packet number.
+ */
+uint64_t n8_ccmp_iv_to_pn(const uint8_t *iv)
+{
+    return (uint64_t)iv[0] |
+           ((uint64_t)iv[1] << 8) |
+           ((uint64_t)iv[4] << 16) |
+           ((uint64_t)iv[5] << 24) |
+           ((uint64_t)iv[6] << 32) |
+           ((uint64_t)iv[7] << 40);
+}
+
+/**
+ * @brief Extract a 48-bit TKIP Sequence Counter (TSC) from an 8-byte TKIP IV/EIV.
+ *
+ * @param iv Pointer to the 8-byte TKIP IV/EIV (iv[2]=TSC0, iv[0]=TSC1, iv[4..7]=TSC2..5).
+ * @return 48-bit TKIP sequence counter.
+ */
+static uint64_t n8_tkip_iv_to_tsc(const uint8_t *iv)
+{
+    return (uint64_t)iv[2] |
+           ((uint64_t)iv[0] << 8) |
+           ((uint64_t)iv[4] << 16) |
+           ((uint64_t)iv[5] << 24) |
+           ((uint64_t)iv[6] << 32) |
+           ((uint64_t)iv[7] << 40);
+}
+
+/**
+ * @brief Check and update a 64-packet sliding-window RX replay tracker.
+ *
+ * @param win Replay window state (bitmap == 0ULL indicates uninitialized).
+ * @param pn  48-bit PN/TSC extracted from the incoming frame.
+ * @return true if the frame is fresh (non-replay) and accepted; false if replayed/stale.
+ */
+bool n8_replay_win_accept(n8_replay_win_t *win, uint64_t pn)
+{
+    if (win->bitmap == 0ULL) {
+        win->max_pn = pn;
+        win->bitmap = 1ULL;
+        return true;
+    }
+    if (pn > win->max_pn) {
+        uint64_t delta = pn - win->max_pn;
+        win->bitmap = (delta >= N8_REPLAY_WIN_BITS) ? 1ULL : ((win->bitmap << delta) | 1ULL);
+        win->max_pn = pn;
+        return true;
+    }
+    uint64_t diff = win->max_pn - pn;
+    if (diff >= N8_REPLAY_WIN_BITS || ((win->bitmap >> diff) & 1ULL) != 0ULL) {
+        return false;
+    }
+    win->bitmap |= (1ULL << diff);
+    return true;
+}
+
+/**
+ * @brief Deduplicate retransmitted open-link data frames per TID.
+ *
+ * @param last_seq   Per-TID array of last accepted Sequence Control values.
+ * @param valid_mask Bitmask of TIDs with an initialized entry in last_seq.
+ * @param tid        Frame TID (0..7, or N8_NON_QOS_TID=8 for non-QoS).
+ * @param fc1        Second byte of 802.11 Frame Control (contains Retry bit).
+ * @param seq_ctrl   16-bit 802.11 Sequence Control field.
+ * @return true if frame should be accepted; false if it is a duplicate retry.
+ */
+static bool n8_open_seq_dedup(uint16_t last_seq[N8_REPLAY_TID_SLOTS], uint16_t *valid_mask,
+                              uint8_t tid, uint8_t fc1, uint16_t seq_ctrl)
+{
+    uint16_t bit = (uint16_t)(1U << tid);
+    if ((fc1 & IEEE80211_FC1_RETRY) != 0U && (*valid_mask & bit) != 0U &&
+        last_seq[tid] == seq_ctrl) {
+        return false;
+    }
+    last_seq[tid] = seq_ctrl;
+    *valid_mask |= bit;
+    return true;
 }
 
 /* --------------------------------------------------------------------------
@@ -186,9 +198,7 @@ static esp_err_t tx_eth_frame_on_worker(uint8_t vif, const uint8_t *eth, uint16_
 
     uint8_t hdr[52];
     uint16_t hdr_len = 24U;
-    uint8_t trailer[12];
     uint8_t trailer_len = 0U;
-    const uint8_t *trailer_ptr = NULL;
 
     esp_lmac_cipher_t cipher = ESP_LMAC_CIPHER_NONE;
     uint8_t key_idx = 0U;
@@ -204,10 +214,8 @@ static esp_err_t tx_eth_frame_on_worker(uint8_t vif, const uint8_t *eth, uint16_
                     : 0U;
     bool qos = false;
     uint64_t pn = 0ULL;
-    const uint8_t *tkip_mic_key = NULL;
 
     memset(hdr, 0, sizeof(hdr));
-    memset(trailer, 0, sizeof(trailer));
 
     if (vif == ESP_LMAC_VIF_STA) {
         if (g_n8.sta_state < N8_STA_ASSOC) {
@@ -238,7 +246,6 @@ static esp_err_t tx_eth_frame_on_worker(uint8_t vif, const uint8_t *eth, uint16_
         if (g_n8.sta_ptk_cipher != ESP_LMAC_CIPHER_NONE && (!is_eapol || g_n8.sta_state == N8_STA_RUN)) {
             cipher = (esp_lmac_cipher_t)g_n8.sta_ptk_cipher;
             pn = g_n8.sta_tx_pn++;
-            tkip_mic_key = g_n8.sta_tkip_tx_mic;
         }
     } else {
         /* SoftAP TX */
@@ -266,7 +273,6 @@ static esp_err_t tx_eth_frame_on_worker(uint8_t vif, const uint8_t *eth, uint16_
                 cipher = (esp_lmac_cipher_t)g_n8.ap_gtk_cipher;
                 key_idx = g_n8.ap_gtk_key_idx;
                 pn = g_n8.ap_gtk_pn++;
-                tkip_mic_key = g_n8.ap_gtk_tkip_mic;
             }
         } else {
             sta = n8_ap_find_sta(da);
@@ -292,7 +298,6 @@ static esp_err_t tx_eth_frame_on_worker(uint8_t vif, const uint8_t *eth, uint16_
                 cipher = (esp_lmac_cipher_t)sta->ptk_cipher;
                 key_idx = sta->ptk_key_idx;
                 pn = sta->tx_pn++;
-                tkip_mic_key = sta->tkip_tx_mic;
             }
         }
 
@@ -320,26 +325,12 @@ static esp_err_t tx_eth_frame_on_worker(uint8_t vif, const uint8_t *eth, uint16_
         write_ccmp_hdr(hdr + hdr_len, pn, key_idx);
         hdr_len = (uint16_t)(hdr_len + 8U);
         trailer_len = 8U; /* Hardware fills 8-byte CCMP MIC */
-        trailer_ptr = NULL;
     } else if (cipher == ESP_LMAC_CIPHER_TKIP) {
         hdr[1] |= IEEE80211_FC1_PROTECTED;
         write_tkip_hdr(hdr + hdr_len, pn, key_idx);
-        hdr_len = (uint16_t)(hdr_len + 8U);
-        if (tkip_mic_key != NULL) {
-            /* Compute Michael MIC over [RFC1042(6) + EtherType(2) + payload] */
-            uint8_t *mic_in = (uint8_t *)heap_caps_malloc(8U + payload_len, MALLOC_CAP_8BIT);
-            if (mic_in != NULL) {
-                memcpy(mic_in, s_rfc1042_hdr, 6U);
-                mic_in[6] = eth[12];
-                mic_in[7] = eth[13];
-                memcpy(mic_in + 8U, payload, payload_len);
-                n8_michael_mic(tkip_mic_key, da, sa, 0U, mic_in, (size_t)(8U + payload_len), trailer);
-                heap_caps_free(mic_in);
-            }
-        }
-        /* 8-byte Michael MIC + 4-byte hardware-filled TKIP ICV */
-        trailer_len = 12U;
-        trailer_ptr = trailer;
+        hdr_len = (uint16_t)(hdr_len + IEEE80211_TKIP_HDR_LEN);
+        /* Hardware computes 8-byte TKIP Michael MIC + 4-byte ICV (verified on live silicon) */
+        trailer_len = IEEE80211_TKIP_TRAILER_LEN;
     }
 
     /* Append 8-byte LLC/SNAP header (RFC1042 + original EtherType) into LMAC scratch */
@@ -361,7 +352,7 @@ static esp_err_t tx_eth_frame_on_worker(uint8_t vif, const uint8_t *eth, uint16_
     req.hdr_len = hdr_len;
     req.segs = (payload_len > 0U) ? &seg : NULL;
     req.seg_cnt = (payload_len > 0U) ? 1U : 0U;
-    req.trailer = trailer_ptr;
+    req.trailer = NULL;
     req.trailer_len = trailer_len;
     req.done_cb = done_cb;
     req.done_ctx = done_ctx;
@@ -615,35 +606,135 @@ static void handle_rx_data(esp_lmac_rx_buf_t *rx_buf)
         return;
     }
 
+    /* Drop frames flagged by WDEV hardware with TKIP Michael MIC failure (0xF5U) */
+    if (rx_buf->rx_ctrl != NULL &&
+        rx_buf->rx_ctrl->rxend_state == ESP_LMAC_RXSTATE_TKIP_MIC_FAIL) {
+        bool is_unicast = ((da[0] & N8_MAC_MCAST_BIT) == 0U);
+        esp_lmac_rx_free(rx_buf);
+        if (vif == ESP_LMAC_VIF_STA && g_n8.sta_state == N8_STA_RUN && is_prot) {
+            esp_lmac_cipher_t exp_c = is_unicast
+                                      ? (esp_lmac_cipher_t)g_n8.sta_ptk_cipher
+                                      : (esp_lmac_cipher_t)g_n8.sta_gtk_cipher;
+            if (exp_c == ESP_LMAC_CIPHER_TKIP &&
+                g_n8.wpa_cb != NULL && g_n8.wpa_cb->wpa_michael_mic_failure != NULL) {
+                (void)g_n8.wpa_cb->wpa_michael_mic_failure(is_unicast ? 1U : 0U);
+            }
+        } else if (vif == ESP_LMAC_VIF_AP) {
+            ESP_LOGW(TAG, "SoftAP TKIP MIC failure from %02x:%02x:%02x:%02x:%02x:%02x",
+                     sa[0], sa[1], sa[2], sa[3], sa[4], sa[5]);
+        }
+        return;
+    }
+
     /* Null-data / QoS-Null frames carry PM state only, no payload */
     if (subtype == IEEE80211_SUBTYPE_NULLFUNC || subtype == IEEE80211_SUBTYPE_QOS_NULL) {
         esp_lmac_rx_free(rx_buf);
         return;
     }
 
-    uint16_t hdr_len = 24U + (is_qos ? 2U : 0U);
+    /* Defensive A-MSDU drop guard (OSS does not support A-MSDU RX) */
+    if (is_qos && (flen < IEEE80211_QOS_HDR_LEN ||
+                   (frame[IEEE80211_HDR_LEN] & IEEE80211_QOS_AMSDU_BIT) != 0U)) {
+        esp_lmac_rx_free(rx_buf);
+        return;
+    }
+
+    uint16_t seq_ctrl = (uint16_t)((uint16_t)frame[IEEE80211_HDR_SEQ_OFF] |
+                                   ((uint16_t)frame[IEEE80211_HDR_SEQ_OFF + 1U] << 8));
+#ifndef CONFIG_ESP8266_OSS_WIFI_RX_DEFRAG_ENABLED
+    /* Drop fragmented MPDUs by default when RX defragmentation is disabled */
+    if ((fc1 & IEEE80211_FC1_MOREFRAG) != 0U || (seq_ctrl & IEEE80211_FRAG_NUM_MASK) != 0U) {
+        esp_lmac_rx_free(rx_buf);
+        return;
+    }
+#endif
+
+    /* Enforce Protected bit against expected link cipher (CVE-2020-26140) */
+    esp_lmac_cipher_t exp_cipher = ESP_LMAC_CIPHER_NONE;
+    if (vif == ESP_LMAC_VIF_STA) {
+        exp_cipher = ((da[0] & N8_MAC_MCAST_BIT) != 0U)
+                     ? (esp_lmac_cipher_t)g_n8.sta_gtk_cipher
+                     : (esp_lmac_cipher_t)g_n8.sta_ptk_cipher;
+    } else if (ap_sta != NULL) {
+        exp_cipher = (esp_lmac_cipher_t)ap_sta->ptk_cipher;
+    }
+
+    uint16_t hdr_len = IEEE80211_HDR_LEN + (is_qos ? IEEE80211_QOS_CTRL_LEN : 0U);
+    uint8_t tid = is_qos ? (uint8_t)(frame[IEEE80211_HDR_LEN] & IEEE80211_QOS_TID_MASK) : N8_NON_QOS_TID;
     uint16_t tail_strip = 0U;
     if (is_prot) {
-        if (flen < hdr_len + 8U) {
+        if (exp_cipher == ESP_LMAC_CIPHER_NONE) {
             esp_lmac_rx_free(rx_buf);
             return;
         }
-        uint8_t ext_iv = frame[hdr_len + 3U] & 0x20U;
-        if (ext_iv) {
-            /* CCMP (8-B IV + 8-B MIC) or TKIP (8-B IV + 8-B MIC + 4-B ICV) */
-            esp_lmac_cipher_t rx_c = ESP_LMAC_CIPHER_CCMP;
+        if (rx_buf->rx_ctrl != NULL && rx_buf->rx_ctrl->rxend_state != ESP_LMAC_RXSTATE_OK) {
+            esp_lmac_rx_free(rx_buf);
+            return;
+        }
+        if (flen < (uint16_t)(hdr_len + 8U)) {
+            esp_lmac_rx_free(rx_buf);
+            return;
+        }
+        const uint8_t *iv = frame + hdr_len;
+        uint8_t ext_iv = iv[3] & 0x20U;
+        if (exp_cipher == ESP_LMAC_CIPHER_CCMP || exp_cipher == ESP_LMAC_CIPHER_TKIP) {
+            if (ext_iv == 0U) {
+                esp_lmac_rx_free(rx_buf);
+                return;
+            }
+            uint64_t pn = (exp_cipher == ESP_LMAC_CIPHER_TKIP)
+                          ? n8_tkip_iv_to_tsc(iv)
+                          : n8_ccmp_iv_to_pn(iv);
+            n8_replay_win_t *rwin = NULL;
             if (vif == ESP_LMAC_VIF_STA) {
-                rx_c = ((da[0] & 1U) != 0U) ? (esp_lmac_cipher_t)g_n8.sta_gtk_cipher
-                                            : (esp_lmac_cipher_t)g_n8.sta_ptk_cipher;
-            } else if (ap_sta != NULL) {
-                rx_c = (esp_lmac_cipher_t)ap_sta->ptk_cipher;
+                if ((da[0] & N8_MAC_MCAST_BIT) != 0U) {
+                    uint8_t kidx = (uint8_t)((iv[3] >> 6) & 1U);
+                    rwin = &g_n8.sta_rx_gtk_pn[kidx];
+                } else {
+                    rwin = &g_n8.sta_rx_ptk_pn[tid];
+                }
+            } else {
+                rwin = &ap_sta->ptk_pn[tid];
+            }
+            if (!n8_replay_win_accept(rwin, pn)) {
+                esp_lmac_rx_free(rx_buf);
+                return;
             }
             hdr_len = (uint16_t)(hdr_len + 8U);
-            tail_strip = (rx_c == ESP_LMAC_CIPHER_TKIP) ? 12U : 8U;
+            tail_strip = (exp_cipher == ESP_LMAC_CIPHER_TKIP)
+                         ? IEEE80211_TKIP_TRAILER_LEN
+                         : IEEE80211_CCMP_MIC_LEN;
         } else {
             /* WEP (4-B IV + 4-B ICV) */
+            if (ext_iv != 0U) {
+                esp_lmac_rx_free(rx_buf);
+                return;
+            }
             hdr_len = (uint16_t)(hdr_len + 4U);
             tail_strip = 4U;
+        }
+    } else {
+        if (vif == ESP_LMAC_VIF_STA) {
+            if ((g_n8.sta_state == N8_STA_RUN && exp_cipher != ESP_LMAC_CIPHER_NONE) ||
+                (g_n8.sta_ptk_cipher != (uint8_t)ESP_LMAC_CIPHER_NONE)) {
+                esp_lmac_rx_free(rx_buf);
+                return;
+            }
+            if (!n8_open_seq_dedup(g_n8.sta_last_rx_seq, &g_n8.sta_last_rx_seq_valid,
+                                   tid, fc1, seq_ctrl)) {
+                esp_lmac_rx_free(rx_buf);
+                return;
+            }
+        } else {
+            if (ap_sta->ptk_cipher != (uint8_t)ESP_LMAC_CIPHER_NONE) {
+                esp_lmac_rx_free(rx_buf);
+                return;
+            }
+            if (!n8_open_seq_dedup(ap_sta->last_rx_seq, &ap_sta->last_rx_seq_valid,
+                                   tid, fc1, seq_ctrl)) {
+                esp_lmac_rx_free(rx_buf);
+                return;
+            }
         }
     }
 
@@ -734,6 +825,12 @@ void n8_data_rx_frame(esp_lmac_rx_buf_t *rx_buf)
 
     if (ftype == IEEE80211_FC_TYPE_DATA) {
         handle_rx_data(rx_buf);
+        return;
+    }
+
+    if (rx_buf->rx_ctrl != NULL &&
+        rx_buf->rx_ctrl->rxend_state == ESP_LMAC_RXSTATE_TKIP_MIC_FAIL) {
+        esp_lmac_rx_free(rx_buf);
         return;
     }
 

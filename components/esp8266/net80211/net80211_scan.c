@@ -24,6 +24,7 @@
 #define TAG "wifi_scan"
 
 extern size_t esp_wifi_scan_get_ap_num_max(void);
+extern const bool _g_esp_wifi_connect_open_router_when_pwd_is_set;
 
 /* Key management masks from wpa_supplicant/src/common/defs.h */
 #define SUPP_KEY_MGMT_IEEE8021X      (1 << 0)
@@ -745,6 +746,10 @@ n8_scan_entry_t *n8_scan_pick_best_ap(void)
     }
 
     bool has_pwd = (g_n8.sta_cfg.sta.password[0] != 0U);
+    bool sae_allowed = false;
+#ifdef CONFIG_ESP8266_WIFI_ENABLE_WPA3_SAE
+    sae_allowed = (g_n8.init_cfg.wpa3_sae_enable != 0U);
+#endif
     n8_scan_entry_t *best = NULL;
 
     for (uint16_t i = 0U; i < g_n8.scan_result_cnt; i++) {
@@ -765,6 +770,16 @@ n8_scan_entry_t *n8_scan_pick_best_ap(void)
             continue;
         }
         if (!has_pwd && e->rec.authmode != WIFI_AUTH_OPEN) {
+            continue;
+        }
+        if (has_pwd && e->rec.authmode == WIFI_AUTH_OPEN &&
+            !_g_esp_wifi_connect_open_router_when_pwd_is_set) {
+            continue;
+        }
+        if (g_n8.sta_cfg.sta.pmf_cfg.required && !e->pmf_capable) {
+            continue;
+        }
+        if (!sae_allowed && e->rec.authmode == WIFI_AUTH_WPA3_PSK) {
             continue;
         }
         if (best == NULL || e->rec.rssi > best->rec.rssi) {

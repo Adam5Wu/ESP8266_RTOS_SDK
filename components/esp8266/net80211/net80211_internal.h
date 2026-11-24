@@ -99,13 +99,61 @@ extern "C" {
 #define IEEE80211_AUTH_ALG_SHARED       1U
 #define IEEE80211_AUTH_ALG_SAE          3U
 
+#define IEEE80211_CAT_SPECTRUM_MGMT     0U
+#define IEEE80211_CAT_QOS               1U
+#define IEEE80211_CAT_DLS               2U
 #define IEEE80211_CAT_BA                3U
+#define IEEE80211_CAT_PUBLIC            4U
+#define IEEE80211_CAT_RRM               5U
+#define IEEE80211_CAT_FT                6U
+#define IEEE80211_CAT_HT                7U
 #define IEEE80211_CAT_SA_QUERY          8U
+#define IEEE80211_CAT_PROT_DUAL_PUB     9U
+#define IEEE80211_CAT_WNM               10U
+#define IEEE80211_CAT_UNPROT_WNM        11U
+#define IEEE80211_CAT_SELF_PROT         15U
+#define IEEE80211_CAT_WMM               17U
+#define IEEE80211_CAT_UNPROT_DMG        20U
+#define IEEE80211_CAT_VHT               21U
+#define IEEE80211_CAT_VENDOR_PROT       126U
+#define IEEE80211_CAT_VENDOR            127U
+#define IEEE80211_CAT_ERR_BIT           0x80U
+
 #define IEEE80211_BA_ACTION_ADDBA_REQ   0U
 #define IEEE80211_BA_ACTION_ADDBA_RESP  1U
 #define IEEE80211_BA_ACTION_DELBA       2U
 #define IEEE80211_SA_QUERY_REQ          0U
 #define IEEE80211_SA_QUERY_RESP         1U
+
+#define IEEE80211_HDR_LEN               24U
+#define IEEE80211_QOS_CTRL_LEN          2U
+#define IEEE80211_QOS_HDR_LEN           (IEEE80211_HDR_LEN + IEEE80211_QOS_CTRL_LEN)
+#define IEEE80211_QOS_TID_MASK          0x07U
+#define IEEE80211_QOS_AMSDU_BIT         0x80U
+#define IEEE80211_FRAG_NUM_MASK         0x000FU
+#define IEEE80211_HDR_ADDR1_OFF         4U
+#define IEEE80211_HDR_ADDR2_OFF         10U
+#define IEEE80211_HDR_ADDR3_OFF         16U
+#define IEEE80211_HDR_SEQ_OFF           22U
+#define IEEE80211_ADDR_LEN              6U
+#define IEEE80211_CCMP_HDR_LEN          8U
+#define IEEE80211_CCMP_MIC_LEN          8U
+#define IEEE80211_CCMP_KEY_LEN          16U
+#define IEEE80211_TKIP_HDR_LEN          8U
+#define IEEE80211_TKIP_MIC_LEN          8U
+#define IEEE80211_TKIP_ICV_LEN          4U
+#define IEEE80211_TKIP_TRAILER_LEN      (IEEE80211_TKIP_MIC_LEN + IEEE80211_TKIP_ICV_LEN)
+#define IEEE80211_PN_BYTES              6U
+#define IEEE80211_MMIE_LEN              18U
+#define IEEE80211_MMIE_IPN_OFF          4U
+#define IEEE80211_MMIE_MIC_OFF          10U
+
+#define N8_MAC_MCAST_BIT                0x01U
+#define N8_MAX_TID                      8U
+#define N8_NON_QOS_TID                  8U
+#define N8_REPLAY_TID_SLOTS             9U
+#define N8_GTK_REPLAY_SLOTS             2U
+#define N8_REPLAY_WIN_BITS              64U
 
 #define ETH_P_EAPOL_H                   0x88U
 #define ETH_P_EAPOL_L                   0x8EU
@@ -190,6 +238,14 @@ typedef enum {
     N8_PM_WAKING,
 } n8_pm_state_t;
 
+/** Compact 64-packet sliding-window RX PN/TSC replay state (0ULL bitmap == uninitialized). */
+typedef struct {
+    uint64_t max_pn;
+    uint64_t bitmap;
+} n8_replay_win_t;
+
+_Static_assert(sizeof(n8_replay_win_t) == 16U, "n8_replay_win_t must be 16 bytes");
+
 /* --------------------------------------------------------------------------
  * Mode-Scoped SoftAP Peer Slab & PS Buffer Node (Heap-Allocated on AP Start)
  * -------------------------------------------------------------------------- */
@@ -210,11 +266,11 @@ typedef struct {
     uint8_t            ptk_cipher;    /* esp_lmac_cipher_t */
     uint8_t            ptk_key_idx;
     esp_lmac_peer_id_t peer_id;
-    uint16_t           last_rx_seq;
+    uint16_t           last_rx_seq_valid;
+    uint16_t           last_rx_seq[N8_REPLAY_TID_SLOTS];
     uint32_t           last_rx_sec;
     uint64_t           tx_pn;
-    uint8_t            tkip_tx_mic[8];
-    uint8_t            tkip_rx_mic[8];
+    n8_replay_win_t    ptk_pn[N8_REPLAY_TID_SLOTS];
     void              *wpa_sm;        /* Supplicant per-STA SM from wpa_ap_join */
 } n8_ap_sta_t;
 
@@ -319,10 +375,22 @@ typedef struct {
     uint8_t           sta_gtk_cipher;     /* esp_lmac_cipher_t */
     uint8_t           sta_gtk_key_idx;
     esp_lmac_peer_id_t sta_peer_id;
+    uint8_t           sta_ptk_key[IEEE80211_CCMP_KEY_LEN];
+    uint8_t           sta_ptk_key_valid;
+    uint8_t           sta_rx_mgmt_pn_valid;
+    uint8_t           sta_rx_bip_ipn_valid;
+    uint8_t           sa_query_active;
+    uint8_t           sa_query_ticks;
+    uint8_t           sa_query_tid[2];
     uint16_t          sta_tx_seq;
+    uint16_t          sta_last_rx_seq_valid;
+    uint16_t          sta_last_rx_seq[N8_REPLAY_TID_SLOTS];
     uint64_t          sta_tx_pn;
-    uint8_t           sta_tkip_tx_mic[8];
-    uint8_t           sta_tkip_rx_mic[8];
+    uint64_t          sta_tx_mgmt_pn;
+    uint64_t          sta_rx_mgmt_pn;
+    uint64_t          sta_rx_bip_ipn;
+    n8_replay_win_t   sta_rx_ptk_pn[N8_REPLAY_TID_SLOTS];
+    n8_replay_win_t   sta_rx_gtk_pn[N8_GTK_REPLAY_SLOTS];
     uint8_t           sta_igtk_valid;
     wifi_wpa_igtk_t   sta_igtk;
     uint16_t          sta_state_ticks;    /* 100 ms ticks in current auth/assoc/4way state */
@@ -343,7 +411,6 @@ typedef struct {
     uint8_t           ap_gtk_cipher;      /* esp_lmac_cipher_t */
     uint8_t           ap_gtk_key_idx;
     uint64_t          ap_gtk_pn;
-    uint8_t           ap_gtk_tkip_mic[8]; /* AP TX Michael MIC key for GTK */
     uint16_t          ap_tx_seq;
     uint8_t           ap_dtim_count;
     uint8_t           ap_dtim_period;
@@ -481,8 +548,8 @@ void      n8_data_process_tx_queue(void);
 void      n8_data_rx_frame(esp_lmac_rx_buf_t *rx_buf);
 void      n8_data_sniffer_rx(const wifi_pkt_rx_ctrl_t *ctrl, const uint8_t *frame, uint16_t len);
 esp_err_t n8_data_tx_eth_ap_internal(const uint8_t *eth_frame, uint16_t len, bool bypass_ps);
-void      n8_michael_mic(const uint8_t key[8], const uint8_t da[6], const uint8_t sa[6],
-                         uint8_t prio, const uint8_t *data, size_t len, uint8_t out_mic[8]);
+bool      n8_replay_win_accept(n8_replay_win_t *win, uint64_t pn);
+uint64_t  n8_ccmp_iv_to_pn(const uint8_t *iv);
 
 /* net80211_pm.c */
 void      n8_pm_init(void);

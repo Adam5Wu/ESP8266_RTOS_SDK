@@ -397,16 +397,24 @@ int esp_wifi_set_sta_key_internal(int alg, u8 *addr, int key_idx, int set_tx,
     (void)seq_len;
     (void)key_entry_valid;
 
-    bool is_ptk = (set_tx != 0) && (addr != NULL) && ((addr[0] & 1U) == 0U);
+    bool is_ptk = (set_tx != 0) && (addr != NULL) && ((addr[0] & N8_MAC_MCAST_BIT) == 0U);
+    uint8_t kidx = (uint8_t)(key_idx & 3);
     if (alg == SUPP_WPA_ALG_NONE || key == NULL || key_len == 0U) {
         esp_lmac_key_clear(ESP_LMAC_VIF_STA,
                            is_ptk ? g_n8.sta_peer_id : ESP_LMAC_PEER_INVALID,
                            is_ptk ? ESP_LMAC_KEY_TYPE_PTK : ESP_LMAC_KEY_TYPE_GTK,
-                           (uint8_t)(key_idx & 3));
+                           kidx);
         if (is_ptk) {
             g_n8.sta_ptk_cipher = (uint8_t)ESP_LMAC_CIPHER_NONE;
+            memset(g_n8.sta_ptk_key, 0, sizeof(g_n8.sta_ptk_key));
+            g_n8.sta_ptk_key_valid = 0U;
+            g_n8.sta_tx_mgmt_pn = 0ULL;
+            g_n8.sta_rx_mgmt_pn = 0ULL;
+            g_n8.sta_rx_mgmt_pn_valid = 0U;
+            memset(g_n8.sta_rx_ptk_pn, 0, sizeof(g_n8.sta_rx_ptk_pn));
         } else {
             g_n8.sta_gtk_cipher = (uint8_t)ESP_LMAC_CIPHER_NONE;
+            memset(&g_n8.sta_rx_gtk_pn[kidx & 1U], 0, sizeof(g_n8.sta_rx_gtk_pn[0]));
         }
         return 0;
     }
@@ -419,14 +427,8 @@ int esp_wifi_set_sta_key_internal(int alg, u8 *addr, int key_idx, int set_tx,
     esp_lmac_key_type_t ktype = is_ptk ? ESP_LMAC_KEY_TYPE_PTK : ESP_LMAC_KEY_TYPE_GTK;
     esp_lmac_peer_id_t pid = is_ptk ? g_n8.sta_peer_id : ESP_LMAC_PEER_INVALID;
 
-    if (cipher == ESP_LMAC_CIPHER_TKIP && key_len >= 32U && is_ptk) {
-        /* STA TKIP: bytes 16..23 = TX MIC key, bytes 24..31 = RX MIC key */
-        memcpy(g_n8.sta_tkip_tx_mic, key + 16U, 8U);
-        memcpy(g_n8.sta_tkip_rx_mic, key + 24U, 8U);
-    }
-
     esp_err_t err = esp_lmac_key_set(ESP_LMAC_VIF_STA, pid, ktype,
-                                     (uint8_t)(key_idx & 3), cipher, key, (uint8_t)key_len);
+                                     kidx, cipher, key, (uint8_t)key_len);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "STA key_set failed: err=0x%x alg=%d idx=%d", (unsigned)err, alg, key_idx);
         return -1;
@@ -435,9 +437,21 @@ int esp_wifi_set_sta_key_internal(int alg, u8 *addr, int key_idx, int set_tx,
     if (is_ptk) {
         g_n8.sta_ptk_cipher = (uint8_t)cipher;
         g_n8.sta_tx_pn = 1ULL;
+        if (cipher == ESP_LMAC_CIPHER_CCMP && key_len >= IEEE80211_CCMP_KEY_LEN) {
+            memcpy(g_n8.sta_ptk_key, key, IEEE80211_CCMP_KEY_LEN);
+            g_n8.sta_ptk_key_valid = 1U;
+        } else {
+            memset(g_n8.sta_ptk_key, 0, sizeof(g_n8.sta_ptk_key));
+            g_n8.sta_ptk_key_valid = 0U;
+        }
+        g_n8.sta_tx_mgmt_pn = 1ULL;
+        g_n8.sta_rx_mgmt_pn = 0ULL;
+        g_n8.sta_rx_mgmt_pn_valid = 0U;
+        memset(g_n8.sta_rx_ptk_pn, 0, sizeof(g_n8.sta_rx_ptk_pn));
     } else {
         g_n8.sta_gtk_cipher = (uint8_t)cipher;
-        g_n8.sta_gtk_key_idx = (uint8_t)(key_idx & 3);
+        g_n8.sta_gtk_key_idx = kidx;
+        memset(&g_n8.sta_rx_gtk_pn[kidx & 1U], 0, sizeof(g_n8.sta_rx_gtk_pn[0]));
     }
     return 0;
 }
@@ -482,6 +496,10 @@ int esp_wifi_set_ap_key_internal(int alg, const u8 *addr, int idx, u8 *key, size
             if (sta != NULL) {
                 esp_lmac_key_clear(ESP_LMAC_VIF_AP, sta->peer_id, ESP_LMAC_KEY_TYPE_PTK, 0U);
                 sta->ptk_cipher = (uint8_t)ESP_LMAC_CIPHER_NONE;
+                if (g_n8.ap_cfg.ap.authmode != WIFI_AUTH_OPEN) {
+                    sta->authorized = 0U;
+                }
+                memset(sta->ptk_pn, 0, sizeof(sta->ptk_pn));
             }
         }
         return 0;
@@ -515,9 +533,6 @@ int esp_wifi_set_ap_key_internal(int alg, const u8 *addr, int idx, u8 *key, size
         g_n8.ap_gtk_cipher = (uint8_t)cipher;
         g_n8.ap_gtk_key_idx = (uint8_t)(idx & 3);
         g_n8.ap_gtk_pn = 1ULL;
-        if (cipher == ESP_LMAC_CIPHER_TKIP && key_len >= 24U) {
-            memcpy(g_n8.ap_gtk_tkip_mic, key + 16U, 8U);
-        }
         return 0;
     }
 
@@ -534,10 +549,7 @@ int esp_wifi_set_ap_key_internal(int alg, const u8 *addr, int idx, u8 *key, size
     sta->ptk_cipher = (uint8_t)cipher;
     sta->ptk_key_idx = (uint8_t)(idx & 3);
     sta->tx_pn = 1ULL;
-    if (cipher == ESP_LMAC_CIPHER_TKIP && key_len >= 32U) {
-        memcpy(sta->tkip_tx_mic, key + 16U, 8U);
-        memcpy(sta->tkip_rx_mic, key + 24U, 8U);
-    }
+    memset(sta->ptk_pn, 0, sizeof(sta->ptk_pn));
     return 0;
 }
 
@@ -548,6 +560,8 @@ int esp_wifi_set_igtk_internal(uint8_t if_index, const wifi_wpa_igtk_t *igtk)
     }
     g_n8.sta_igtk = *igtk;
     g_n8.sta_igtk_valid = 1U;
+    g_n8.sta_rx_bip_ipn = 0ULL;
+    g_n8.sta_rx_bip_ipn_valid = 0U;
     return ESP_OK;
 }
 
@@ -555,11 +569,11 @@ bool n8_verify_bip_mmie(const uint8_t *frame, uint16_t len)
 {
     /* IEEE 802.11w BIP-CMAC-128 MMIE is 18 bytes at end of broadcast mgmt frame:
      * [ID=76 (1B) | Len=16 (1B) | KeyID (2B) | IPN (6B) | MIC (8B)] */
-    if (!g_n8.sta_igtk_valid || len < 24U + 18U) {
+    if (!g_n8.sta_igtk_valid || len < IEEE80211_HDR_LEN + IEEE80211_MMIE_LEN) {
         return false;
     }
 
-    const uint8_t *mmie = frame + len - 18U;
+    const uint8_t *mmie = frame + len - IEEE80211_MMIE_LEN;
     if (mmie[0] != IEEE80211_IE_MMIE || mmie[1] != 16U) {
         return false;
     }
@@ -567,8 +581,20 @@ bool n8_verify_bip_mmie(const uint8_t *frame, uint16_t len)
         return false;
     }
 
+    /* Extract LE48 IPN and enforce strict monotonicity against replay */
+    const uint8_t *ipn_bytes = mmie + IEEE80211_MMIE_IPN_OFF;
+    uint64_t ipn = (uint64_t)ipn_bytes[0] |
+                   ((uint64_t)ipn_bytes[1] << 8) |
+                   ((uint64_t)ipn_bytes[2] << 16) |
+                   ((uint64_t)ipn_bytes[3] << 24) |
+                   ((uint64_t)ipn_bytes[4] << 32) |
+                   ((uint64_t)ipn_bytes[5] << 40);
+    if (g_n8.sta_rx_bip_ipn_valid != 0U && ipn <= g_n8.sta_rx_bip_ipn) {
+        return false;
+    }
+
     /* AAD (20 bytes): masked FC (2B) + A1 (6B) + A2 (6B) + A3 (6B) */
-    uint16_t body_len = (uint16_t)(len - 24U);
+    uint16_t body_len = (uint16_t)(len - IEEE80211_HDR_LEN);
     if (body_len > 256U) {
         return false;
     }
@@ -576,8 +602,8 @@ bool n8_verify_bip_mmie(const uint8_t *frame, uint16_t len)
     uint8_t bip_buf[20U + 256U];
     bip_buf[0] = (uint8_t)(frame[0] & 0xFFU);
     bip_buf[1] = (uint8_t)(frame[1] & ~(IEEE80211_FC1_RETRY | IEEE80211_FC1_PM | IEEE80211_FC1_MOREDATA));
-    memcpy(bip_buf + 2U, frame + 4U, 18U);
-    memcpy(bip_buf + 20U, frame + 24U, body_len);
+    memcpy(bip_buf + 2U, frame + IEEE80211_HDR_ADDR1_OFF, 18U);
+    memcpy(bip_buf + 20U, frame + IEEE80211_HDR_LEN, body_len);
     /* Zero the 8-byte MIC field inside MMIE before computing AES-128-CMAC */
     memset(bip_buf + 20U + body_len - 8U, 0, 8U);
 
@@ -586,7 +612,13 @@ bool n8_verify_bip_mmie(const uint8_t *frame, uint16_t len)
         return false;
     }
 
-    return (memcmp(mac, mmie + 10U, 8U) == 0);
+    if (memcmp(mac, mmie + IEEE80211_MMIE_MIC_OFF, 8U) != 0) {
+        return false;
+    }
+
+    g_n8.sta_rx_bip_ipn = ipn;
+    g_n8.sta_rx_bip_ipn_valid = 1U;
+    return true;
 }
 
 /* --------------------------------------------------------------------------

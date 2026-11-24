@@ -233,7 +233,8 @@ static bool IRAM_ATTR nmi_drain_rx(void)
         bool accept = reached_eof && (flen >= 10U) && (flen <= 2346U) && (!is_ampdu);
         if (accept && !g_lmac.sniffer_mode) {
             /* Match vendor wDev_ProcessFiq valid rxend_state check: 0, 0x32 ('2'), 0xF5 (-11) */
-            if (rx_state != 0x00U && rx_state != 0x32U && rx_state != 0xF5U) {
+            if (rx_state != LMAC_RXSTATE_OK && rx_state != LMAC_RXSTATE_ALT1 &&
+                rx_state != LMAC_RXSTATE_ALT2) {
                 accept = false;
             }
         }
@@ -360,6 +361,16 @@ void IRAM_ATTR lmac_tx_arm_hw_slot_fast(uint8_t q, lmac_tx_slot_t *slot)
     lmac_reg_write(LMAC_TXQ_CONF(q), (backoff & 0x3FFU) << 12);
 
     txq->launch_us = now_us;
+    if ((slot->hdr_buf[1] & LMAC_FC1_PROTECTED) != 0U &&
+        (slot->hw_key_slot & LMAC_KEY_SLOT_MASK) == 0U) {
+        uint8_t vif_idx = (slot->hw_key_slot >> 7) & 1U;
+        uint32_t creg = LMAC_WDEV_CRYPTO_CONF0 + ((uint32_t)vif_idx << 2);
+        uint32_t cval = lmac_reg_read(creg);
+        if ((cval & LMAC_CRYPTO_TX_ENC) == 0U) {
+            lmac_reg_write(creg, cval | LMAC_CRYPTO_TX_ENC);
+            g_lmac.sw_prot_bypass_vif = (uint8_t)(vif_idx + 1U);
+        }
+    }
     lmac_reg_write(LMAC_TXQ_LINK(q), lmac_reg_read(LMAC_TXQ_LINK(q)) | LMAC_TXQ_LINK_GO);
 }
 
@@ -410,6 +421,13 @@ static bool IRAM_ATTR nmi_handle_tx_done(uint32_t tx_status)
     slot->done_ok = ok;
     slot->done_ack_rssi = ack_rssi;
     slot->next = NULL;
+
+    /* If SW-protected TX bypassed HW crypto on the opposite active VIF, restore it on completion */
+    if (g_lmac.sw_prot_bypass_vif != 0U) {
+        lmac_reg_clr(LMAC_WDEV_CRYPTO_CONF0 + (((uint32_t)g_lmac.sw_prot_bypass_vif - 1U) << 2),
+                     LMAC_CRYPTO_TX_ENC);
+        g_lmac.sw_prot_bypass_vif = 0U;
+    }
 
     lmac_tx_slot_t *next_slot = txq->q_head;
     if (next_slot != NULL && !g_lmac.rf_closed) {
@@ -624,7 +642,7 @@ void lmac_mactim1_set_func(void (*cb)(void))
     s_mac_tim1_cb = cb;
 }
 
-void IRAM_ATTR lmac_mactim1_arm(uint32_t delta_us)
+void lmac_mactim1_arm(uint32_t delta_us)
 {
     vPortETSIntrLock();
     uint32_t lo = lmac_reg_read(LMAC_WDEV_TSF1_LO);
@@ -645,7 +663,7 @@ void lmac_mactim1_disarm(void)
     vPortETSIntrUnlock();
 }
 
-uint8_t IRAM_ATTR esp_lmac_get_channel(void)
+uint8_t esp_lmac_get_channel(void)
 {
     return g_lmac.cur_channel;
 }

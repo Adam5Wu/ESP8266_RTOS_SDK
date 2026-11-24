@@ -44,6 +44,11 @@ extern "C" {
 #define ESP_LMAC_RX_MATCH_STA_BSSID        (1U << 2)
 #define ESP_LMAC_RX_MATCH_AP_BSSID         (1U << 3)
 
+/** Hardware rxend_state status codes (wifi_pkt_rx_ctrl_t.rxend_state). */
+#define ESP_LMAC_RXSTATE_OK                0x00U /**< Normal valid MPDU */
+#define ESP_LMAC_RXSTATE_ALT1              0x32U /**< Vendor-accepted state '2' (pre-11w PMF mgmt) */
+#define ESP_LMAC_RXSTATE_TKIP_MIC_FAIL     0xF5U /**< Hardware TKIP Michael MIC failure (-11) */
+
 typedef uint8_t esp_lmac_vif_t;
 typedef uint8_t esp_lmac_peer_id_t;
 
