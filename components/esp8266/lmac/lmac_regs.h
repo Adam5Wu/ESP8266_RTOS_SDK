@@ -39,17 +39,17 @@ static inline __attribute__((always_inline)) void lmac_reg_write(uint32_t addr, 
     *(volatile uint32_t *)(uintptr_t)addr = val;
 }
 
-static inline void lmac_reg_set(uint32_t addr, uint32_t mask)
+static inline __attribute__((always_inline)) void lmac_reg_set(uint32_t addr, uint32_t mask)
 {
     lmac_reg_write(addr, lmac_reg_read(addr) | mask);
 }
 
-static inline void lmac_reg_clr(uint32_t addr, uint32_t mask)
+static inline __attribute__((always_inline)) void lmac_reg_clr(uint32_t addr, uint32_t mask)
 {
     lmac_reg_write(addr, lmac_reg_read(addr) & ~mask);
 }
 
-static inline void lmac_reg_rmw(uint32_t addr, uint32_t clr_mask, uint32_t set_mask)
+static inline __attribute__((always_inline)) void lmac_reg_rmw(uint32_t addr, uint32_t clr_mask, uint32_t set_mask)
 {
     lmac_reg_write(addr, (lmac_reg_read(addr) & ~clr_mask) | set_mask);
 }
@@ -81,6 +81,8 @@ static inline void lmac_reg_rmw(uint32_t addr, uint32_t clr_mask, uint32_t set_m
 #define LMAC_WDEV_RX_LAST_DESC      0x3FF20014U /* Last HW-completed RX lldesc */
 #define LMAC_WDEV_RX_CUR_DESC       0x3FF2001CU /* Current DMA-active RX lldesc (RO) */
 #define LMAC_WDEV_RX_STAT_INFO      0x3FF20038U /* Per-frame RX status byte */
+#define LMAC_RX_STAT_OK             0x00U       /* Valid legacy/control RX status on SNIFFER_END */
+#define LMAC_RX_STAT_SNIFFER_OK     0x41U       /* Valid non-AMPDU frame latched on SNIFFER_END */
 #define LMAC_WDEV_RX_FILTER_CTRL    0x3FF2006CU /* Bits 0..2 address match, bit 4 scan hold, bit 8..10 */
 #define LMAC_WDEV_RX_BUF_END        0x3FF2007CU /* Main RX frontdata end bound */
 #define LMAC_WDEV_RX_DESC_START     0x3FF20080U /* Main RX lldesc array start bound */

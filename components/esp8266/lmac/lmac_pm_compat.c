@@ -185,14 +185,34 @@ bool esp_lmac_process_events(uint8_t max_rx_batch, uint8_t max_tx_batch)
         }
     }
 
+    uint8_t snf_done = 0U;
+    while (g_lmac.snf_rd != g_lmac.snf_wr) {
+        if (g_lmac.snf_ring == NULL) {
+            g_lmac.snf_rd = g_lmac.snf_wr;
+            break;
+        }
+        uint8_t rd = g_lmac.snf_rd;
+        lmac_snf_pkt_t pkt = g_lmac.snf_ring[rd];
+        __asm__ volatile("memw" ::: "memory");
+        g_lmac.snf_rd = (uint8_t)((rd + 1U) & LMAC_SNF_RING_MASK);
+
+        lmac_dma_dispatch_sniffer_pkt(&pkt);
+        snf_done++;
+        if (max_rx_batch > 0U && snf_done >= max_rx_batch) {
+            break;
+        }
+    }
+
 #ifndef CONFIG_ESP8266_OSS_WIFI_MIN_NMI
     if (max_tx_batch == 0U || tx_done < max_tx_batch) {
         uint8_t rem = (max_tx_batch > 0U) ? (uint8_t)(max_tx_batch - tx_done) : 0U;
         tx_done = (uint8_t)(tx_done + lmac_tx_drain_done(rem));
     }
-    return (g_lmac.nmi_rd != g_lmac.nmi_wr) || (g_lmac.tx_done_head != NULL);
+    return (g_lmac.nmi_rd != g_lmac.nmi_wr) ||
+           (g_lmac.snf_rd != g_lmac.snf_wr) ||
+           (g_lmac.tx_done_head != NULL);
 #else
-    return (g_lmac.nmi_rd != g_lmac.nmi_wr);
+    return (g_lmac.nmi_rd != g_lmac.nmi_wr) || (g_lmac.snf_rd != g_lmac.snf_wr);
 #endif
 }
 
@@ -272,6 +292,7 @@ esp_err_t esp_lmac_set_channel(uint8_t primary_chan)
 
     phy_change_channel(mhz);
     chip_v6_rxmax_ext(0U);
+    g_lmac.rxmax_ext = 0U;
 
     /* Channel 14 (Japan) is CCK-only: remap ACK rate table to 11b rates */
     if (primary_chan == 14U) {
@@ -339,6 +360,19 @@ void esp_lmac_rf_close(void)
 bool esp_lmac_rf_is_closed(void)
 {
     return (g_lmac.rf_closed != 0U);
+}
+
+/**
+ * @brief Apply PHY close-range LNA attenuation level when changed since last channel tune.
+ *
+ * @param level Target rxmax_ext level (0 = normal, 3 = strong close-range attenuation).
+ */
+void esp_lmac_set_rxmax_ext(uint8_t level)
+{
+    if (g_lmac.rxmax_ext != level) {
+        chip_v6_rxmax_ext(level);
+        g_lmac.rxmax_ext = level;
+    }
 }
 
 uint64_t esp_lmac_get_tsf_us(esp_lmac_vif_t vif)

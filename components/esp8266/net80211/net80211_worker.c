@@ -40,7 +40,7 @@ net80211_ctx_t g_n8 = {0};
  * ISR Event Posting Hooks (LMAC SoftISR + esp_ets_timer FRC2 ISR)
  * -------------------------------------------------------------------------- */
 
-int IRAM_ATTR n8_lmac_notify_from_isr(void *ctx)
+int n8_lmac_notify_from_isr(void *ctx)
 {
     (void)ctx;
     if (g_n8.evt_queue == NULL || g_n8.lmac_evt_queued) {
@@ -55,7 +55,7 @@ int IRAM_ATTR n8_lmac_notify_from_isr(void *ctx)
     return (int)woken;
 }
 
-int IRAM_ATTR esp_wifi_post_timer_from_isr(void)
+int esp_wifi_post_timer_from_isr(void)
 {
     if (g_n8.evt_queue == NULL || g_n8.timer_evt_queued) {
         return 0;
@@ -151,7 +151,11 @@ void n8_send_system_event(system_event_t *evt)
     if (evt == NULL) {
         return;
     }
-    (void)esp_event_send(evt);
+    if (g_n8.init_cfg.event_handler != NULL) {
+        (void)g_n8.init_cfg.event_handler(evt);
+    } else {
+        (void)esp_event_send(evt);
+    }
 }
 
 /* --------------------------------------------------------------------------

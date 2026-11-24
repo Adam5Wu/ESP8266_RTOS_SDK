@@ -131,6 +131,12 @@ void lmac_dma_reprogram_regs(void)
 
 void lmac_dma_deinit(void)
 {
+    if (g_lmac.snf_ring != NULL) {
+        heap_caps_free(g_lmac.snf_ring);
+        g_lmac.snf_ring = NULL;
+    }
+    g_lmac.snf_wr = 0U;
+    g_lmac.snf_rd = 0U;
     if (g_lmac.hw_arena != NULL) {
         heap_caps_free(g_lmac.hw_arena);
         g_lmac.hw_arena = NULL;
@@ -254,5 +260,27 @@ void lmac_dma_dispatch_rx_evt(const lmac_nmi_evt_t *ev)
         g_lmac.cbs.on_rx_frame(g_lmac.cbs.ctx, rb);
     } else {
         esp_lmac_rx_free(rb);
+    }
+}
+
+/**
+ * @brief Calibrate RSSI and deliver an NMI-captured LMAC_INT_SNIFFER_END packet.
+ *
+ * @param pkt Local copy of the 128-byte sniffer ring entry (header + up to 112-B frame).
+ */
+void lmac_dma_dispatch_sniffer_pkt(lmac_snf_pkt_t *pkt)
+{
+    if (pkt == NULL || pkt->flen < 10U) {
+        return;
+    }
+
+    /* Convert hardware raw RSSI (byte 0) to calibrated dBm (raw - 96, matching ppProcessRxPktHdr) */
+    pkt->raw[0] = (uint8_t)((int8_t)pkt->raw[0] - 96);
+    g_lmac.stats.rx_delivered++;
+
+    if (g_lmac.sniffer_mode != 0U && g_lmac.cbs.on_sniffer_frame != NULL) {
+        const wifi_pkt_rx_ctrl_t *ctrl = (const wifi_pkt_rx_ctrl_t *)(const void *)pkt->raw;
+        const uint8_t *frame = pkt->raw + sizeof(wifi_pkt_rx_ctrl_t);
+        g_lmac.cbs.on_sniffer_frame(g_lmac.cbs.ctx, ctrl, frame, pkt->flen);
     }
 }

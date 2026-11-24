@@ -175,6 +175,7 @@ uint8_t   esp_lmac_get_channel(void);
 void      esp_lmac_rf_open(void);
 void      esp_lmac_rf_close(void);
 bool      esp_lmac_rf_is_closed(void);
+void      esp_lmac_set_rxmax_ext(uint8_t level);
 
 /* Peer / Rate Control (TRC) & Hardware Crypto Key Slots (LMAC-managed 0..24) */
 esp_err_t esp_lmac_peer_alloc_ap_pool(uint8_t max_ap_peers);

@@ -27,6 +27,7 @@
 #define TAG "lmac_hw"
 
 extern uint32_t WDEV_INTEREST_EVENT;
+extern volatile uint8_t NMIIrqIsOn;
 
 static const uint8_t s_bcast_mac[6] = { 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU };
 
@@ -731,6 +732,18 @@ esp_err_t esp_lmac_sniffer_enable(uint32_t filter_mask, uint32_t ctrl_filter_mas
         return ESP_OK;
     }
 
+    if (g_lmac.snf_ring == NULL) {
+        lmac_snf_pkt_t *ring = (lmac_snf_pkt_t *)heap_caps_zalloc(
+            LMAC_SNF_RING_SIZE * sizeof(lmac_snf_pkt_t), MALLOC_CAP_8BIT);
+        if (ring == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
+        g_lmac.snf_wr = 0U;
+        g_lmac.snf_rd = 0U;
+        __asm__ volatile("memw" ::: "memory");
+        g_lmac.snf_ring = ring;
+    }
+
     g_lmac.sniffer_mode = 1U;
 
     /* Ensure RX option bit 18 stays set and bypass hardware crypto into raw sniffer capture */
@@ -776,6 +789,17 @@ void esp_lmac_sniffer_disable(void)
     vPortETSIntrUnlock();
 
     g_lmac.sniffer_mode = 0U;
+    __asm__ volatile("memw" ::: "memory");
+    while (NMIIrqIsOn != 0U) {
+    }
+    lmac_snf_pkt_t *old_ring = g_lmac.snf_ring;
+    g_lmac.snf_ring = NULL;
+    g_lmac.snf_wr = 0U;
+    g_lmac.snf_rd = 0U;
+    __asm__ volatile("memw" ::: "memory");
+    if (old_ring != NULL) {
+        heap_caps_free(old_ring);
+    }
 
     /* Restore MAC0/BSSID0 filters & normal RX filter control */
     lmac_reg_set(LMAC_WDEV_RX_FILTER_CTRL, 0x00000707U);

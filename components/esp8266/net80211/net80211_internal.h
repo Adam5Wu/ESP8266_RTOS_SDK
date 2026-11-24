@@ -94,6 +94,19 @@ extern "C" {
 #define IEEE80211_IE_HT_OP              61U
 #define IEEE80211_IE_MMIE               76U
 #define IEEE80211_IE_VENDOR             221U
+#define IEEE80211_IE_HDR_LEN            2U
+#define IEEE80211_OUI_MS_0              0x00U
+#define IEEE80211_OUI_MS_1              0x50U
+#define IEEE80211_OUI_MS_2              0xF2U
+#define IEEE80211_OUI_TYPE_WPA          0x01U
+#define IEEE80211_OUI_TYPE_WMM          0x02U
+#define IEEE80211_OUI_TYPE_WPS          0x04U
+#define IEEE80211_WMM_SUBTYPE_INFO      0x00U
+#define IEEE80211_WMM_SUBTYPE_PARAM     0x01U
+#define IEEE80211_WMM_VERSION           0x01U
+#define IEEE80211_WMM_IE_MIN_BODY_LEN   7U
+#define IEEE80211_WMM_INFO_IE_LEN       9U
+#define IEEE80211_WMM_PARAM_IE_LEN      26U
 
 #define IEEE80211_AUTH_ALG_OPEN         0U
 #define IEEE80211_AUTH_ALG_SHARED       1U
@@ -154,6 +167,18 @@ extern "C" {
 #define N8_REPLAY_TID_SLOTS             9U
 #define N8_GTK_REPLAY_SLOTS             2U
 #define N8_REPLAY_WIN_BITS              64U
+#define N8_FREQ_OFFSET_INVALID          ((int16_t)0x7FFF)
+#define N8_RSSI_THRESHOLD_MIN           (-100)
+#define N8_RSSI_THRESHOLD_MAX           0
+#define N8_STA_MIN_INACTIVE_SEC         3U
+#define N8_AP_MIN_INACTIVE_SEC          10U
+#define N8_VND_IE_TYPE_COUNT            5U
+#define N8_VND_IE_ID_COUNT              2U
+#define N8_VND_IE_MIN_LEN               4U
+
+typedef struct {
+    uint8_t *slots[N8_VND_IE_TYPE_COUNT][N8_VND_IE_ID_COUNT];
+} n8_vendor_ie_table_t;
 
 #define ETH_P_EAPOL_H                   0x88U
 #define ETH_P_EAPOL_L                   0x8EU
@@ -291,6 +316,7 @@ typedef struct {
     uint16_t          rate_mask_11bg;
     uint8_t           ht_mcs_mask;
     uint8_t           ht_cap;
+    uint8_t           wmm_cap;
     uint8_t           pmf_capable;
     uint8_t           pmf_required;
     uint8_t           akm_sae;
@@ -337,6 +363,7 @@ typedef struct {
     uint32_t          event_mask;
     uint16_t          inactive_sec[2];
     int32_t           rssi_threshold;
+    uint8_t           rssi_thresh_armed;
     uint8_t           user_init_flag;
 
     /* Derived STA PMK & SSID helper (for wpa_supplicant glue) */
@@ -361,6 +388,7 @@ typedef struct {
     uint16_t          sta_beacon_int;
     uint8_t           sta_dtim_period;
     uint8_t           sta_authmode;       /* wifi_auth_mode_t */
+    uint8_t           sta_beacon_authmode;/* Advertised AP authmode from beacon/probe */
     uint8_t           sta_supp_authmode;  /* WPA2_AUTH_PSK / WPA3_AUTH_PSK / etc. */
     uint8_t           sta_wpa_proto;      /* 1=WPA, 2=RSN */
     uint8_t           sta_pairwise_cipher;/* wifi_cipher_type_t */
@@ -369,6 +397,12 @@ typedef struct {
     uint8_t           sta_pmf_active;
     uint8_t           sta_ht_active;
     uint8_t           sta_qos_active;
+    uint8_t           sta_ap_wps;
+    uint8_t           sta_ap_phy_11b;
+    uint8_t           sta_ap_phy_11g;
+    uint8_t           sta_tsf_valid;
+    uint8_t           sta_rxmax_ext_state;
+    int16_t           sta_last_freq_offset;
     uint8_t           sta_sae_seq;        /* 1=Commit, 2=Confirm */
     uint8_t           sta_auth_retries;
     uint8_t           sta_ptk_cipher;     /* esp_lmac_cipher_t */
@@ -389,19 +423,23 @@ typedef struct {
     uint64_t          sta_tx_mgmt_pn;
     uint64_t          sta_rx_mgmt_pn;
     uint64_t          sta_rx_bip_ipn;
+    int64_t           sta_tsf_diff_us;
     n8_replay_win_t   sta_rx_ptk_pn[N8_REPLAY_TID_SLOTS];
     n8_replay_win_t   sta_rx_gtk_pn[N8_GTK_REPLAY_SLOTS];
     uint8_t           sta_igtk_valid;
+    uint8_t           sta_scan_connect_pass; /* 0 = cached/hint chan probe, 1 = full sweep */
     wifi_wpa_igtk_t   sta_igtk;
     uint16_t          sta_state_ticks;    /* 100 ms ticks in current auth/assoc/4way state */
-    uint16_t          sta_bcn_miss_ticks; /* 100 ms ticks since last AP beacon */
-    uint8_t           sta_scan_connect_pass; /* 0 = cached/hint chan probe, 1 = full sweep */
+    uint32_t          sta_bcn_miss_ticks; /* 100 ms ticks since last AP beacon */
 
-    /* STA Modem Sleep (Milestone 6C) */
+    /* STA Modem Sleep (TSF-synced us wake timer + pm_config) */
     n8_pm_state_t     pm_state;
     uint16_t          pm_idle_ticks;      /* 100 ms idle ticks */
     uint32_t          pm_wake_time_us;
     uint32_t          pm_last_bcn_us;
+    ETSTimer          pm_wake_timer;
+    esp_pm_config_t   pm_cfg;
+    uint8_t           pm_timer_inited;
 
     /* SoftAP state (peer slab heap-allocated only while AP/APSTA active) */
     uint8_t           ap_running;
@@ -461,6 +499,7 @@ typedef struct {
     wifi_sta_rx_probe_req_t probe_req_cb;
     esp_vendor_ie_cb_t      vendor_ie_cb;
     void                   *vendor_ie_ctx;
+    n8_vendor_ie_table_t   *vendor_ies;
     wifi_rxcb_t             rxcb[2];
     n8_tx_job_t             tx_jobs[N8_TX_RING_SIZE];
     uint8_t                 tx_q_head;
@@ -469,6 +508,12 @@ typedef struct {
 } net80211_ctx_t;
 
 extern net80211_ctx_t g_n8;
+
+/** @brief Return true when QoS/WMM is enabled via init_cfg.qos_enable or ampdu_rx_enable. */
+static inline bool n8_qos_cfg_enabled(void)
+{
+    return (g_n8.init_cfg.qos_enable != 0U) || (g_n8.init_cfg.ampdu_rx_enable != 0U);
+}
 
 /* --------------------------------------------------------------------------
  * Internal Module Prototypes
@@ -499,6 +544,9 @@ void      n8_derive_pmk_eager(const uint8_t *ssid, size_t ssid_len, const uint8_
 
 /* net80211_supp_glue.c */
 void      n8_supp_clear_appies(void);
+void      n8_vendor_ie_free_all(void);
+uint16_t  n8_append_vendor_ies(wifi_vendor_ie_type_t type, uint8_t *out, uint16_t off,
+                               uint16_t max_len);
 const uint8_t *n8_supp_get_ie_bytes(uint8_t type, uint16_t *out_len);
 bool      n8_verify_bip_mmie(const uint8_t *frame, uint16_t len);
 esp_lmac_cipher_t n8_wifi_cipher_to_lmac(wifi_cipher_type_t c);
@@ -509,7 +557,11 @@ esp_err_t n8_scan_start_internal(const wifi_scan_config_t *cfg, bool for_connect
                                  uint8_t single_ch);
 void      n8_scan_stop_internal(bool post_event);
 void      n8_scan_free_results(void);
-void      n8_scan_rx_beacon_or_probe(const wifi_pkt_rx_ctrl_t *ctrl,
+wifi_auth_mode_t n8_parse_ap_authmode(uint16_t capinfo, const uint8_t *rsn_ie, uint16_t rsn_len,
+                                      const uint8_t *wpa_ie, uint16_t wpa_len,
+                                      wifi_wpa_ie_t *rsn_out, wifi_wpa_ie_t *wpa_out,
+                                      bool *rsn_ok_out, bool *wpa_ok_out);
+void      n8_scan_rx_beacon_or_probe(const wifi_pkt_rx_ctrl_t *ctrl, int16_t freq_offset,
                                      const uint8_t *frame, uint16_t len);
 n8_scan_entry_t *n8_scan_pick_best_ap(void);
 
@@ -521,7 +573,8 @@ void      n8_sta_disconnect(uint8_t reason, bool send_deauth, bool notify_event)
 void      n8_sta_on_scan_done(void);
 void      n8_sta_on_auth_done(void);
 void      n8_sta_on_tick_100ms(void);
-void      n8_sta_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, const uint8_t *frame, uint16_t len);
+void      n8_sta_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, int16_t freq_offset,
+                         const uint8_t *frame, uint16_t len);
 uint16_t  n8_sta_next_seq(void);
 
 /* net80211_ap.c */
@@ -553,7 +606,12 @@ uint64_t  n8_ccmp_iv_to_pn(const uint8_t *iv);
 
 /* net80211_pm.c */
 void      n8_pm_init(void);
+void      n8_pm_deinit(void);
 void      n8_pm_on_connect(void);
+
+/* net80211_api.c */
+void      n8_apply_tx_power_limit(void);
+void      n8_sync_country_power(void);
 void      n8_pm_on_disconnect(void);
 void      n8_pm_on_activity(void);
 void      n8_pm_on_beacon_rx(const uint8_t *frame, uint16_t len);

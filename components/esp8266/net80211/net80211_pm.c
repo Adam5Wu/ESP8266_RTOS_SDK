@@ -24,8 +24,95 @@
 
 #define TAG "wifi_pm"
 
-#define N8_PM_IDLE_ENTER_TICKS  3U    /* 300 ms idle before entering modem sleep */
-#define N8_PM_EARLY_WAKE_US     6000U /* Wake RF 6 ms before expected TBTT */
+extern void ets_timer_arm_us(ETSTimer *ptimer, uint32_t u_seconds, bool repeat_flag);
+
+#define N8_PM_IDLE_ENTER_TICKS  3U          /* 300 ms idle before entering modem sleep */
+#define N8_PM_EARLY_WAKE_US     3000U       /* Default 3 ms early wake before expected TBTT */
+#define N8_PM_DEFAULT_BCN_INT_TU 100U
+#define N8_PM_TU_TO_US          1024U
+#define N8_PM_MAX_SLEEP_MULT    10U
+#define N8_PM_MIN_SLEEP_US      1000U
+#define N8_PM_MAX_SLEEP_US      0x198A5759U /* Hard ets_timer_arm_us ceiling */
+
+/**
+ * @brief One-shot worker timer callback waking RF prior to the target AP TBTT.
+ *
+ * @param arg Unused callback context.
+ */
+static void pm_wake_timer_cb(void *arg)
+{
+    (void)arg;
+    if (g_n8.pm_state == N8_PM_SLEEPING && g_n8.sta_state == N8_STA_RUN &&
+        g_n8.mode == WIFI_MODE_STA && !g_n8.scan_active &&
+        g_n8.ps_type != WIFI_PS_NONE && !esp_lmac_ps_is_locked()) {
+        esp_lmac_rf_open();
+        g_n8.pm_state = N8_PM_WAKING;
+        g_n8.pm_idle_ticks = 0U;
+    }
+}
+
+/**
+ * @brief Compute the next TSF-aligned modem-sleep duration in microseconds.
+ *
+ * Honors WIFI_PS_MAX_MODEM listen_interval or WIFI_PS_MIN_MODEM DTIM period,
+ * aligns to synced AP TSF modulo (mult * beacon_interval_us), subtracts the
+ * early-wake margin, and clamps within ets_timer_arm_us() bounds.
+ *
+ * @return Sleep duration in microseconds.
+ */
+static uint32_t pm_calc_sleep_interval_us(void)
+{
+    uint32_t bi_us = (uint32_t)(g_n8.sta_beacon_int ? g_n8.sta_beacon_int : N8_PM_DEFAULT_BCN_INT_TU) *
+                     N8_PM_TU_TO_US;
+    uint32_t mult = (g_n8.ps_type == WIFI_PS_MAX_MODEM && g_n8.sta_cfg.sta.listen_interval > 1U)
+                    ? g_n8.sta_cfg.sta.listen_interval
+                    : (g_n8.sta_dtim_period ? g_n8.sta_dtim_period : 1U);
+    if (mult > N8_PM_MAX_SLEEP_MULT) {
+        mult = N8_PM_MAX_SLEEP_MULT;
+    }
+
+    uint64_t period_us = (uint64_t)bi_us * (uint64_t)mult;
+    uint32_t early_us = (g_n8.pm_cfg.max_bcn_early_ms >= 2U && g_n8.pm_cfg.max_bcn_early_ms <= 15U)
+                        ? ((uint32_t)g_n8.pm_cfg.max_bcn_early_ms * 1000U)
+                        : N8_PM_EARLY_WAKE_US;
+
+    uint64_t sleep_u64 = period_us;
+    if (g_n8.sta_tsf_valid != 0U && period_us > 0ULL) {
+        uint64_t synced_tsf = esp_lmac_get_tsf_us(ESP_LMAC_VIF_STA) + (uint64_t)g_n8.sta_tsf_diff_us;
+        sleep_u64 = period_us - (synced_tsf % period_us);
+        if (sleep_u64 <= (uint64_t)early_us + N8_PM_MIN_SLEEP_US) {
+            sleep_u64 += (uint64_t)bi_us;
+        }
+    }
+
+    if (sleep_u64 > (uint64_t)early_us + N8_PM_MIN_SLEEP_US) {
+        sleep_u64 -= early_us;
+    } else {
+        sleep_u64 = N8_PM_MIN_SLEEP_US;
+    }
+    if (sleep_u64 > N8_PM_MAX_SLEEP_US) {
+        sleep_u64 = N8_PM_MAX_SLEEP_US;
+    }
+    return (uint32_t)sleep_u64;
+}
+
+/**
+ * @brief Arm the one-shot microsecond wake timer and power-gate RF for modem sleep.
+ */
+static void pm_enter_sleep(void)
+{
+    uint32_t sleep_us = pm_calc_sleep_interval_us();
+    g_n8.pm_wake_time_us = (uint32_t)esp_timer_get_time() + sleep_us;
+    g_n8.pm_state = N8_PM_SLEEPING;
+
+    if (!g_n8.pm_timer_inited) {
+        ets_timer_setfn(&g_n8.pm_wake_timer, pm_wake_timer_cb, NULL);
+        g_n8.pm_timer_inited = 1U;
+    }
+    ets_timer_disarm(&g_n8.pm_wake_timer);
+    ets_timer_arm_us(&g_n8.pm_wake_timer, sleep_us, false);
+    esp_lmac_rf_close();
+}
 
 static void pm_null_done_cb(void *ctx, const esp_lmac_tx_status_t *st)
 {
@@ -38,20 +125,7 @@ static void pm_null_done_cb(void *ctx, const esp_lmac_tx_status_t *st)
     }
     if (st->ok && g_n8.sta_state == N8_STA_RUN && g_n8.mode == WIFI_MODE_STA &&
         g_n8.ps_type != WIFI_PS_NONE && !esp_lmac_ps_is_locked() && esp_lmac_tx_is_idle()) {
-        uint32_t bi_us = (uint32_t)(g_n8.sta_beacon_int ? g_n8.sta_beacon_int : 100U) * 1024U;
-        uint32_t mult = (g_n8.ps_type == WIFI_PS_MAX_MODEM && g_n8.sta_cfg.sta.listen_interval > 1U)
-                        ? g_n8.sta_cfg.sta.listen_interval
-                        : (g_n8.sta_dtim_period ? g_n8.sta_dtim_period : 1U);
-        if (mult > 10U) {
-            mult = 10U;
-        }
-        uint32_t sleep_us = bi_us * mult;
-        if (sleep_us > N8_PM_EARLY_WAKE_US) {
-            sleep_us -= N8_PM_EARLY_WAKE_US;
-        }
-        g_n8.pm_wake_time_us = (uint32_t)esp_timer_get_time() + sleep_us;
-        g_n8.pm_state = N8_PM_SLEEPING;
-        esp_lmac_rf_close();
+        pm_enter_sleep();
     } else {
         g_n8.pm_state = N8_PM_AWAKE;
     }
@@ -107,6 +181,26 @@ void n8_pm_init(void)
     g_n8.pm_idle_ticks = 0U;
     g_n8.pm_wake_time_us = 0U;
     g_n8.pm_last_bcn_us = 0U;
+    g_n8.pm_timer_inited = 0U;
+    g_n8.pm_cfg.max_bcn_early_ms = 4U;
+    g_n8.pm_cfg.max_bcn_timeout_ms = 24U;
+    g_n8.pm_cfg.wait_time = 20U;
+    g_n8.pm_cfg.wait_tx_cnt = 2U;
+    g_n8.pm_cfg.wait_rx_bdata_cnt = 2U;
+    g_n8.pm_cfg.wait_rx_udata_cnt = 4U;
+    g_n8.pm_cfg.recv_bdata = true;
+}
+
+/**
+ * @brief Disarm and release the modem-sleep wake timer during Wi-Fi deinit.
+ */
+void n8_pm_deinit(void)
+{
+    if (g_n8.pm_timer_inited != 0U) {
+        ets_timer_disarm(&g_n8.pm_wake_timer);
+        ets_timer_done(&g_n8.pm_wake_timer);
+        g_n8.pm_timer_inited = 0U;
+    }
 }
 
 void n8_pm_on_connect(void)
@@ -118,6 +212,9 @@ void n8_pm_on_connect(void)
 
 void n8_pm_on_disconnect(void)
 {
+    if (g_n8.pm_timer_inited != 0U) {
+        ets_timer_disarm(&g_n8.pm_wake_timer);
+    }
     if (esp_lmac_rf_is_closed()) {
         esp_lmac_rf_open();
     }
@@ -135,6 +232,9 @@ void n8_pm_wake_for_tx(void)
     g_n8.pm_idle_ticks = 0U;
     if (g_n8.pm_state == N8_PM_AWAKE && !esp_lmac_rf_is_closed()) {
         return;
+    }
+    if (g_n8.pm_timer_inited != 0U) {
+        ets_timer_disarm(&g_n8.pm_wake_timer);
     }
 
     if (esp_lmac_rf_is_closed()) {
@@ -206,12 +306,8 @@ void n8_pm_on_beacon_rx(const uint8_t *frame, uint16_t len)
             pm_send_nullfunc(false);
         } else if (g_n8.ps_type != WIFI_PS_NONE && g_n8.mode == WIFI_MODE_STA &&
                    !esp_lmac_ps_is_locked() && esp_lmac_tx_is_idle()) {
-            /* Nothing buffered -> return to RF sleep immediately */
-            uint32_t bi_us = (uint32_t)(g_n8.sta_beacon_int ? g_n8.sta_beacon_int : 100U) * 1024U;
-            uint32_t sleep_us = (bi_us > N8_PM_EARLY_WAKE_US) ? (bi_us - N8_PM_EARLY_WAKE_US) : bi_us;
-            g_n8.pm_wake_time_us = (uint32_t)esp_timer_get_time() + sleep_us;
-            g_n8.pm_state = N8_PM_SLEEPING;
-            esp_lmac_rf_close();
+            /* Nothing buffered -> return to TSF-aligned RF sleep immediately */
+            pm_enter_sleep();
         } else {
             g_n8.pm_state = N8_PM_AWAKE;
         }
@@ -237,6 +333,9 @@ void n8_pm_on_tick_100ms(void)
     if (g_n8.pm_state == N8_PM_SLEEPING) {
         int32_t rem = (int32_t)(g_n8.pm_wake_time_us - (uint32_t)esp_timer_get_time());
         if (rem <= 0) {
+            if (g_n8.pm_timer_inited != 0U) {
+                ets_timer_disarm(&g_n8.pm_wake_timer);
+            }
             esp_lmac_rf_open();
             g_n8.pm_state = N8_PM_WAKING;
             g_n8.pm_idle_ticks = 0U;

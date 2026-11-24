@@ -331,6 +331,25 @@ esp_err_t esp_lmac_tx_submit(const esp_lmac_tx_req_t *req)
         return ESP_ERR_INVALID_SIZE;
     }
 
+    /*
+     * Resolve HW crypto key slot before allocating a TX slot so a missing key
+     * returns ESP_ERR_NOT_FOUND cleanly instead of leaking plaintext with Protected=1.
+     * When SW crypto already set FC Protected=1 (cipher == NONE), steer hw_key_slot
+     * to the opposite VIF's CONF register so WDEV TX bypasses HW encryption.
+     */
+    uint8_t hw_key_slot;
+    if (req->cipher == ESP_LMAC_CIPHER_NONE && req->hdr_len >= 2U &&
+        (req->hdr[1] & LMAC_FC1_PROTECTED) != 0U) {
+        hw_key_slot = (req->vif == ESP_LMAC_VIF_AP) ? 0x00U : LMAC_KEY_SLOT_AP_BIT;
+    } else if (req->cipher == ESP_LMAC_CIPHER_NONE) {
+        hw_key_slot = 0U;
+    } else {
+        hw_key_slot = lmac_crypto_lookup_tx_slot(req->vif, req->peer_id, req->cipher, req->key_idx);
+        if (hw_key_slot == 0U) {
+            return ESP_ERR_NOT_FOUND;
+        }
+    }
+
     lmac_tx_slot_t *slot = tx_slot_alloc();
     if (slot == NULL) {
         return ESP_ERR_NO_MEM;
@@ -401,20 +420,7 @@ esp_err_t esp_lmac_tx_submit(const esp_lmac_tx_req_t *req)
     slot->max_retries = ((req->flags & ESP_LMAC_TX_FLAG_NO_ACK) != 0U)
                         ? 0U
                         : LMAC_TX_DEFAULT_MAX_RETRIES;
-    /*
-     * When software crypto already set FC Protected=1 (cipher == NONE, e.g. 802.11w
-     * SW CCMP mgmt or raw 802.11 TX), steer hw_key_slot to the opposite VIF's CONF
-     * register (0x80 for STA -> CONF1; 0x00 for AP -> CONF0) so WDEV TX bypasses
-     * HW encryption instead of touching Slot 0.
-     */
-    if (req->cipher == ESP_LMAC_CIPHER_NONE && req->hdr_len >= 2U &&
-        (req->hdr[1] & LMAC_FC1_PROTECTED) != 0U) {
-        slot->hw_key_slot = (req->vif == ESP_LMAC_VIF_AP) ? 0x00U : LMAC_KEY_SLOT_AP_BIT;
-    } else {
-        slot->hw_key_slot = (req->cipher == ESP_LMAC_CIPHER_NONE)
-                            ? 0U
-                            : lmac_crypto_lookup_tx_slot(req->vif, req->peer_id, req->cipher, req->key_idx);
-    }
+    slot->hw_key_slot = hw_key_slot;
 
     g_lmac.stats.tx_submitted++;
 
@@ -871,7 +877,7 @@ void lmac_tx_launch_beacon_now(void)
     }
 
     /* Stamp live 64-bit TSF1 into 802.11 Beacon fixed Timestamp field (offset 24..31) */
-    uint64_t tsf = wdev_get_tsf_time(ESP_LMAC_VIF_AP);
+    uint64_t tsf = esp_lmac_get_tsf_us(ESP_LMAC_VIF_AP);
     for (uint8_t i = 0U; i < 8U; i++) {
         b->buf[24U + i] = (uint8_t)((tsf >> (i * 8U)) & 0xFFU);
     }

@@ -80,9 +80,27 @@ _Static_assert(sizeof(lmac_lldesc_t) == 12U, "lmac_lldesc_t must be 12 bytes");
 #define LMAC_NMI_RING_SIZE   32U
 #define LMAC_NMI_RING_MASK   (LMAC_NMI_RING_SIZE - 1U)
 
+#define LMAC_SNF_RING_SIZE   16U
+#define LMAC_SNF_RING_MASK   (LMAC_SNF_RING_SIZE - 1U)
+#define LMAC_SNF_MAX_PAYLOAD 112U
+
 #define LMAC_RXSTATE_OK      ESP_LMAC_RXSTATE_OK
 #define LMAC_RXSTATE_ALT1    ESP_LMAC_RXSTATE_ALT1
 #define LMAC_RXSTATE_ALT2    ESP_LMAC_RXSTATE_TKIP_MIC_FAIL
+
+/**
+ * @brief Sniffer-mode NMI-captured packet entry (128 B = power-of-2 stride).
+ *
+ * Used by LMAC_INT_SNIFFER_END (BIT(2)) when WDEV writes into rx_head->buf
+ * without advancing LMAC_WDEV_RX_LAST_DESC or clearing LLDESC_OWNER.
+ */
+typedef struct {
+    uint16_t flen;                              /**< PLCP PSDU length including 4-B FCS */
+    uint16_t copy_len;                          /**< Bytes copied into raw[12..] (<= 112) */
+    uint8_t  raw[12U + LMAC_SNF_MAX_PAYLOAD];   /**< 12-B rx_ctrl + up to 112-B frame */
+} lmac_snf_pkt_t;
+
+_Static_assert(sizeof(lmac_snf_pkt_t) == 128U, "lmac_snf_pkt_t must be 128 bytes");
 
 typedef enum {
     LMAC_NMI_EVT_NONE = 0,
@@ -292,6 +310,9 @@ typedef struct {
     uint8_t              scan_mode;
     uint8_t              rf_closed;
     uint8_t              pend_noise_check;
+    volatile uint8_t     snf_wr;
+    volatile uint8_t     snf_rd;
+    lmac_snf_pkt_t      *snf_ring;
     uint32_t             sniffer_filter;
     uint32_t             sniffer_ctrl_filter;
     uint32_t             ps_lock_flags;
@@ -301,6 +322,7 @@ typedef struct {
     uint8_t              rx_hang_ticks;
     uint8_t              rx_ba_used_mask;
     uint8_t              sw_prot_bypass_vif; /* 0=none, 1=CONF0, 2=CONF1 temporarily bypassed */
+    uint8_t              rxmax_ext;          /* Cached chip_v6_rxmax_ext level (0 or 3) */
 
     /* Telemetry */
     esp_lmac_stats_t     stats;
@@ -310,12 +332,10 @@ extern lmac_ctx_t g_lmac;
 
 /* NMI / IRAM helpers (lmac_nmi.c) — IRAM_ATTR applied on definitions only */
 void lmac_rx_set_desc_bit_locked(uint8_t idx);
-void lmac_rx_clear_desc_bit_locked(uint8_t idx);
 void lmac_check_and_move_hwbuf_locked(void);
 void lmac_mactim1_set_func(void (*cb)(void));
 void lmac_mactim1_arm(uint32_t delta_us);
 void lmac_mactim1_disarm(void);
-uint64_t wdev_get_tsf_time(int vif_idx);
 #ifndef CONFIG_ESP8266_OSS_WIFI_MIN_NMI
 void lmac_tx_arm_hw_slot_fast(uint8_t q, lmac_tx_slot_t *slot);
 #endif
@@ -325,6 +345,7 @@ esp_err_t lmac_dma_init(void);
 void lmac_dma_reprogram_regs(void);
 void lmac_dma_deinit(void);
 void lmac_dma_dispatch_rx_evt(const lmac_nmi_evt_t *ev);
+void lmac_dma_dispatch_sniffer_pkt(lmac_snf_pkt_t *pkt);
 
 /* TX helpers (lmac_tx.c) */
 esp_err_t lmac_tx_init(void);

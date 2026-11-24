@@ -25,6 +25,7 @@
 
 extern size_t esp_wifi_scan_get_ap_num_max(void);
 extern const bool _g_esp_wifi_connect_open_router_when_pwd_is_set;
+extern void n8_mgmt_free_tx_cb(void *ctx, const esp_lmac_tx_status_t *st);
 
 /* Key management masks from wpa_supplicant/src/common/defs.h */
 #define SUPP_KEY_MGMT_IEEE8021X      (1 << 0)
@@ -60,46 +61,84 @@ void n8_scan_free_results(void)
     g_n8.scan_result_cap = 0U;
 }
 
+#define N8_SCAN_PROBE_INLINE_MAX 92U
+
+/**
+ * @brief Transmit an active 802.11 Probe Request with optional user vendor IEs.
+ *
+ * Uses a stack-allocated single-descriptor frame when total length fits within
+ * LMAC scratch limits, falling back to scatter-gather heap payload otherwise.
+ *
+ * @param ssid     Target SSID bytes or NULL for wildcard scan.
+ * @param ssid_len Length of @p ssid (0..32).
+ */
 static void scan_send_probe_req(const uint8_t *ssid, uint8_t ssid_len)
 {
-    uint8_t buf[96];
-    memset(buf, 0, sizeof(buf));
+    uint8_t hdr[IEEE80211_HDR_LEN];
+    uint8_t body[384];
+    memset(hdr, 0, sizeof(hdr));
 
-    buf[0] = IEEE80211_FC_TYPE_MGMT | IEEE80211_SUBTYPE_PROBE_REQ;
-    memcpy(buf + 4U, s_bcast, 6U);
-    memcpy(buf + 10U, g_n8.sta_mac, 6U);
-    memcpy(buf + 16U, s_bcast, 6U);
+    hdr[0] = IEEE80211_FC_TYPE_MGMT | IEEE80211_SUBTYPE_PROBE_REQ;
+    memcpy(hdr + IEEE80211_HDR_ADDR1_OFF, s_bcast, IEEE80211_ADDR_LEN);
+    memcpy(hdr + IEEE80211_HDR_ADDR2_OFF, g_n8.sta_mac, IEEE80211_ADDR_LEN);
+    memcpy(hdr + IEEE80211_HDR_ADDR3_OFF, s_bcast, IEEE80211_ADDR_LEN);
     uint16_t seq = n8_sta_next_seq();
-    buf[22] = (uint8_t)(seq & 0xFFU);
-    buf[23] = (uint8_t)(seq >> 8);
+    hdr[IEEE80211_HDR_SEQ_OFF] = (uint8_t)(seq & 0xFFU);
+    hdr[IEEE80211_HDR_SEQ_OFF + 1U] = (uint8_t)(seq >> 8);
 
-    uint16_t off = 24U;
+    uint16_t off = 0U;
     if (ssid != NULL && ssid_len > 0U && ssid_len <= 32U) {
-        buf[off++] = IEEE80211_IE_SSID;
-        buf[off++] = ssid_len;
-        memcpy(buf + off, ssid, ssid_len);
+        body[off++] = IEEE80211_IE_SSID;
+        body[off++] = ssid_len;
+        memcpy(body + off, ssid, ssid_len);
         off = (uint16_t)(off + ssid_len);
     } else {
-        buf[off++] = IEEE80211_IE_SSID;
-        buf[off++] = 0U;
+        body[off++] = IEEE80211_IE_SSID;
+        body[off++] = 0U;
     }
 
-    memcpy(buf + off, s_supp_rates_11bg, sizeof(s_supp_rates_11bg));
+    memcpy(body + off, s_supp_rates_11bg, sizeof(s_supp_rates_11bg));
     off = (uint16_t)(off + sizeof(s_supp_rates_11bg));
 
     /* DS Parameter Set (current channel) */
-    buf[off++] = IEEE80211_IE_DS_PARAM;
-    buf[off++] = 1U;
-    buf[off++] = esp_lmac_get_channel();
+    body[off++] = IEEE80211_IE_DS_PARAM;
+    body[off++] = 1U;
+    body[off++] = esp_lmac_get_channel();
+
+    /* Append user Probe Request vendor IEs if configured */
+    off = n8_append_vendor_ies(WIFI_VND_IE_TYPE_PROBE_REQ, body, off, sizeof(body));
 
     esp_lmac_tx_req_t tx = {0};
     tx.vif = ESP_LMAC_VIF_STA;
     tx.peer_id = ESP_LMAC_PEER_INVALID;
     tx.ac = ESP_LMAC_AC_MGMT;
     tx.flags = ESP_LMAC_TX_FLAG_NO_ACK | ESP_LMAC_TX_FLAG_FORCE_LOWEST_RATE;
-    tx.hdr = buf;
-    tx.hdr_len = off;
-    (void)esp_lmac_tx_submit(&tx);
+
+    if ((uint16_t)(IEEE80211_HDR_LEN + off) <= N8_SCAN_PROBE_INLINE_MAX) {
+        uint8_t pkt[N8_SCAN_PROBE_INLINE_MAX];
+        memcpy(pkt, hdr, IEEE80211_HDR_LEN);
+        memcpy(pkt + IEEE80211_HDR_LEN, body, off);
+        tx.hdr = pkt;
+        tx.hdr_len = (uint16_t)(IEEE80211_HDR_LEN + off);
+        (void)esp_lmac_tx_submit(&tx);
+        return;
+    }
+
+    uint8_t *copy = (uint8_t *)heap_caps_malloc(off, MALLOC_CAP_8BIT);
+    if (copy == NULL) {
+        return;
+    }
+    memcpy(copy, body, off);
+    esp_lmac_sg_seg_t seg = { .ptr = copy, .len = off };
+    tx.hdr = hdr;
+    tx.hdr_len = IEEE80211_HDR_LEN;
+    tx.segs = &seg;
+    tx.seg_cnt = 1U;
+    tx.done_cb = n8_mgmt_free_tx_cb;
+    tx.done_ctx = copy;
+    if (esp_lmac_tx_submit(&tx) != ESP_OK) {
+        heap_caps_free(copy);
+    }
 }
 
 #define N8_SCAN_DEFAULT_ACTIVE_MS   120U
@@ -496,7 +535,71 @@ static bool ssid_is_hidden(const uint8_t *val, uint8_t len)
     return true;
 }
 
-void n8_scan_rx_beacon_or_probe(const wifi_pkt_rx_ctrl_t *ctrl,
+/**
+ * @brief Classify AP authentication mode from Beacon/ProbeResp capinfo and RSN/WPA IEs.
+ *
+ * @param capinfo     802.11 capability info field.
+ * @param rsn_ie      Pointer to RSN IE (or NULL).
+ * @param rsn_len     Length of @p rsn_ie including 2-byte IE header.
+ * @param wpa_ie      Pointer to WPA1 vendor IE (or NULL).
+ * @param wpa_len     Length of @p wpa_ie including 2-byte IE header.
+ * @param rsn_out     Optional output parsed RSN IE data.
+ * @param wpa_out     Optional output parsed WPA IE data.
+ * @param rsn_ok_out  Optional output true if @p rsn_ie parsed cleanly.
+ * @param wpa_ok_out  Optional output true if @p wpa_ie parsed cleanly.
+ * @return Classified wifi_auth_mode_t.
+ */
+wifi_auth_mode_t n8_parse_ap_authmode(uint16_t capinfo, const uint8_t *rsn_ie, uint16_t rsn_len,
+                                      const uint8_t *wpa_ie, uint16_t wpa_len,
+                                      wifi_wpa_ie_t *rsn_out, wifi_wpa_ie_t *wpa_out,
+                                      bool *rsn_ok_out, bool *wpa_ok_out)
+{
+    wifi_wpa_ie_t rsn_data;
+    wifi_wpa_ie_t wpa_data;
+    bool rsn_ok = false;
+    bool wpa_ok = false;
+    memset(&rsn_data, 0, sizeof(rsn_data));
+    memset(&wpa_data, 0, sizeof(wpa_data));
+
+    if (g_n8.wpa_cb != NULL && g_n8.wpa_cb->wpa_parse_wpa_ie != NULL) {
+        if (rsn_ie != NULL) {
+            rsn_ok = (g_n8.wpa_cb->wpa_parse_wpa_ie(rsn_ie, rsn_len, &rsn_data) == 0);
+        }
+        if (wpa_ie != NULL) {
+            wpa_ok = (g_n8.wpa_cb->wpa_parse_wpa_ie(wpa_ie, wpa_len, &wpa_data) == 0);
+        }
+    }
+
+    if (rsn_out != NULL)    *rsn_out = rsn_data;
+    if (wpa_out != NULL)    *wpa_out = wpa_data;
+    if (rsn_ok_out != NULL) *rsn_ok_out = rsn_ok;
+    if (wpa_ok_out != NULL) *wpa_ok_out = wpa_ok;
+
+    if (rsn_ok) {
+        if ((rsn_data.key_mgmt & SUPP_KEY_MGMT_SAE) && (rsn_data.key_mgmt & SUPP_KEY_MGMT_PSK)) {
+            return WIFI_AUTH_WPA2_WPA3_PSK;
+        }
+        if (rsn_data.key_mgmt & SUPP_KEY_MGMT_SAE) {
+            return WIFI_AUTH_WPA3_PSK;
+        }
+        if (rsn_data.key_mgmt & SUPP_KEY_MGMT_IEEE8021X) {
+            return WIFI_AUTH_WPA2_ENTERPRISE;
+        }
+        if (wpa_ok) {
+            return WIFI_AUTH_WPA_WPA2_PSK;
+        }
+        return WIFI_AUTH_WPA2_PSK;
+    }
+    if (wpa_ok) {
+        return WIFI_AUTH_WPA_PSK;
+    }
+    if ((capinfo & 0x0010U) != 0U) {
+        return WIFI_AUTH_WEP;
+    }
+    return WIFI_AUTH_OPEN;
+}
+
+void n8_scan_rx_beacon_or_probe(const wifi_pkt_rx_ctrl_t *ctrl, int16_t freq_offset,
                                 const uint8_t *frame, uint16_t len)
 {
     if (!g_n8.scan_active || g_n8.scan_results == NULL || len < 36U) {
@@ -523,11 +626,12 @@ void n8_scan_rx_beacon_or_probe(const wifi_pkt_rx_ctrl_t *ctrl,
     uint16_t rate_mask = 0U;
     uint8_t ht_mcs = 0U;
     uint8_t ht_present = 0U;
+    uint8_t wmm_present = 0U;
     uint8_t wps_present = 0U;
     const uint8_t *rsn_ie = NULL;
-    uint8_t rsn_len = 0U;
+    uint16_t rsn_len = 0U;
     const uint8_t *wpa_ie = NULL;
-    uint8_t wpa_len = 0U;
+    uint16_t wpa_len = 0U;
     wifi_country_t bcn_country;
     bool has_country = false;
 
@@ -590,15 +694,22 @@ void n8_scan_rx_beacon_or_probe(const wifi_pkt_rx_ctrl_t *ctrl,
 
         case IEEE80211_IE_RSN:
             rsn_ie = &ies[pos];
-            rsn_len = (uint8_t)(elen + 2U);
+            rsn_len = (uint16_t)(elen + 2U);
             break;
 
         case IEEE80211_IE_VENDOR:
-            if (elen >= 4U && val[0] == 0x00U && val[1] == 0x50U && val[2] == 0xF2U) {
-                if (val[3] == 0x01U) {
+            if (elen >= 4U && val[0] == IEEE80211_OUI_MS_0 &&
+                val[1] == IEEE80211_OUI_MS_1 && val[2] == IEEE80211_OUI_MS_2) {
+                if (val[3] == IEEE80211_OUI_TYPE_WPA) {
                     wpa_ie = &ies[pos];
-                    wpa_len = (uint8_t)(elen + 2U);
-                } else if (val[3] == 0x04U) {
+                    wpa_len = (uint16_t)(elen + 2U);
+                } else if (val[3] == IEEE80211_OUI_TYPE_WMM &&
+                           elen >= IEEE80211_WMM_IE_MIN_BODY_LEN &&
+                           (val[4] == IEEE80211_WMM_SUBTYPE_INFO ||
+                            val[4] == IEEE80211_WMM_SUBTYPE_PARAM) &&
+                           val[5] == IEEE80211_WMM_VERSION) {
+                    wmm_present = 1U;
+                } else if (val[3] == IEEE80211_OUI_TYPE_WPS) {
                     wps_present = 1U;
                 }
             }
@@ -656,6 +767,9 @@ void n8_scan_rx_beacon_or_probe(const wifi_pkt_rx_ctrl_t *ctrl,
     ent->rec.primary = ds_ch;
     ent->rec.second = WIFI_SECOND_CHAN_NONE;
     ent->rec.rssi = (int8_t)ctrl->rssi;
+    if (freq_offset != N8_FREQ_OFFSET_INVALID) {
+        ent->rec.freq_offset = freq_offset;
+    }
     ent->rec.phy_11b = (rate_mask & 0x000FU) ? 1U : 0U;
     ent->rec.phy_11g = (rate_mask & 0x0FF0U) ? 1U : 0U;
     ent->rec.phy_11n = ht_present;
@@ -668,6 +782,7 @@ void n8_scan_rx_beacon_or_probe(const wifi_pkt_rx_ctrl_t *ctrl,
     ent->rate_mask_11bg = rate_mask;
     ent->ht_mcs_mask = ht_mcs;
     ent->ht_cap = ht_present;
+    ent->wmm_cap = wmm_present;
     ent->beacon_int = (bcn_int >= 10U && bcn_int <= 255U) ? (uint8_t)bcn_int : 100U;
 
     /* Classify security authmode & ciphers using wpa_supplicant's IE parser */
@@ -675,17 +790,8 @@ void n8_scan_rx_beacon_or_probe(const wifi_pkt_rx_ctrl_t *ctrl,
     wifi_wpa_ie_t wpa_data;
     bool rsn_ok = false;
     bool wpa_ok = false;
-    memset(&rsn_data, 0, sizeof(rsn_data));
-    memset(&wpa_data, 0, sizeof(wpa_data));
-
-    if (g_n8.wpa_cb != NULL && g_n8.wpa_cb->wpa_parse_wpa_ie != NULL) {
-        if (rsn_ie != NULL) {
-            rsn_ok = (g_n8.wpa_cb->wpa_parse_wpa_ie(rsn_ie, rsn_len, &rsn_data) == 0);
-        }
-        if (wpa_ie != NULL) {
-            wpa_ok = (g_n8.wpa_cb->wpa_parse_wpa_ie(wpa_ie, wpa_len, &wpa_data) == 0);
-        }
-    }
+    ent->rec.authmode = n8_parse_ap_authmode(capinfo, rsn_ie, rsn_len, wpa_ie, wpa_len,
+                                             &rsn_data, &wpa_data, &rsn_ok, &wpa_ok);
 
     ent->wpa_proto = (uint8_t)((wpa_ok ? 1U : 0U) | (rsn_ok ? 2U : 0U));
     ent->akm_sae = 0U;
@@ -704,29 +810,14 @@ void n8_scan_rx_beacon_or_probe(const wifi_pkt_rx_ctrl_t *ctrl,
         if (rsn_data.key_mgmt & SUPP_KEY_MGMT_SAE)        ent->akm_sae = 1U;
         if (rsn_data.key_mgmt & SUPP_KEY_MGMT_PSK_SHA256) ent->akm_psk_sha256 = 1U;
         if (rsn_data.key_mgmt & SUPP_KEY_MGMT_PSK)        ent->akm_psk = 1U;
-
-        if ((rsn_data.key_mgmt & SUPP_KEY_MGMT_SAE) && (rsn_data.key_mgmt & SUPP_KEY_MGMT_PSK)) {
-            ent->rec.authmode = WIFI_AUTH_WPA2_WPA3_PSK;
-        } else if (rsn_data.key_mgmt & SUPP_KEY_MGMT_SAE) {
-            ent->rec.authmode = WIFI_AUTH_WPA3_PSK;
-        } else if (rsn_data.key_mgmt & SUPP_KEY_MGMT_IEEE8021X) {
-            ent->rec.authmode = WIFI_AUTH_WPA2_ENTERPRISE;
-        } else if (wpa_ok) {
-            ent->rec.authmode = WIFI_AUTH_WPA_WPA2_PSK;
-        } else {
-            ent->rec.authmode = WIFI_AUTH_WPA2_PSK;
-        }
     } else if (wpa_ok) {
         ent->rec.pairwise_cipher = (wifi_cipher_type_t)wpa_data.pairwise_cipher;
         ent->rec.group_cipher = (wifi_cipher_type_t)wpa_data.group_cipher;
         ent->akm_psk = 1U;
-        ent->rec.authmode = WIFI_AUTH_WPA_PSK;
-    } else if ((capinfo & 0x0010U) != 0U) {
-        ent->rec.authmode = WIFI_AUTH_WEP;
+    } else if (ent->rec.authmode == WIFI_AUTH_WEP) {
         ent->rec.pairwise_cipher = WIFI_CIPHER_TYPE_WEP40;
         ent->rec.group_cipher = WIFI_CIPHER_TYPE_WEP40;
     } else {
-        ent->rec.authmode = WIFI_AUTH_OPEN;
         ent->rec.pairwise_cipher = WIFI_CIPHER_TYPE_NONE;
         ent->rec.group_cipher = WIFI_CIPHER_TYPE_NONE;
     }
@@ -782,8 +873,18 @@ n8_scan_entry_t *n8_scan_pick_best_ap(void)
         if (!sae_allowed && e->rec.authmode == WIFI_AUTH_WPA3_PSK) {
             continue;
         }
-        if (best == NULL || e->rec.rssi > best->rec.rssi) {
+        if (best == NULL) {
             best = e;
+        } else if (g_n8.sta_cfg.sta.sort_method == WIFI_CONNECT_AP_BY_SECURITY) {
+            if (e->rec.authmode > best->rec.authmode ||
+                (e->rec.authmode == best->rec.authmode && e->rec.rssi > best->rec.rssi)) {
+                best = e;
+            }
+        } else {
+            if (e->rec.rssi > best->rec.rssi ||
+                (e->rec.rssi == best->rec.rssi && e->rec.authmode > best->rec.authmode)) {
+                best = e;
+            }
         }
     }
 

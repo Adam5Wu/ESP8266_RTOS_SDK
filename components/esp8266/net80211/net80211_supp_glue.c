@@ -128,6 +128,53 @@ void n8_supp_clear_appies(void)
     }
 }
 
+/**
+ * @brief Free all dynamically allocated vendor IE slots and the lazy table.
+ */
+void n8_vendor_ie_free_all(void)
+{
+    if (g_n8.vendor_ies == NULL) {
+        return;
+    }
+    for (uint8_t t = 0U; t < N8_VND_IE_TYPE_COUNT; t++) {
+        for (uint8_t idx = 0U; idx < N8_VND_IE_ID_COUNT; idx++) {
+            if (g_n8.vendor_ies->slots[t][idx] != NULL) {
+                heap_caps_free(g_n8.vendor_ies->slots[t][idx]);
+                g_n8.vendor_ies->slots[t][idx] = NULL;
+            }
+        }
+    }
+    heap_caps_free(g_n8.vendor_ies);
+    g_n8.vendor_ies = NULL;
+}
+
+/**
+ * @brief Append any enabled user vendor IEs for @p type to a management frame buffer.
+ *
+ * @param type    Vendor IE frame slot type (Beacon, ProbeReq, ProbeResp, AssocReq, AssocResp).
+ * @param out     Destination frame buffer.
+ * @param off     Current write offset inside @p out.
+ * @param max_len Total capacity of @p out in bytes.
+ * @return Updated write offset after appending enabled vendor IEs.
+ */
+uint16_t n8_append_vendor_ies(wifi_vendor_ie_type_t type, uint8_t *out, uint16_t off, uint16_t max_len)
+{
+    if (g_n8.vendor_ies == NULL || out == NULL || (uint32_t)type >= N8_VND_IE_TYPE_COUNT) {
+        return off;
+    }
+    for (uint8_t idx = 0U; idx < N8_VND_IE_ID_COUNT; idx++) {
+        const uint8_t *ie = g_n8.vendor_ies->slots[type][idx];
+        if (ie != NULL) {
+            uint16_t full_len = (uint16_t)ie[1] + IEEE80211_IE_HDR_LEN;
+            if ((uint32_t)off + full_len <= max_len) {
+                memcpy(out + off, ie, full_len);
+                off = (uint16_t)(off + full_len);
+            }
+        }
+    }
+    return off;
+}
+
 int esp_wifi_set_appie_internal(uint8_t type, uint8_t *ie, uint16_t len, uint8_t flag)
 {
     if (type >= WIFI_APPIE_MAX || ie == NULL || len == 0U) {

@@ -49,10 +49,20 @@ extern u8 *ccmp_encrypt(const u8 *tk, u8 *frame, size_t len, size_t hdrlen,
 #define N8_STA_PROT_HDR_LEN                 (IEEE80211_HDR_LEN + IEEE80211_CCMP_HDR_LEN)
 #define N8_STA_ACTION_HDR_LEN               2U
 #define N8_STA_LMAC_SCRATCH_MAX             96U
+#define N8_STA_RXMAX_HI_RSSI                (-25)
+#define N8_STA_RXMAX_LO_RSSI                (-30)
+#define N8_STA_RXMAX_EXT_LVL                3U
 
 static const uint8_t s_sta_rates_ie[] = {
     0x01U, 0x08U, 0x82U, 0x84U, 0x8BU, 0x96U, 0x0CU, 0x12U, 0x18U, 0x24U,
     0x32U, 0x04U, 0x30U, 0x48U, 0x60U, 0x6CU
+};
+
+/* WFA WMM Information Element (9 bytes: OUI 00:50:F2, Type 2, Subtype 0, Ver 1, QoS Info 0) */
+static const uint8_t s_sta_wmm_info_ie[IEEE80211_WMM_INFO_IE_LEN] = {
+    IEEE80211_IE_VENDOR, 0x07U,
+    IEEE80211_OUI_MS_0, IEEE80211_OUI_MS_1, IEEE80211_OUI_MS_2,
+    IEEE80211_OUI_TYPE_WMM, IEEE80211_WMM_SUBTYPE_INFO, IEEE80211_WMM_VERSION, 0x00U
 };
 
 /* 802.11n HT20 Capabilities IE (26-byte body: SGI20, MCS0..7, max A-MPDU 16KB) */
@@ -351,7 +361,7 @@ static bool sta_send_auth_sae(uint8_t sae_type)
 
 static void sta_send_assoc_req(void)
 {
-    uint8_t body[256];
+    uint8_t body[384];
     uint16_t off = 0U;
 
     uint16_t cap = 0x0401U; /* ESS | Short Slot */
@@ -394,6 +404,16 @@ static void sta_send_assoc_req(void)
             off = (uint16_t)(off + sec_len);
         }
     }
+
+    /* WMM Information IE when QoS/WMM is active on this association */
+    if (g_n8.sta_qos_active != 0U &&
+        (uint16_t)(off + sizeof(s_sta_wmm_info_ie)) <= sizeof(body)) {
+        memcpy(body + off, s_sta_wmm_info_ie, sizeof(s_sta_wmm_info_ie));
+        off = (uint16_t)(off + sizeof(s_sta_wmm_info_ie));
+    }
+
+    /* User-configured AssocReq vendor IEs */
+    off = n8_append_vendor_ies(WIFI_VND_IE_TYPE_ASSOC_REQ, body, off, sizeof(body));
 
     (void)sta_tx_mgmt(IEEE80211_SUBTYPE_ASSOC_REQ, body, off, true, false);
 }
@@ -533,11 +553,30 @@ void n8_sta_disconnect(uint8_t reason, bool send_deauth, bool notify_event)
     memset(g_n8.sa_query_tid, 0, sizeof(g_n8.sa_query_tid));
     g_n8.sta_igtk_valid = 0U;
     g_n8.sta_pmf_active = 0U;
+    g_n8.sta_ht_active = 0U;
+    g_n8.sta_qos_active = 0U;
+    g_n8.sta_beacon_authmode = 0U;
+    g_n8.sta_ap_wps = 0U;
+    g_n8.sta_ap_phy_11b = 0U;
+    g_n8.sta_ap_phy_11g = 0U;
+    g_n8.sta_last_freq_offset = 0;
+    g_n8.sta_tsf_diff_us = 0;
+    g_n8.sta_tsf_valid = 0U;
+    g_n8.sta_rxmax_ext_state = 0U;
+    esp_lmac_set_rxmax_ext(0U);
     g_n8.sta_aid = 0U;
     g_n8.sta_state_ticks = 0U;
     g_n8.sta_bcn_miss_ticks = 0U;
+    bool had_ap_country = (g_n8.sta_ap_country_valid != 0U);
     g_n8.sta_ap_country_valid = 0U;
     memset(&g_n8.sta_ap_country, 0, sizeof(g_n8.sta_ap_country));
+    if (was_active) {
+        if (had_ap_country && g_n8.country.policy == WIFI_COUNTRY_POLICY_AUTO) {
+            n8_sync_country_power();
+        } else {
+            n8_apply_tx_power_limit();
+        }
+    }
 
     if (notify_event && was_active) {
         ESP_LOGD(TAG, "STA disconnected: reason=%u", (unsigned)reason);
@@ -568,8 +607,15 @@ static void sta_begin_auth(const n8_scan_entry_t *ap)
     g_n8.sta_beacon_int = (ap->beacon_int >= 10U) ? ap->beacon_int : 100U;
     g_n8.sta_dtim_period = 1U;
     g_n8.sta_authmode = (uint8_t)ap->rec.authmode;
+    g_n8.sta_beacon_authmode = (uint8_t)ap->rec.authmode;
+    g_n8.sta_ap_wps = ap->rec.wps;
+    g_n8.sta_ap_phy_11b = ap->rec.phy_11b;
+    g_n8.sta_ap_phy_11g = ap->rec.phy_11g;
+    g_n8.sta_last_freq_offset = ap->rec.freq_offset;
+    g_n8.sta_tsf_diff_us = 0;
+    g_n8.sta_tsf_valid = 0U;
     g_n8.sta_ht_active = ap->ht_cap && ((g_n8.proto[0] & WIFI_PROTOCOL_11N) != 0U);
-    g_n8.sta_qos_active = g_n8.sta_ht_active;
+    g_n8.sta_qos_active = (n8_qos_cfg_enabled() && (ap->wmm_cap || g_n8.sta_ht_active)) ? 1U : 0U;
 
     /* Adopt AP Country IE if present in scan entry (for WIFI_COUNTRY_POLICY_AUTO) */
     g_n8.sta_ap_country_valid = 0U;
@@ -646,6 +692,8 @@ static void sta_begin_auth(const n8_scan_entry_t *ap)
     pcaps.ht_enabled = g_n8.sta_ht_active ? 1U : 0U;
     g_n8.sta_peer_id = esp_lmac_peer_add(ESP_LMAC_VIF_STA, &pcaps);
     esp_lmac_peer_update_rssi(g_n8.sta_peer_id, ap->rec.rssi);
+    g_n8.sta_rxmax_ext_state = (ap->rec.rssi > N8_STA_RXMAX_HI_RSSI) ? N8_STA_RXMAX_EXT_LVL : 0U;
+    esp_lmac_set_rxmax_ext(g_n8.sta_rxmax_ext_state);
 
     /* Configure wpa_supplicant BEFORE AssocReq so RSN/WPA IE is generated */
     if (g_n8.sta_wpa_proto != 0U && g_n8.wpa_cb != NULL && g_n8.wpa_cb->wpa_sta_connect != NULL) {
@@ -712,6 +760,11 @@ void n8_sta_on_auth_done(void)
 
     /* Persist fast-connect PMK + channel + BSSID in RTC_SYS for warm resets */
     n8_rtc_cache_save(g_n8.sta_channel, g_n8.sta_bssid, g_n8.sta_authmode);
+    if (g_n8.sta_ap_country_valid != 0U && g_n8.country.policy == WIFI_COUNTRY_POLICY_AUTO) {
+        n8_sync_country_power();
+    } else {
+        n8_apply_tx_power_limit();
+    }
     n8_pm_on_connect();
 
     ESP_LOGD(TAG, "STA connected: '%s' ch=%u aid=%u",
@@ -838,7 +891,8 @@ static void sta_handle_action(const uint8_t *frame, uint16_t len)
     }
 }
 
-void n8_sta_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, const uint8_t *frame, uint16_t len)
+void n8_sta_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, int16_t freq_offset,
+                    const uint8_t *frame, uint16_t len)
 {
     if (len < 24U) {
         return;
@@ -846,26 +900,69 @@ void n8_sta_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, const uint8_t *frame, uint16
 
     uint8_t subtype = (uint8_t)(frame[0] & IEEE80211_FC_SUBTYPE_MASK);
 
+    if (subtype == IEEE80211_SUBTYPE_PROBE_REQ) {
+        if (g_n8.mode == WIFI_MODE_STA && g_n8.probe_req_cb != NULL) {
+            int rssi = (ctrl != NULL) ? (int)(int8_t)ctrl->rssi : -127;
+            g_n8.probe_req_cb(frame, (int)len, rssi);
+        }
+        return;
+    }
+
     if (subtype == IEEE80211_SUBTYPE_BEACON || subtype == IEEE80211_SUBTYPE_PROBE_RESP) {
         if (g_n8.scan_active) {
-            n8_scan_rx_beacon_or_probe(ctrl, frame, len);
+            n8_scan_rx_beacon_or_probe(ctrl, freq_offset, frame, len);
         }
         if (subtype == IEEE80211_SUBTYPE_BEACON && g_n8.sta_state >= N8_STA_ASSOC &&
             memcmp(frame + 16U, g_n8.sta_bssid, 6U) == 0) {
             g_n8.sta_bcn_miss_ticks = 0U;
+            if (len >= 36U) {
+                uint64_t bcn_tsf;
+                memcpy(&bcn_tsf, frame + 24U, sizeof(bcn_tsf));
+                g_n8.sta_tsf_diff_us = (int64_t)(bcn_tsf - esp_lmac_get_tsf_us(ESP_LMAC_VIF_STA));
+                g_n8.sta_tsf_valid = 1U;
+            }
+            if (freq_offset != N8_FREQ_OFFSET_INVALID) {
+                g_n8.sta_last_freq_offset = freq_offset;
+            }
             esp_lmac_peer_update_rssi(g_n8.sta_peer_id, (int8_t)ctrl->rssi);
-            /* Adopt Country IE from connected AP beacon if not yet captured */
-            if (!g_n8.sta_ap_country_valid && len > 36U) {
+
+            int8_t rssi_now = esp_lmac_peer_get_rssi(g_n8.sta_peer_id);
+            if (rssi_now > N8_STA_RXMAX_HI_RSSI) {
+                g_n8.sta_rxmax_ext_state = N8_STA_RXMAX_EXT_LVL;
+            } else if (rssi_now < N8_STA_RXMAX_LO_RSSI) {
+                g_n8.sta_rxmax_ext_state = 0U;
+            }
+            esp_lmac_set_rxmax_ext(g_n8.sta_rxmax_ext_state);
+
+            if (g_n8.sta_state == N8_STA_RUN && g_n8.rssi_thresh_armed != 0U &&
+                (int32_t)rssi_now < g_n8.rssi_threshold) {
+                g_n8.rssi_thresh_armed = 0U;
+                system_event_t evt;
+                memset(&evt, 0, sizeof(evt));
+                evt.event_id = SYSTEM_EVENT_STA_BSS_RSSI_LOW;
+                evt.event_info.bss_rssi_low.rssi = (int32_t)rssi_now;
+                n8_send_system_event(&evt);
+            }
+
+            if (len > 36U) {
+                uint16_t capinfo = (uint16_t)((uint16_t)frame[34] | ((uint16_t)frame[35] << 8));
                 const uint8_t *ies = frame + 36U;
                 uint16_t ie_len = (uint16_t)(len - 36U);
                 uint16_t pos = 0U;
+                const uint8_t *rsn_ie = NULL;
+                uint16_t rsn_len = 0U;
+                const uint8_t *wpa_ie = NULL;
+                uint16_t wpa_len = 0U;
+                bool wps_seen = false;
+                bool country_adopted = false;
+
                 while (pos + 2U <= ie_len) {
                     uint8_t id = ies[pos];
                     uint8_t elen = ies[pos + 1U];
                     if (pos + 2U + elen > ie_len) {
                         break;
                     }
-                    if (id == IEEE80211_IE_COUNTRY && elen >= 6U) {
+                    if (id == IEEE80211_IE_COUNTRY && !g_n8.sta_ap_country_valid && elen >= 6U) {
                         uint8_t sc = ies[pos + 5U];
                         uint8_t nc = ies[pos + 6U];
                         if (sc >= 1U && nc >= 1U && (uint16_t)sc + (uint16_t)nc <= 15U) {
@@ -875,10 +972,51 @@ void n8_sta_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, const uint8_t *frame, uint16
                             g_n8.sta_ap_country.max_tx_power = (int8_t)ies[pos + 7U];
                             g_n8.sta_ap_country.policy = WIFI_COUNTRY_POLICY_AUTO;
                             g_n8.sta_ap_country_valid = 1U;
+                            country_adopted = true;
                         }
-                        break;
+                    } else if (id == IEEE80211_IE_RSN) {
+                        rsn_ie = &ies[pos];
+                        rsn_len = (uint16_t)(elen + 2U);
+                    } else if (id == IEEE80211_IE_VENDOR && elen >= 4U &&
+                               ies[pos + 2U] == IEEE80211_OUI_MS_0 &&
+                               ies[pos + 3U] == IEEE80211_OUI_MS_1 &&
+                               ies[pos + 4U] == IEEE80211_OUI_MS_2) {
+                        if (ies[pos + 5U] == IEEE80211_OUI_TYPE_WPA) {
+                            wpa_ie = &ies[pos];
+                            wpa_len = (uint16_t)(elen + 2U);
+                        } else if (ies[pos + 5U] == IEEE80211_OUI_TYPE_WPS) {
+                            wps_seen = true;
+                        }
                     }
                     pos = (uint16_t)(pos + 2U + elen);
+                }
+
+                if (country_adopted && g_n8.sta_state == N8_STA_RUN &&
+                    g_n8.country.policy == WIFI_COUNTRY_POLICY_AUTO) {
+                    n8_sync_country_power();
+                }
+
+                if (pos == ie_len) {
+                    g_n8.sta_ap_wps = wps_seen ? 1U : 0U;
+                    if (g_n8.sta_state == N8_STA_RUN && g_n8.wpa_cb != NULL &&
+                        g_n8.wpa_cb->wpa_parse_wpa_ie != NULL) {
+                        bool rsn_ok = false;
+                        bool wpa_ok = false;
+                        wifi_auth_mode_t bcn_mode = n8_parse_ap_authmode(capinfo, rsn_ie, rsn_len,
+                                                                         wpa_ie, wpa_len,
+                                                                         NULL, NULL, &rsn_ok, &wpa_ok);
+                        if ((rsn_ie == NULL || rsn_ok) && (wpa_ie == NULL || wpa_ok) &&
+                            (uint8_t)bcn_mode != g_n8.sta_beacon_authmode) {
+                            system_event_t evt;
+                            memset(&evt, 0, sizeof(evt));
+                            evt.event_id = SYSTEM_EVENT_STA_AUTHMODE_CHANGE;
+                            evt.event_info.auth_change.old_mode = (wifi_auth_mode_t)g_n8.sta_authmode;
+                            evt.event_info.auth_change.new_mode = bcn_mode;
+                            g_n8.sta_beacon_authmode = (uint8_t)bcn_mode;
+                            g_n8.sta_authmode = (uint8_t)bcn_mode;
+                            n8_send_system_event(&evt);
+                        }
+                    }
                 }
             }
             n8_pm_on_beacon_rx(frame, len);
@@ -1089,11 +1227,11 @@ void n8_sta_on_tick_100ms(void)
         }
         if (!g_n8.scan_active) {
             g_n8.sta_bcn_miss_ticks++;
-            uint16_t max_miss = (uint16_t)(g_n8.inactive_sec[0] * 10U);
+            uint32_t max_miss = (uint32_t)g_n8.inactive_sec[0] * 10U;
             if (max_miss < 30U) {
                 max_miss = 30U;
             }
-            if (g_n8.sta_bcn_miss_ticks >= max_miss) {
+            if ((uint32_t)g_n8.sta_bcn_miss_ticks >= max_miss) {
                 ESP_LOGW(TAG, "Beacon timeout (%u ms)", (unsigned)g_n8.sta_bcn_miss_ticks * 100U);
                 n8_sta_disconnect(WIFI_REASON_BEACON_TIMEOUT, false, true);
             }

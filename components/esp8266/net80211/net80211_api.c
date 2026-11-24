@@ -31,10 +31,47 @@ extern int misc_nvs_init(void);
 extern void misc_nvs_deinit(void);
 extern void phy_set_most_tpw(uint8_t max_tpw_qdb);
 extern uint8_t phy_get_most_tpw(void);
-extern uint64_t wdev_get_tsf_time(int vif_idx);
 extern uint32_t g_log_level;
 extern uint32_t g_log_mod;
 extern void n8_mgmt_free_tx_cb(void *ctx, const esp_lmac_tx_status_t *st);
+
+#define N8_TX_POWER_QDB_MIN 8
+#define N8_TX_POWER_QDB_MAX 84
+
+/**
+ * @brief Apply the effective TX power ceiling across Kconfig, regulatory country, and user cap.
+ */
+void n8_apply_tx_power_limit(void)
+{
+    int32_t limit_qdb = (int32_t)CONFIG_ESP8266_PHY_MAX_WIFI_TX_POWER * 4;
+    if ((int32_t)g_n8.max_tx_power < limit_qdb) {
+        limit_qdb = (int32_t)g_n8.max_tx_power;
+    }
+    const wifi_country_t *cc = n8_get_active_country();
+    if (cc != NULL && cc->max_tx_power > 0) {
+        int32_t cc_qdb = (int32_t)cc->max_tx_power * 4;
+        if (cc_qdb < limit_qdb) {
+            limit_qdb = cc_qdb;
+        }
+    }
+    if (limit_qdb < N8_TX_POWER_QDB_MIN) {
+        limit_qdb = N8_TX_POWER_QDB_MIN;
+    } else if (limit_qdb > N8_TX_POWER_QDB_MAX) {
+        limit_qdb = N8_TX_POWER_QDB_MAX;
+    }
+    phy_set_most_tpw((uint8_t)limit_qdb);
+}
+
+/**
+ * @brief Re-apply regulatory TX power limit and refresh SoftAP beacon Country IE if active.
+ */
+void n8_sync_country_power(void)
+{
+    n8_apply_tx_power_limit();
+    if (g_n8.ap_running) {
+        (void)n8_ap_update_beacon();
+    }
+}
 
 /* --------------------------------------------------------------------------
  * LMAC Callback Bridge (Runs on Unified Wi-Fi Worker)
@@ -89,6 +126,7 @@ esp_err_t esp_wifi_init_internal(const wifi_init_config_t *config)
 
     (void)wifi_timer_init();
     esp_phy_load_cal_and_init(PHY_WIFI_MODULE);
+    n8_apply_tx_power_limit();
 
     esp_err_t err = n8_worker_start();
     if (err != ESP_OK) {
@@ -133,8 +171,10 @@ esp_err_t esp_wifi_deinit_internal(void)
         (void)esp_wifi_stop();
     }
 
+    n8_pm_deinit();
     n8_scan_free_results();
     n8_supp_clear_appies();
+    n8_vendor_ie_free_all();
     if (g_n8.scan_done_sem != NULL) {
         vSemaphoreDelete(g_n8.scan_done_sem);
         g_n8.scan_done_sem = NULL;
@@ -479,13 +519,15 @@ esp_err_t esp_wifi_sta_get_ap_info(wifi_ap_record_t *ap_info)
     ap_info->primary = g_n8.sta_channel;
     ap_info->second = WIFI_SECOND_CHAN_NONE;
     ap_info->rssi = esp_lmac_peer_get_rssi(g_n8.sta_peer_id);
+    ap_info->freq_offset = g_n8.sta_last_freq_offset;
     ap_info->authmode = (wifi_auth_mode_t)g_n8.sta_authmode;
     ap_info->pairwise_cipher = (wifi_cipher_type_t)g_n8.sta_pairwise_cipher;
     ap_info->group_cipher = (wifi_cipher_type_t)g_n8.sta_group_cipher;
-    ap_info->phy_11b = (g_n8.proto[0] & WIFI_PROTOCOL_11B) ? 1U : 0U;
-    ap_info->phy_11g = (g_n8.proto[0] & WIFI_PROTOCOL_11G) ? 1U : 0U;
+    ap_info->phy_11b = g_n8.sta_ap_phy_11b ? 1U : 0U;
+    ap_info->phy_11g = g_n8.sta_ap_phy_11g ? 1U : 0U;
     ap_info->phy_11n = g_n8.sta_ht_active ? 1U : 0U;
-    ap_info->country = g_n8.country;
+    ap_info->wps = g_n8.sta_ap_wps ? 1U : 0U;
+    ap_info->country = *n8_get_active_country();
     return ESP_OK;
 }
 
@@ -604,14 +646,27 @@ esp_err_t esp_wifi_get_ps(wifi_ps_type_t *type)
     return ESP_OK;
 }
 
+typedef struct {
+    wifi_interface_t ifx;
+    uint8_t          proto;
+} api_set_proto_t;
+
+static esp_err_t api_set_protocol(void *arg)
+{
+    const api_set_proto_t *a = (const api_set_proto_t *)arg;
+    g_n8.proto[a->ifx] = a->proto;
+    esp_lmac_set_protocol_mask((a->ifx == WIFI_IF_AP) ? ESP_LMAC_VIF_AP : ESP_LMAC_VIF_STA,
+                               a->proto);
+    return ESP_OK;
+}
+
 esp_err_t esp_wifi_set_protocol(wifi_interface_t ifx, uint8_t protocol_bitmap)
 {
     if (!g_n8.initialized) return ESP_ERR_WIFI_NOT_INIT;
-    if (ifx != WIFI_IF_STA && ifx != WIFI_IF_AP) return ESP_ERR_INVALID_ARG;
+    if (ifx != WIFI_IF_STA && ifx != WIFI_IF_AP) return ESP_ERR_WIFI_IF;
     if (protocol_bitmap == 0U) return ESP_ERR_INVALID_ARG;
-    g_n8.proto[ifx] = protocol_bitmap;
-    esp_lmac_set_protocol_mask((ifx == WIFI_IF_AP) ? ESP_LMAC_VIF_AP : ESP_LMAC_VIF_STA, protocol_bitmap);
-    return ESP_OK;
+    api_set_proto_t req = { .ifx = ifx, .proto = protocol_bitmap };
+    return n8_api_call(api_set_protocol, &req);
 }
 
 esp_err_t esp_wifi_get_protocol(wifi_interface_t ifx, uint8_t *protocol_bitmap)
@@ -665,6 +720,15 @@ esp_err_t esp_wifi_get_channel(uint8_t *primary, wifi_second_chan_t *second)
     return ESP_OK;
 }
 
+static esp_err_t api_set_country(void *arg)
+{
+    const wifi_country_t *country = (const wifi_country_t *)arg;
+    g_n8.country = *country;
+    n8_nvs_save_country();
+    n8_sync_country_power();
+    return ESP_OK;
+}
+
 esp_err_t esp_wifi_set_country(const wifi_country_t *country)
 {
     if (!g_n8.initialized) return ESP_ERR_WIFI_NOT_INIT;
@@ -672,9 +736,7 @@ esp_err_t esp_wifi_set_country(const wifi_country_t *country)
         (country->schan + country->nchan) > 15U) {
         return ESP_ERR_INVALID_ARG;
     }
-    g_n8.country = *country;
-    n8_nvs_save_country();
-    return ESP_OK;
+    return n8_api_call(api_set_country, (void *)(uintptr_t)country);
 }
 
 esp_err_t esp_wifi_get_country(wifi_country_t *country)
@@ -685,25 +747,32 @@ esp_err_t esp_wifi_get_country(wifi_country_t *country)
     return ESP_OK;
 }
 
+typedef struct {
+    wifi_interface_t ifx;
+    const uint8_t   *mac;
+} api_set_mac_t;
+
+static esp_err_t api_set_mac(void *arg)
+{
+    const api_set_mac_t *a = (const api_set_mac_t *)arg;
+    if (g_n8.started) {
+        return ESP_ERR_WIFI_STATE;
+    }
+    memcpy((a->ifx == WIFI_IF_STA) ? g_n8.sta_mac : g_n8.ap_mac, a->mac, IEEE80211_ADDR_LEN);
+    return ESP_OK;
+}
+
 esp_err_t esp_wifi_set_mac(wifi_interface_t ifx, const uint8_t mac[6])
 {
     if (!g_n8.initialized) return ESP_ERR_WIFI_NOT_INIT;
-    if ((ifx != WIFI_IF_STA && ifx != WIFI_IF_AP) || mac == NULL || (mac[0] & 1U) != 0U) {
-        return ESP_ERR_INVALID_ARG;
+    if (ifx != WIFI_IF_STA && ifx != WIFI_IF_AP) return ESP_ERR_WIFI_IF;
+    if (mac == NULL) return ESP_ERR_INVALID_ARG;
+    if ((mac[0] & N8_MAC_MCAST_BIT) != 0U ||
+        (mac[0] | mac[1] | mac[2] | mac[3] | mac[4] | mac[5]) == 0U) {
+        return ESP_ERR_WIFI_MAC;
     }
-    if (ifx == WIFI_IF_STA) {
-        memcpy(g_n8.sta_mac, mac, 6U);
-        if (g_n8.started && (g_n8.mode == WIFI_MODE_STA || g_n8.mode == WIFI_MODE_APSTA)) {
-            (void)esp_lmac_vif_enable(ESP_LMAC_VIF_STA, g_n8.sta_mac);
-        }
-    } else {
-        memcpy(g_n8.ap_mac, mac, 6U);
-        if (g_n8.ap_running) {
-            (void)esp_lmac_vif_enable(ESP_LMAC_VIF_AP, g_n8.ap_mac);
-            (void)n8_ap_update_beacon();
-        }
-    }
-    return ESP_OK;
+    api_set_mac_t req = { .ifx = ifx, .mac = mac };
+    return n8_api_call(api_set_mac, &req);
 }
 
 esp_err_t esp_wifi_get_mac(wifi_interface_t ifx, uint8_t mac[6])
@@ -813,14 +882,20 @@ esp_err_t esp_wifi_get_promiscuous_ctrl_filter(wifi_promiscuous_filter_t *filter
     return ESP_OK;
 }
 
+static esp_err_t api_set_max_tx_power(void *arg)
+{
+    int8_t power = *(int8_t *)arg;
+    if (power < N8_TX_POWER_QDB_MIN) power = N8_TX_POWER_QDB_MIN;
+    if (power > N8_TX_POWER_QDB_MAX) power = N8_TX_POWER_QDB_MAX;
+    g_n8.max_tx_power = power;
+    n8_apply_tx_power_limit();
+    return ESP_OK;
+}
+
 esp_err_t esp_wifi_set_max_tx_power(int8_t power)
 {
     if (!g_n8.initialized) return ESP_ERR_WIFI_NOT_INIT;
-    if (power < 8) power = 8;
-    if (power > 84) power = 84;
-    g_n8.max_tx_power = power;
-    phy_set_most_tpw((uint8_t)power);
-    return ESP_OK;
+    return n8_api_call(api_set_max_tx_power, &power);
 }
 
 esp_err_t esp_wifi_get_max_tx_power(int8_t *power)
@@ -903,25 +978,134 @@ esp_err_t esp_wifi_80211_tx(wifi_interface_t ifx, const void *buffer, int len, b
     return n8_api_call(api_80211_tx, &req);
 }
 
+typedef struct {
+    bool                   enable;
+    wifi_vendor_ie_type_t  type;
+    wifi_vendor_ie_id_t    idx;
+    const void            *vnd_ie;
+} api_set_vnd_ie_t;
+
+static void vendor_ie_prune_empty_table(void)
+{
+    if (g_n8.vendor_ies == NULL) {
+        return;
+    }
+    for (uint8_t t = 0U; t < N8_VND_IE_TYPE_COUNT; t++) {
+        for (uint8_t id = 0U; id < N8_VND_IE_ID_COUNT; id++) {
+            if (g_n8.vendor_ies->slots[t][id] != NULL) {
+                return;
+            }
+        }
+    }
+    heap_caps_free(g_n8.vendor_ies);
+    g_n8.vendor_ies = NULL;
+}
+
+static esp_err_t api_set_vendor_ie(void *arg)
+{
+    const api_set_vnd_ie_t *a = (const api_set_vnd_ie_t *)arg;
+    if (a->enable) {
+        const vendor_ie_data_t *hdr = (const vendor_ie_data_t *)a->vnd_ie;
+        uint16_t full_len = (uint16_t)hdr->length + IEEE80211_IE_HDR_LEN;
+        if (g_n8.vendor_ies == NULL) {
+            g_n8.vendor_ies = (n8_vendor_ie_table_t *)heap_caps_zalloc(
+                sizeof(n8_vendor_ie_table_t), MALLOC_CAP_8BIT);
+            if (g_n8.vendor_ies == NULL) {
+                return ESP_ERR_NO_MEM;
+            }
+        }
+        uint8_t *copy = (uint8_t *)heap_caps_malloc(full_len, MALLOC_CAP_8BIT);
+        if (copy == NULL) {
+            vendor_ie_prune_empty_table();
+            return ESP_ERR_NO_MEM;
+        }
+        memcpy(copy, a->vnd_ie, full_len);
+        if (g_n8.vendor_ies->slots[a->type][a->idx] != NULL) {
+            heap_caps_free(g_n8.vendor_ies->slots[a->type][a->idx]);
+        }
+        g_n8.vendor_ies->slots[a->type][a->idx] = copy;
+    } else if (g_n8.vendor_ies != NULL) {
+        if (g_n8.vendor_ies->slots[a->type][a->idx] != NULL) {
+            heap_caps_free(g_n8.vendor_ies->slots[a->type][a->idx]);
+            g_n8.vendor_ies->slots[a->type][a->idx] = NULL;
+        }
+        vendor_ie_prune_empty_table();
+    }
+
+    if (a->type == WIFI_VND_IE_TYPE_BEACON && g_n8.ap_running) {
+        (void)n8_ap_update_beacon();
+    }
+    return ESP_OK;
+}
+
 esp_err_t esp_wifi_set_vendor_ie(bool enable, wifi_vendor_ie_type_t type,
                                  wifi_vendor_ie_id_t idx, const void *vnd_ie)
 {
-    (void)enable; (void)type; (void)idx; (void)vnd_ie;
-    return g_n8.initialized ? ESP_OK : ESP_ERR_WIFI_NOT_INIT;
+    if (!g_n8.initialized) return ESP_ERR_WIFI_NOT_INIT;
+    if ((uint32_t)type >= N8_VND_IE_TYPE_COUNT || (uint32_t)idx >= N8_VND_IE_ID_COUNT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (enable) {
+        if (vnd_ie == NULL) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        const vendor_ie_data_t *hdr = (const vendor_ie_data_t *)vnd_ie;
+        if (hdr->element_id != WIFI_VENDOR_IE_ELEMENT_ID || hdr->length < N8_VND_IE_MIN_LEN) {
+            return ESP_ERR_INVALID_ARG;
+        }
+    }
+    api_set_vnd_ie_t req = { .enable = enable, .type = type, .idx = idx, .vnd_ie = vnd_ie };
+    return n8_api_call(api_set_vendor_ie, &req);
+}
+
+typedef struct {
+    esp_vendor_ie_cb_t cb;
+    void              *ctx;
+} api_set_vnd_cb_t;
+
+static esp_err_t api_set_vendor_ie_cb(void *arg)
+{
+    const api_set_vnd_cb_t *a = (const api_set_vnd_cb_t *)arg;
+    g_n8.vendor_ie_cb = a->cb;
+    g_n8.vendor_ie_ctx = a->ctx;
+    return ESP_OK;
 }
 
 esp_err_t esp_wifi_set_vendor_ie_cb(esp_vendor_ie_cb_t cb, void *ctx)
 {
     if (!g_n8.initialized) return ESP_ERR_WIFI_NOT_INIT;
-    g_n8.vendor_ie_cb = cb;
-    g_n8.vendor_ie_ctx = ctx;
+    api_set_vnd_cb_t req = { .cb = cb, .ctx = ctx };
+    return n8_api_call(api_set_vendor_ie_cb, &req);
+}
+
+static esp_err_t api_set_rssi_thresh(void *arg)
+{
+    g_n8.rssi_threshold = *(int32_t *)arg;
+    g_n8.rssi_thresh_armed = 1U;
     return ESP_OK;
 }
 
 esp_err_t esp_wifi_set_rssi_threshold(int32_t rssi)
 {
     if (!g_n8.initialized) return ESP_ERR_WIFI_NOT_INIT;
-    g_n8.rssi_threshold = rssi;
+    if (rssi < N8_RSSI_THRESHOLD_MIN || rssi > N8_RSSI_THRESHOLD_MAX) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return n8_api_call(api_set_rssi_thresh, &rssi);
+}
+
+typedef struct {
+    wifi_interface_t ifx;
+    uint16_t         sec;
+} api_set_inactive_t;
+
+static esp_err_t api_set_inactive_time(void *arg)
+{
+    const api_set_inactive_t *a = (const api_set_inactive_t *)arg;
+    if (!g_n8.started) {
+        return ESP_ERR_WIFI_NOT_STARTED;
+    }
+    g_n8.inactive_sec[a->ifx] = a->sec;
     return ESP_OK;
 }
 
@@ -929,8 +1113,12 @@ esp_err_t esp_wifi_set_inactive_time(wifi_interface_t ifx, uint16_t sec)
 {
     if (!g_n8.initialized) return ESP_ERR_WIFI_NOT_INIT;
     if (ifx != WIFI_IF_STA && ifx != WIFI_IF_AP) return ESP_ERR_INVALID_ARG;
-    g_n8.inactive_sec[ifx] = sec;
-    return ESP_OK;
+    if ((ifx == WIFI_IF_STA && sec < N8_STA_MIN_INACTIVE_SEC) ||
+        (ifx == WIFI_IF_AP && sec < N8_AP_MIN_INACTIVE_SEC)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    api_set_inactive_t req = { .ifx = ifx, .sec = sec };
+    return n8_api_call(api_set_inactive_time, &req);
 }
 
 esp_err_t esp_wifi_get_inactive_time(wifi_interface_t ifx, uint16_t *sec)
@@ -977,17 +1165,46 @@ wifi_state_t esp_wifi_get_state(void)
 
 int64_t esp_wifi_get_tsf_time(wifi_interface_t interface)
 {
-    return (int64_t)wdev_get_tsf_time((interface == WIFI_IF_AP) ? 1 : 0);
+    if (!g_n8.initialized) {
+        return 0;
+    }
+    if (interface == WIFI_IF_STA) {
+        if (g_n8.sta_state != N8_STA_RUN || g_n8.sta_tsf_valid == 0U) {
+            return 0;
+        }
+        return (int64_t)(esp_lmac_get_tsf_us(ESP_LMAC_VIF_STA) + (uint64_t)g_n8.sta_tsf_diff_us);
+    }
+    if (interface == WIFI_IF_AP) {
+        return g_n8.ap_running ? (int64_t)esp_lmac_get_tsf_us(ESP_LMAC_VIF_AP) : 0;
+    }
+    return 0;
+}
+
+static esp_err_t api_set_pm_config(void *arg)
+{
+    g_n8.pm_cfg = *(const esp_pm_config_t *)arg;
+#ifdef CONFIG_PM_ENABLE
+    /* Hook point when CONFIG_PM_ENABLE dynamic PM integration is active */
+#endif
+    return ESP_OK;
 }
 
 void esp_wifi_set_pm_config(esp_pm_config_t *pm_config)
 {
-    (void)pm_config;
+    if (pm_config == NULL || !g_n8.initialized) {
+        return;
+    }
+    (void)n8_api_call(api_set_pm_config, pm_config);
 }
 
 void esp_wifi_get_pm_config(esp_pm_config_t *pm_config)
 {
-    if (pm_config != NULL) {
-        memset(pm_config, 0, sizeof(*pm_config));
+    if (pm_config == NULL) {
+        return;
     }
+    if (!g_n8.initialized) {
+        memset(pm_config, 0, sizeof(*pm_config));
+        return;
+    }
+    *pm_config = g_n8.pm_cfg;
 }

@@ -20,6 +20,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "lmac_internal.h"
 
@@ -48,7 +49,7 @@ void IRAM_ATTR lmac_rx_set_desc_bit_locked(uint8_t idx)
     g_lmac.rx_avail_mask |= (1U << idx);
 }
 
-void IRAM_ATTR lmac_rx_clear_desc_bit_locked(uint8_t idx)
+static inline __attribute__((always_inline)) void IRAM_ATTR lmac_rx_clear_desc_bit_locked(uint8_t idx)
 {
     uint8_t n = g_lmac.cfg.rx_buf_num;
     uint8_t prev = (idx == 0U) ? (uint8_t)(n - 1U) : (uint8_t)(idx - 1U);
@@ -130,7 +131,7 @@ static bool IRAM_ATTR nmi_ring_push(const lmac_nmi_evt_t *ev)
     return true;
 }
 
-static void IRAM_ATTR nmi_recycle_desc_range(uint8_t start_idx, uint8_t cnt)
+static void __attribute__((noinline)) IRAM_ATTR nmi_recycle_desc_range(uint8_t start_idx, uint8_t cnt)
 {
     uint8_t n = g_lmac.cfg.rx_buf_num;
     uint8_t idx = start_idx;
@@ -228,7 +229,7 @@ static bool IRAM_ATTR nmi_drain_rx(void)
                         : (uint16_t)((w0 >> 16) & 0x0FFFU);
         uint8_t rx_state = (uint8_t)(w2 & 0xFFU);
         bool is_ampdu = ((w1 & 0x08000000U) != 0U);
-        int16_t freq_off = phy_get_bb_freqoffset();
+        int16_t freq_off = 0;
 
         bool accept = reached_eof && (flen >= 10U) && (flen <= 2346U) && (!is_ampdu);
         if (accept && !g_lmac.sniffer_mode) {
@@ -236,11 +237,14 @@ static bool IRAM_ATTR nmi_drain_rx(void)
             if (rx_state != LMAC_RXSTATE_OK && rx_state != LMAC_RXSTATE_ALT1 &&
                 rx_state != LMAC_RXSTATE_ALT2) {
                 accept = false;
+            } else {
+                freq_off = phy_get_bb_freqoffset();
             }
         }
 
         g_lmac.stats.rx_nmi_frames++;
 
+        bool recycle = true;
         if (accept) {
             lmac_nmi_evt_t ev;
             ev.type = LMAC_NMI_EVT_RX_DESC;
@@ -252,12 +256,13 @@ static bool IRAM_ATTR nmi_drain_rx(void)
 
             if (nmi_ring_push(&ev)) {
                 pushed_any = true;
+                recycle = false;
             } else {
                 g_lmac.stats.rx_nmi_drops++;
-                nmi_recycle_desc_range(start_idx, cnt);
             }
-        } else {
-            /* Drop invalid/truncated/unsupported frame and immediately recycle descriptors */
+        }
+        if (recycle) {
+            /* Drop invalid/truncated/unsupported frame or full ring and recycle descriptors */
             nmi_recycle_desc_range(start_idx, cnt);
         }
 
@@ -269,6 +274,116 @@ static bool IRAM_ATTR nmi_drain_rx(void)
     g_lmac.rx_head_idx = cur_idx;
     lmac_check_and_move_hwbuf_locked();
     return pushed_any;
+}
+
+/**
+ * @brief Capture a sniffer-mode non-RX_DONE frame on LMAC_INT_SNIFFER_END (BIT(2)).
+ *
+ * WDEV delivers control frames and filtered MPDUs into rx_head->buf without
+ * advancing LMAC_WDEV_RX_LAST_DESC or clearing LLDESC_OWNER. Because subsequent
+ * over-the-air arrivals overwrite rx_head->buf within SIFS, NMI validates
+ * LMAC_WDEV_RX_STAT_INFO (0x00 or 0x41, rejecting 0x42..0x7F error states),
+ * pre-filters against sniffer_filter / sniffer_ctrl_filter, copies
+ * 12 + min(flen, 112) bytes into snf_ring, and guards against torn DMA
+ * overwrites via LMAC_WDEV_RX_TSF_LO, INT_RAW, and post-copy header checks.
+ *
+ * @return true if a packet was committed to snf_ring and the worker should be notified.
+ */
+static bool __attribute__((noinline)) IRAM_ATTR nmi_drain_sniffer_end(void)
+{
+    uint32_t sinfo = lmac_reg_read(LMAC_WDEV_RX_STAT_INFO) & 0xFFU;
+    if (sinfo != LMAC_RX_STAT_OK && sinfo != LMAC_RX_STAT_SNIFFER_OK) {
+        return false;
+    }
+    if (g_lmac.snf_ring == NULL || g_lmac.rx_descs == NULL) {
+        return false;
+    }
+
+    uint8_t head_idx = g_lmac.rx_head_idx;
+    if ((g_lmac.rx_avail_mask & (1U << head_idx)) == 0U) {
+        return false;
+    }
+
+    uint32_t tsf_before = lmac_reg_read(LMAC_WDEV_RX_TSF_LO);
+    const uint8_t *raw = g_lmac.rx_descs[head_idx].buf;
+
+    uint32_t w0 = ((const uint32_t *)(const void *)raw)[0];
+    uint32_t w1 = ((const uint32_t *)(const void *)raw)[1];
+    if ((w1 & 0x08000000U) != 0U) {
+        return false;
+    }
+
+    uint16_t flen;
+    if ((w0 & 0xC000U) != 0U) {
+        if ((w1 & 0x40000080U) != 0U || (w1 & 0x7FU) >= 8U) {
+            return false;
+        }
+        flen = (uint16_t)((w1 >> 8) & 0xFFFFU);
+    } else {
+        flen = (uint16_t)((w0 >> 16) & 0x0FFFU);
+    }
+    if (flen < 10U || flen > 2346U) {
+        return false;
+    }
+
+    uint8_t fc0 = raw[12];
+    uint8_t ftype = (uint8_t)(fc0 & 0x0FU);
+    uint32_t fmask;
+    if (ftype == 0x00U) {
+        fmask = WIFI_PROMIS_FILTER_MASK_MGMT;
+    } else if (ftype == 0x04U) {
+        uint8_t sub = (uint8_t)(fc0 >> 4);
+        if (sub < 7U || (g_lmac.sniffer_ctrl_filter & (1U << (16U + sub))) == 0U) {
+            return false;
+        }
+        fmask = WIFI_PROMIS_FILTER_MASK_CTRL;
+    } else if (ftype == 0x08U) {
+        fmask = WIFI_PROMIS_FILTER_MASK_DATA;
+    } else {
+        return false;
+    }
+    if ((g_lmac.sniffer_filter & fmask) == 0U) {
+        return false;
+    }
+
+    uint8_t wr = g_lmac.snf_wr;
+    uint8_t next = (uint8_t)((wr + 1U) & LMAC_SNF_RING_MASK);
+    if (next == g_lmac.snf_rd) {
+        g_lmac.stats.rx_nmi_drops++;
+        return false;
+    }
+
+    uint16_t copy_len = (flen > LMAC_SNF_MAX_PAYLOAD) ? LMAC_SNF_MAX_PAYLOAD : flen;
+    lmac_snf_pkt_t *dst = &g_lmac.snf_ring[wr];
+    size_t rem = 12U + (size_t)copy_len;
+    size_t avail = (size_t)((uintptr_t)g_lmac.rx_extradata - (uintptr_t)raw);
+    const uint8_t *src = raw;
+    uint8_t *out = dst->raw;
+
+    while (rem > 0U) {
+        size_t chunk = (rem > avail) ? avail : rem;
+        memcpy(out, src, chunk);
+        out += chunk;
+        rem -= chunk;
+        src = g_lmac.rx_frontdata;
+        avail = rem;
+    }
+    dst->flen = flen;
+    dst->copy_len = copy_len;
+
+    __asm__ volatile("memw" ::: "memory");
+    if (lmac_reg_read(LMAC_WDEV_RX_TSF_LO) != tsf_before ||
+        (lmac_reg_read(LMAC_WDEV_INT_RAW) & LMAC_INT_RX_DONE) != 0U ||
+        ((const uint32_t *)(const void *)dst->raw)[0] != w0 ||
+        dst->raw[12] != fc0) {
+        return false;
+    }
+
+    dst->raw[10] = (uint8_t)((dst->raw[10] & 0xF0U) | (g_lmac.cur_channel & 0x0FU));
+    g_lmac.stats.rx_nmi_frames++;
+    __asm__ volatile("memw" ::: "memory");
+    g_lmac.snf_wr = next;
+    return true;
 }
 
 #ifndef CONFIG_ESP8266_OSS_WIFI_MIN_NMI
@@ -306,8 +421,6 @@ void IRAM_ATTR lmac_tx_arm_hw_slot_fast(uint8_t q, lmac_tx_slot_t *slot)
                       : 10U;
     if (rem_tu < 10U) {
         rem_tu = 10U;
-    } else if (rem_tu > 0x3FFU) {
-        rem_tu = 0x3FFU;
     }
 
     uint32_t desc_addr = (uint32_t)(uintptr_t)&slot->descs[0] & 0x3FFFFU;
@@ -343,9 +456,6 @@ void IRAM_ATTR lmac_tx_arm_hw_slot_fast(uint8_t q, lmac_tx_slot_t *slot)
         uint32_t cw_mask = (1U << (txq->cw & 0x0FU)) - 1U;
         uint32_t rnd = lmac_reg_read(LMAC_WDEV_HW_SEQ_RND) & cw_mask;
         backoff = (rnd * 991U) >> 8;
-        if (backoff > 0x3FFU) {
-            backoff = 0x3FFU;
-        }
     }
 
     /* Arm TXQ registers in verified sequence before setting GO bits [31:30] */
@@ -371,7 +481,7 @@ void IRAM_ATTR lmac_tx_arm_hw_slot_fast(uint8_t q, lmac_tx_slot_t *slot)
             g_lmac.sw_prot_bypass_vif = (uint8_t)(vif_idx + 1U);
         }
     }
-    lmac_reg_write(LMAC_TXQ_LINK(q), lmac_reg_read(LMAC_TXQ_LINK(q)) | LMAC_TXQ_LINK_GO);
+    lmac_reg_write(LMAC_TXQ_LINK(q), link_word | LMAC_TXQ_LINK_GO);
 }
 
 static bool IRAM_ATTR nmi_handle_tx_done(uint32_t tx_status)
@@ -550,9 +660,13 @@ void IRAM_ATTR wDev_ProcessFiq(void)
 #endif
         }
 
-        /* Priority 4: Main RX Frame Complete (BIT 8) */
+        /* Priority 4: Main RX Frame Complete (BIT 8) or Sniffer-End Capture (BIT 2 without BIT 8) */
         if ((status & LMAC_INT_RX_DONE) != 0U) {
             if (nmi_drain_rx()) {
+                need_notify = true;
+            }
+        } else if ((status & LMAC_INT_SNIFFER_END) != 0U && g_lmac.sniffer_mode != 0U) {
+            if (nmi_drain_sniffer_end()) {
                 need_notify = true;
             }
         }
@@ -666,23 +780,4 @@ void lmac_mactim1_disarm(void)
 uint8_t esp_lmac_get_channel(void)
 {
     return g_lmac.cur_channel;
-}
-
-uint64_t IRAM_ATTR wdev_get_tsf_time(int vif_idx)
-{
-    if (vif_idx == 0) {
-        return WdevTimOffSet + (uint64_t)lmac_reg_read(LMAC_WDEV_TIME);
-    }
-
-    /* Atomic 64-bit TSF1 read with high-word wrap retry */
-    uint32_t hi1;
-    uint32_t lo;
-    uint32_t hi2;
-    do {
-        hi1 = lmac_reg_read(LMAC_WDEV_TSF1_HI);
-        lo = lmac_reg_read(LMAC_WDEV_TSF1_LO);
-        hi2 = lmac_reg_read(LMAC_WDEV_TSF1_HI);
-    } while (hi1 != hi2);
-
-    return ((uint64_t)hi1 << 32) | (uint64_t)lo;
 }

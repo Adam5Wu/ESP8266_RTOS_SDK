@@ -33,12 +33,28 @@ static const uint8_t s_ap_rates_ie[] = {
     0x32U, 0x04U, 0x30U, 0x48U, 0x60U, 0x6CU
 };
 
+#define N8_AP_BEACON_BUF_LEN            400U
+#define N8_AP_PROBE_RESP_BUF_LEN        384U
+#define N8_AP_ASSOC_RESP_BUF_LEN        256U
+
 static const uint8_t s_ap_ht20_cap_ie[28] = {
     IEEE80211_IE_HT_CAP, 26U,
     0x2CU, 0x01U, 0x1AU,
     0xFFU, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
     0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
     0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U
+};
+
+/* WFA WMM v1.1 Parameter Element (26 bytes: EDCA defaults for AC_BE, AC_BK, AC_VI, AC_VO) */
+static const uint8_t s_ap_wmm_param_ie[IEEE80211_WMM_PARAM_IE_LEN] = {
+    IEEE80211_IE_VENDOR, 24U,
+    IEEE80211_OUI_MS_0, IEEE80211_OUI_MS_1, IEEE80211_OUI_MS_2,
+    IEEE80211_OUI_TYPE_WMM, IEEE80211_WMM_SUBTYPE_PARAM, IEEE80211_WMM_VERSION,
+    0x00U, 0x00U,               /* QoS Info (param set cnt 0), Reserved */
+    0x03U, 0xA4U, 0x00U, 0x00U, /* AC_BE: ACI=0, AIFSN=3, ECWmin=4, ECWmax=10, TXOP=0 */
+    0x27U, 0xA4U, 0x00U, 0x00U, /* AC_BK: ACI=1, AIFSN=7, ECWmin=4, ECWmax=10, TXOP=0 */
+    0x42U, 0x43U, 0x5EU, 0x00U, /* AC_VI: ACI=2, AIFSN=2, ECWmin=3, ECWmax=4,  TXOP=94 (3008 us) */
+    0x62U, 0x32U, 0x2FU, 0x00U  /* AC_VO: ACI=3, AIFSN=2, ECWmin=2, ECWmax=3,  TXOP=47 (1504 us) */
 };
 
 uint16_t n8_ap_next_seq(void)
@@ -327,6 +343,19 @@ static uint16_t ap_build_beacon_or_probe_body(uint8_t *out, uint16_t max_len,
         out[off++] = (uint8_t)((pvb >> 8) & 0xFFU);
     }
 
+    /* Country IE (ID 7, IEEE 802.11 9.4.2.9: 3B country string + 3B subband triplet) */
+    const wifi_country_t *cc = n8_get_active_country();
+    if (cc != NULL && (uint16_t)(off + 8U) <= max_len) {
+        out[off++] = IEEE80211_IE_COUNTRY;
+        out[off++] = 6U;
+        out[off++] = (uint8_t)cc->cc[0];
+        out[off++] = (uint8_t)cc->cc[1];
+        out[off++] = (cc->cc[2] != '\0') ? (uint8_t)cc->cc[2] : (uint8_t)' ';
+        out[off++] = cc->schan;
+        out[off++] = cc->nchan;
+        out[off++] = (uint8_t)cc->max_tx_power;
+    }
+
     /* HT20 Capabilities + HT Operation IEs when 11n enabled */
     if ((g_n8.proto[1] & WIFI_PROTOCOL_11N) != 0U && (uint16_t)(off + 28U + 24U) <= max_len) {
         memcpy(out + off, s_ap_ht20_cap_ie, sizeof(s_ap_ht20_cap_ie));
@@ -350,6 +379,16 @@ static uint16_t ap_build_beacon_or_probe_body(uint8_t *out, uint16_t max_len,
         }
     }
 
+    /* WMM Parameter IE when QoS/WMM is enabled */
+    if (n8_qos_cfg_enabled() && (uint16_t)(off + sizeof(s_ap_wmm_param_ie)) <= max_len) {
+        memcpy(out + off, s_ap_wmm_param_ie, sizeof(s_ap_wmm_param_ie));
+        off = (uint16_t)(off + sizeof(s_ap_wmm_param_ie));
+    }
+
+    /* User-configured Beacon or Probe Response vendor IEs */
+    off = n8_append_vendor_ies(is_beacon ? WIFI_VND_IE_TYPE_BEACON : WIFI_VND_IE_TYPE_PROBE_RESP,
+                               out, off, max_len);
+
     return off;
 }
 
@@ -359,7 +398,7 @@ esp_err_t n8_ap_update_beacon(void)
         return ESP_OK;
     }
 
-    uint8_t frame[320];
+    uint8_t frame[N8_AP_BEACON_BUF_LEN];
     memset(frame, 0, 24U);
     frame[0] = IEEE80211_FC_TYPE_MGMT | IEEE80211_SUBTYPE_BEACON;
     memcpy(frame + 4U, s_ap_bcast, 6U);
@@ -612,7 +651,7 @@ void n8_ap_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, const uint8_t *frame, uint16_
             }
         }
         if (ssid_match) {
-            uint8_t resp[288];
+            uint8_t resp[N8_AP_PROBE_RESP_BUF_LEN];
             uint16_t blen = ap_build_beacon_or_probe_body(resp, sizeof(resp), false, NULL);
             (void)ap_tx_mgmt(IEEE80211_SUBTYPE_PROBE_RESP, sa, resp, blen);
 
@@ -674,14 +713,15 @@ void n8_ap_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, const uint8_t *frame, uint16_
             return;
         }
 
-        /* Parse client IEs (HT Caps + RSN/WPA IE) */
+        /* Parse client IEs (HT Caps + RSN/WPA IE + WMM IE) */
         const uint8_t *ies = frame + ie_off;
         uint16_t ie_len = (uint16_t)(len - ie_off);
         uint16_t pos = 0U;
         const uint8_t *sec_ie = NULL;
-        uint8_t sec_ie_len = 0U;
+        uint16_t sec_ie_len = 0U;
         uint8_t ht_cap = 0U;
         uint8_t ht_mcs = 0U;
+        uint8_t wmm_cap = 0U;
 
         while (pos + 2U <= ie_len) {
             uint8_t id = ies[pos];
@@ -694,12 +734,21 @@ void n8_ap_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, const uint8_t *frame, uint16_
                 ht_mcs = ies[pos + 2U + 3U];
             } else if (id == IEEE80211_IE_RSN) {
                 sec_ie = &ies[pos];
-                sec_ie_len = (uint8_t)(elen + 2U);
+                sec_ie_len = (uint16_t)(elen + 2U);
             } else if (id == IEEE80211_IE_VENDOR && elen >= 4U &&
-                       ies[pos + 2U] == 0x00U && ies[pos + 3U] == 0x50U &&
-                       ies[pos + 4U] == 0xF2U && ies[pos + 5U] == 0x01U && sec_ie == NULL) {
-                sec_ie = &ies[pos];
-                sec_ie_len = (uint8_t)(elen + 2U);
+                       ies[pos + 2U] == IEEE80211_OUI_MS_0 &&
+                       ies[pos + 3U] == IEEE80211_OUI_MS_1 &&
+                       ies[pos + 4U] == IEEE80211_OUI_MS_2) {
+                if (ies[pos + 5U] == IEEE80211_OUI_TYPE_WPA && sec_ie == NULL) {
+                    sec_ie = &ies[pos];
+                    sec_ie_len = (uint16_t)(elen + 2U);
+                } else if (ies[pos + 5U] == IEEE80211_OUI_TYPE_WMM &&
+                           elen >= IEEE80211_WMM_IE_MIN_BODY_LEN &&
+                           (ies[pos + 6U] == IEEE80211_WMM_SUBTYPE_INFO ||
+                            ies[pos + 6U] == IEEE80211_WMM_SUBTYPE_PARAM) &&
+                           ies[pos + 7U] == IEEE80211_WMM_VERSION) {
+                    wmm_cap = 1U;
+                }
             }
             pos = (uint16_t)(pos + 2U + elen);
         }
@@ -724,7 +773,7 @@ void n8_ap_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, const uint8_t *frame, uint16_
         pcaps.rate_mask_11bg = 0x0FFFU;
         pcaps.ht20_mcs_mask = (ht_cap && (g_n8.proto[1] & WIFI_PROTOCOL_11N)) ? (ht_mcs ? ht_mcs : 0xFFU) : 0U;
         pcaps.ht_enabled = (pcaps.ht20_mcs_mask != 0U) ? 1U : 0U;
-        pcaps.qos_enabled = pcaps.ht_enabled;
+        pcaps.qos_enabled = (n8_qos_cfg_enabled() && (wmm_cap || pcaps.ht_enabled)) ? 1U : 0U;
         sta->peer_id = esp_lmac_peer_add(ESP_LMAC_VIF_AP, &pcaps);
         sta->ht_enabled = pcaps.ht_enabled;
         sta->qos_enabled = pcaps.qos_enabled;
@@ -735,7 +784,7 @@ void n8_ap_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, const uint8_t *frame, uint16_
         sta->last_rx_sec = g_n8.ap_uptime_sec;
 
         /* Build and send AssocResp BEFORE launching hostapd 4-way handshake */
-        uint8_t resp[96];
+        uint8_t resp[N8_AP_ASSOC_RESP_BUF_LEN];
         uint16_t roff = 0U;
         uint16_t cap = 0x0401U | ((g_n8.ap_cfg.ap.authmode != WIFI_AUTH_OPEN) ? 0x0010U : 0U);
         resp[roff++] = (uint8_t)(cap & 0xFFU);
@@ -751,6 +800,12 @@ void n8_ap_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, const uint8_t *frame, uint16_
             memcpy(resp + roff, s_ap_ht20_cap_ie, sizeof(s_ap_ht20_cap_ie));
             roff = (uint16_t)(roff + sizeof(s_ap_ht20_cap_ie));
         }
+        if (sta->qos_enabled != 0U &&
+            (uint16_t)(roff + sizeof(s_ap_wmm_param_ie)) <= sizeof(resp)) {
+            memcpy(resp + roff, s_ap_wmm_param_ie, sizeof(s_ap_wmm_param_ie));
+            roff = (uint16_t)(roff + sizeof(s_ap_wmm_param_ie));
+        }
+        roff = n8_append_vendor_ies(WIFI_VND_IE_TYPE_ASSOC_RESP, resp, roff, sizeof(resp));
 
         uint8_t resp_sub = (subtype == IEEE80211_SUBTYPE_REASSOC_REQ)
                            ? IEEE80211_SUBTYPE_REASSOC_RESP : IEEE80211_SUBTYPE_ASSOC_RESP;
@@ -761,8 +816,10 @@ void n8_ap_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, const uint8_t *frame, uint16_
         } else {
             sta->authorized = 0U;
             if (g_n8.wpa_cb != NULL && g_n8.wpa_cb->wpa_ap_join != NULL) {
-                if (!g_n8.wpa_cb->wpa_ap_join(&sta->wpa_sm, sta->mac,
-                                              (uint8_t *)(uintptr_t)sec_ie, sec_ie_len)) {
+                if (sec_ie_len > 255U ||
+                    !g_n8.wpa_cb->wpa_ap_join(&sta->wpa_sm, sta->mac,
+                                              (uint8_t *)(uintptr_t)sec_ie,
+                                              (uint8_t)sec_ie_len)) {
                     n8_ap_remove_sta(sta, WIFI_REASON_INVALID_RSN_IE_CAP, true);
                     return;
                 }

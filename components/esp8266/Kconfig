@@ -402,6 +402,7 @@ config ESP8266_WIFI_QOS_ENABLED
 
 config ESP8266_WIFI_AMPDU_RX_ENABLED
     bool "WiFi AMPDU RX"
+    select ESP8266_WIFI_QOS_ENABLED
     default n
     help
         Select this option to enable AMPDU RX feature

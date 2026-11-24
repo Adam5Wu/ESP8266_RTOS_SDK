@@ -73,6 +73,8 @@ entries:
     _muldc3 (inflash_text)
     _divsc3 (inflash_text)
     _divdc3 (inflash_text)
+    _moddi3 (inflash_text)
+    _popcountsi2 (inflash_text)
 
 [mapping:c]
 archive: libc.a

@@ -177,6 +177,48 @@ static void data_tx_done_cb(void *user_ctx, const esp_lmac_tx_status_t *st)
  * Internal TX Builder: 802.3 Ethernet Frame -> Scatter-Gather 802.11 LMAC TX
  * -------------------------------------------------------------------------- */
 
+#define N8_ETH_TYPE_IPV4_H              0x08U
+#define N8_ETH_TYPE_IPV4_L              0x00U
+#define N8_IPV4_MIN_HDR_LEN             20U
+#define N8_CTRL_SUBTYPE_WRAPPER_MIN     7U
+#define N8_CTRL_FILTER_SHIFT            16U
+
+/**
+ * @brief Map an IPv4 DSCP field to 802.11 UP/TID (0..7) and LMAC Access Category.
+ *
+ * @param eth         Pointer to 802.3 Ethernet frame header.
+ * @param payload_len Payload length following the 14-byte Ethernet header.
+ * @param ac_out      Output LMAC Access Category.
+ * @return 802.11 QoS TID / User Priority (0..7).
+ */
+static uint8_t n8_dscp_to_tid_ac(const uint8_t *eth, uint16_t payload_len, esp_lmac_ac_t *ac_out)
+{
+    uint8_t up = 0U;
+    if (eth[12] == N8_ETH_TYPE_IPV4_H && eth[13] == N8_ETH_TYPE_IPV4_L &&
+        payload_len >= N8_IPV4_MIN_HDR_LEN) {
+        uint8_t dscp = (uint8_t)(eth[15] >> 2); /* IPv4 TOS/DSCP byte is payload[1] == eth[15] */
+        up = (uint8_t)((dscp >> 3) & IEEE80211_QOS_TID_MASK);
+    }
+    switch (up) {
+    case 6U:
+    case 7U:
+        *ac_out = ESP_LMAC_AC_VO;
+        break;
+    case 4U:
+    case 5U:
+        *ac_out = ESP_LMAC_AC_VI;
+        break;
+    case 1U:
+    case 2U:
+        *ac_out = ESP_LMAC_AC_BK;
+        break;
+    default: /* 0, 3 */
+        *ac_out = ESP_LMAC_AC_BE;
+        break;
+    }
+    return up;
+}
+
 static esp_err_t tx_eth_frame_on_worker(uint8_t vif, const uint8_t *eth, uint16_t eth_len,
                                         bool is_eapol, bool bypass_ap_ps,
                                         esp_lmac_tx_done_cb_t done_cb, void *done_ctx)
@@ -213,6 +255,7 @@ static esp_err_t tx_eth_frame_on_worker(uint8_t vif, const uint8_t *eth, uint16_
                     ? (ESP_LMAC_TX_FLAG_NO_ACK | ESP_LMAC_TX_FLAG_FORCE_LOWEST_RATE)
                     : 0U;
     bool qos = false;
+    esp_lmac_ac_t ac = is_eapol ? ESP_LMAC_AC_VO : ESP_LMAC_AC_BE;
     uint64_t pn = 0ULL;
 
     memset(hdr, 0, sizeof(hdr));
@@ -315,7 +358,8 @@ static esp_err_t tx_eth_frame_on_worker(uint8_t vif, const uint8_t *eth, uint16_
     }
 
     if (qos) {
-        hdr[hdr_len++] = 0U; /* TID 0 (BE) */
+        uint8_t up = n8_dscp_to_tid_ac(eth, payload_len, &ac);
+        hdr[hdr_len++] = up;
         hdr[hdr_len++] = 0U;
     }
 
@@ -344,7 +388,7 @@ static esp_err_t tx_eth_frame_on_worker(uint8_t vif, const uint8_t *eth, uint16_
     esp_lmac_tx_req_t req = {0};
     req.vif = vif;
     req.peer_id = peer_id;
-    req.ac = is_eapol ? ESP_LMAC_AC_VO : ESP_LMAC_AC_BE;
+    req.ac = ac;
     req.cipher = cipher;
     req.key_idx = key_idx;
     req.flags = flags;
@@ -814,6 +858,81 @@ static void handle_rx_data(esp_lmac_rx_buf_t *rx_buf)
     deliver_eth_to_netif(vif, eth_ptr, eth_len, rx_buf);
 }
 
+/**
+ * @brief Dispatch received 802.11 vendor IEs once per management frame to vendor_ie_cb.
+ *
+ * @param ctrl  Hardware RX control header.
+ * @param frame Raw 802.11 management frame.
+ * @param len   Total MPDU length in bytes.
+ */
+static void n8_dispatch_vendor_ie_rx(const wifi_pkt_rx_ctrl_t *ctrl,
+                                     const uint8_t *frame, uint16_t len)
+{
+    if (g_n8.vendor_ie_cb == NULL || frame == NULL || len < IEEE80211_HDR_LEN) {
+        return;
+    }
+
+    uint8_t subtype = (uint8_t)(frame[0] & IEEE80211_FC_SUBTYPE_MASK);
+    wifi_vendor_ie_type_t type;
+    uint16_t ie_off;
+    switch (subtype) {
+    case IEEE80211_SUBTYPE_BEACON:
+        type = WIFI_VND_IE_TYPE_BEACON;
+        ie_off = 36U;
+        break;
+    case IEEE80211_SUBTYPE_PROBE_REQ:
+        type = WIFI_VND_IE_TYPE_PROBE_REQ;
+        ie_off = 24U;
+        break;
+    case IEEE80211_SUBTYPE_PROBE_RESP:
+        type = WIFI_VND_IE_TYPE_PROBE_RESP;
+        ie_off = 36U;
+        break;
+    case IEEE80211_SUBTYPE_ASSOC_REQ:
+        type = WIFI_VND_IE_TYPE_ASSOC_REQ;
+        ie_off = 28U;
+        break;
+    case IEEE80211_SUBTYPE_REASSOC_REQ:
+        type = WIFI_VND_IE_TYPE_ASSOC_REQ;
+        ie_off = 34U;
+        break;
+    case IEEE80211_SUBTYPE_ASSOC_RESP:
+    case IEEE80211_SUBTYPE_REASSOC_RESP:
+        type = WIFI_VND_IE_TYPE_ASSOC_RESP;
+        ie_off = 30U;
+        break;
+    default:
+        return;
+    }
+
+    if (len <= ie_off) {
+        return;
+    }
+
+    const uint8_t *ies = frame + ie_off;
+    uint16_t ie_len = (uint16_t)(len - ie_off);
+    uint16_t pos = 0U;
+    int rssi = (ctrl != NULL) ? (int)(int8_t)ctrl->rssi : -127;
+    const uint8_t *sa = frame + IEEE80211_HDR_ADDR2_OFF;
+
+    while (pos + 2U <= ie_len) {
+        uint8_t id = ies[pos];
+        uint8_t elen = ies[pos + 1U];
+        if (pos + 2U + elen > ie_len) {
+            break;
+        }
+        if (id == WIFI_VENDOR_IE_ELEMENT_ID && elen >= N8_VND_IE_MIN_LEN) {
+            esp_vendor_ie_cb_t cb = g_n8.vendor_ie_cb;
+            if (cb == NULL) {
+                break;
+            }
+            cb(g_n8.vendor_ie_ctx, type, sa,
+               (const vendor_ie_data_t *)(const void *)&ies[pos], rssi);
+        }
+        pos = (uint16_t)(pos + 2U + elen);
+    }
+}
+
 void n8_data_rx_frame(esp_lmac_rx_buf_t *rx_buf)
 {
     if (rx_buf == NULL || rx_buf->frame == NULL || rx_buf->len < 10U) {
@@ -835,8 +954,11 @@ void n8_data_rx_frame(esp_lmac_rx_buf_t *rx_buf)
     }
 
     if (ftype == IEEE80211_FC_TYPE_MGMT) {
+        if (g_n8.vendor_ie_cb != NULL) {
+            n8_dispatch_vendor_ie_rx(rx_buf->rx_ctrl, rx_buf->frame, rx_buf->len);
+        }
         if (g_n8.mode == WIFI_MODE_STA || g_n8.mode == WIFI_MODE_APSTA) {
-            n8_sta_rx_mgmt(rx_buf->rx_ctrl, rx_buf->frame, rx_buf->len);
+            n8_sta_rx_mgmt(rx_buf->rx_ctrl, rx_buf->freq_offset, rx_buf->frame, rx_buf->len);
         }
         if (g_n8.ap_running) {
             n8_ap_rx_mgmt(rx_buf->rx_ctrl, rx_buf->frame, rx_buf->len);
@@ -872,9 +994,19 @@ void n8_data_sniffer_rx(const wifi_pkt_rx_ctrl_t *ctrl, const uint8_t *frame, ui
     }
 
     uint32_t cur_filt = 0U;
-    esp_lmac_sniffer_get_filter(&cur_filt, NULL);
+    uint32_t cur_ctrl_filt = 0U;
+    esp_lmac_sniffer_get_filter(&cur_filt, &cur_ctrl_filt);
     if ((cur_filt & fmask) == 0U) {
         return;
+    }
+    if (ptype == WIFI_PKT_CTRL) {
+        uint8_t sub = (uint8_t)(frame[0] >> 4);
+        uint32_t cbit = (sub >= N8_CTRL_SUBTYPE_WRAPPER_MIN)
+                        ? (1U << (N8_CTRL_FILTER_SHIFT + sub))
+                        : 0U;
+        if ((cur_ctrl_filt & cbit) == 0U) {
+            return;
+        }
     }
 
     uint16_t copy_len = (len > 112U) ? 112U : len;
