@@ -105,10 +105,35 @@ _Static_assert(sizeof(lmac_snf_pkt_t) == 128U, "lmac_snf_pkt_t must be 128 bytes
 typedef enum {
     LMAC_NMI_EVT_NONE = 0,
     LMAC_NMI_EVT_RX_DESC,
+#if CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+    LMAC_NMI_EVT_RX_AMPDU,
+#endif
     LMAC_NMI_EVT_TX_DONE,
     LMAC_NMI_EVT_TX_TIMEOUT,
     LMAC_NMI_EVT_TBTT,
 } lmac_nmi_evt_type_t;
+
+#if CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+#define LMAC_AMPDU_SUBFRAME_POOL_SIZE 32U
+#define LMAC_RXBA_MAX_SESSIONS        4U
+#define LMAC_LLDESC_REFCNT_MAX        31U
+#define LMAC_AMPDU_MIN_SUBFRAME_LEN   24U
+#define LMAC_AMPDU_MAX_SUBFRAME_LEN   2346U
+#define LMAC_AMPDU_STRIP_CRYPTO       12U
+#define LMAC_AMPDU_STRIP_PLAIN        4U
+
+/**
+ * @brief NMI-allocated A-MPDU subframe descriptor (32 B, zero malloc in NMI).
+ */
+typedef struct {
+    esp_lmac_rx_buf_t handle;       /**< Must be first so esp_lmac_rx_free() maps handle -> pool entry */
+    uint32_t          rx_ctrl_w[3]; /**< Patched per-subframe 12-B hardware rx_ctrl header */
+    uint16_t          start_off;    /**< Byte offset inside rx_descs[handle.desc_start].buf */
+    uint16_t          reserved;
+} lmac_rx_subframe_t;
+
+_Static_assert(sizeof(lmac_rx_subframe_t) == 32U, "lmac_rx_subframe_t must be 32 bytes");
+#endif
 
 typedef struct {
     uint8_t  type;
@@ -261,7 +286,7 @@ typedef struct {
  * Global LMAC Driver Context (Static DRAM)
  * -------------------------------------------------------------------------- */
 
-#define LMAC_MAX_RX_BUFS     24U
+#define LMAC_MAX_RX_BUFS     28U
 
 typedef struct {
     bool                 initialized;
@@ -279,7 +304,13 @@ typedef struct {
     uint8_t             *rx_ampdu_bufs;
     volatile uint32_t    rx_avail_mask;     /* Circular availability bitmap (rxbufbit) */
     volatile uint8_t     rx_head_idx;       /* Current CPU read index into rx_descs[] */
-    esp_lmac_rx_buf_t    rx_handles[LMAC_MAX_RX_BUFS];
+    esp_lmac_rx_buf_t   *rx_handles;        /* Arena-backed handles (n entries, 0 B static BSS) */
+#if CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+    lmac_rx_subframe_t  *rx_subframes;      /* Arena-backed 32-entry A-MPDU subframe pool */
+    volatile uint32_t    rx_subframe_used_mask;
+    uint8_t              rx_ampdu_head_idx; /* Active ring index into rx_ampdu_descs[] */
+    uint8_t              rx_ba_vif_mask;    /* Per-slot VIF ownership bit (0=STA, 1=AP) */
+#endif
 
     /* Lock-free NMI -> worker event ring */
     lmac_nmi_evt_t       nmi_ring[LMAC_NMI_RING_SIZE];
@@ -372,6 +403,8 @@ void lmac_wdev_update_mac_enable(void);
 uint8_t lmac_crypto_lookup_tx_slot(esp_lmac_vif_t vif, esp_lmac_peer_id_t peer_id,
                                    esp_lmac_cipher_t cipher, uint8_t key_idx);
 void lmac_beacon_on_tbtt_evt(void);
+void lmac_rx_ba_clear_peer(const uint8_t mac[6]);
+void lmac_rx_ba_clear_vif(esp_lmac_vif_t vif);
 
 #ifdef __cplusplus
 }

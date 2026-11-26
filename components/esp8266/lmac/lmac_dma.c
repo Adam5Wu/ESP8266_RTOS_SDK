@@ -39,17 +39,31 @@ esp_err_t lmac_dma_init(void)
     size_t desc_bytes = (size_t)n * sizeof(lmac_lldesc_t);
     size_t front_bytes = (size_t)n * (size_t)buf_len;
     size_t extra_bytes = ((size_t)extra_len + 3U) & ~3U;
+    size_t handle_bytes = (size_t)n * sizeof(esp_lmac_rx_buf_t);
     size_t ampdu_desc_bytes = 0U;
     size_t ampdu_buf_bytes = 0U;
+    size_t subframe_bytes = 0U;
 
 #if CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
-    if (g_lmac.cfg.ampdu_rx_enable) {
-        ampdu_desc_bytes = 5U * sizeof(lmac_lldesc_t);
-        ampdu_buf_bytes = 5U * 256U;
+    uint8_t abuf_num = g_lmac.cfg.rx_ampdu_buf_num;
+    uint16_t abuf_len = g_lmac.cfg.rx_ampdu_buf_len;
+    if (g_lmac.cfg.ampdu_rx_enable != 0U) {
+        if (abuf_num == 0U) {
+            abuf_num = 5U;
+            g_lmac.cfg.rx_ampdu_buf_num = abuf_num;
+        }
+        if (abuf_len < 64U) {
+            abuf_len = 256U;
+            g_lmac.cfg.rx_ampdu_buf_len = abuf_len;
+        }
+        ampdu_desc_bytes = (size_t)abuf_num * sizeof(lmac_lldesc_t);
+        ampdu_buf_bytes = (size_t)abuf_num * (size_t)abuf_len;
+        subframe_bytes = LMAC_AMPDU_SUBFRAME_POOL_SIZE * sizeof(lmac_rx_subframe_t);
     }
 #endif
 
-    size_t total = desc_bytes + front_bytes + extra_bytes + ampdu_desc_bytes + ampdu_buf_bytes;
+    size_t total = desc_bytes + front_bytes + extra_bytes + handle_bytes +
+                   ampdu_desc_bytes + ampdu_buf_bytes + subframe_bytes;
 
     if (g_lmac.hw_arena == NULL) {
         g_lmac.hw_arena = (uint8_t *)heap_caps_zalloc(total, MALLOC_CAP_8BIT);
@@ -64,6 +78,7 @@ esp_err_t lmac_dma_init(void)
     g_lmac.rx_descs = (lmac_lldesc_t *)(void *)g_lmac.hw_arena;
     g_lmac.rx_frontdata = g_lmac.hw_arena + desc_bytes;
     g_lmac.rx_extradata = g_lmac.rx_frontdata + front_bytes;
+    g_lmac.rx_handles = (esp_lmac_rx_buf_t *)(void *)(g_lmac.rx_extradata + extra_bytes);
 
     for (uint8_t i = 0U; i < n; i++) {
         lmac_lldesc_t *d = &g_lmac.rx_descs[i];
@@ -79,25 +94,32 @@ esp_err_t lmac_dma_init(void)
     g_lmac.empty_ampdu_desc.next = NULL;
 
 #if CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
-    if (g_lmac.cfg.ampdu_rx_enable) {
-        g_lmac.rx_ampdu_descs = (lmac_lldesc_t *)(void *)(g_lmac.rx_extradata + extra_bytes);
+    if (g_lmac.cfg.ampdu_rx_enable != 0U) {
+        g_lmac.rx_ampdu_descs = (lmac_lldesc_t *)(void *)((uint8_t *)g_lmac.rx_handles + handle_bytes);
         g_lmac.rx_ampdu_bufs = (uint8_t *)g_lmac.rx_ampdu_descs + ampdu_desc_bytes;
-        for (uint8_t i = 0U; i < 5U; i++) {
+        g_lmac.rx_subframes = (lmac_rx_subframe_t *)(void *)(g_lmac.rx_ampdu_bufs + ampdu_buf_bytes);
+        g_lmac.rx_subframe_used_mask = 0U;
+        g_lmac.rx_ampdu_head_idx = 0U;
+        for (uint8_t i = 0U; i < abuf_num; i++) {
             lmac_lldesc_t *d = &g_lmac.rx_ampdu_descs[i];
-            d->ctrl = LLDESC_OWNER | (256U << LLDESC_LEN_SHIFT) | 256U;
-            d->buf = g_lmac.rx_ampdu_bufs + (size_t)i * 256U;
-            d->next = &g_lmac.rx_ampdu_descs[(i + 1U) % 5U];
+            d->ctrl = LLDESC_OWNER | ((uint32_t)abuf_len << LLDESC_LEN_SHIFT) | (uint32_t)abuf_len;
+            d->buf = g_lmac.rx_ampdu_bufs + (size_t)i * (size_t)abuf_len;
+            d->next = &g_lmac.rx_ampdu_descs[(i + 1U) % abuf_num];
         }
-    } else
-#endif
-    {
+    } else {
         g_lmac.rx_ampdu_descs = NULL;
         g_lmac.rx_ampdu_bufs = NULL;
+        g_lmac.rx_subframes = NULL;
+        g_lmac.rx_subframe_used_mask = 0U;
+        g_lmac.rx_ampdu_head_idx = 0U;
     }
+#else
+    g_lmac.rx_ampdu_descs = NULL;
+    g_lmac.rx_ampdu_bufs = NULL;
+#endif
 
     g_lmac.rx_avail_mask = (n >= 32U) ? 0xFFFFFFFFU : ((1U << n) - 1U);
     g_lmac.rx_head_idx = 0U;
-    memset(g_lmac.rx_handles, 0, sizeof(g_lmac.rx_handles));
 
     lmac_dma_reprogram_regs();
     return ESP_OK;
@@ -110,9 +132,17 @@ void lmac_dma_reprogram_regs(void)
     uint32_t ampdu_link;
 
     if (g_lmac.rx_ampdu_descs != NULL) {
+#if CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+        uint8_t head = g_lmac.rx_ampdu_head_idx;
+        size_t abuf_total = (size_t)g_lmac.cfg.rx_ampdu_buf_num * (size_t)g_lmac.cfg.rx_ampdu_buf_len;
         ampdu_start = (uint32_t)(uintptr_t)g_lmac.rx_ampdu_descs;
-        ampdu_end = (uint32_t)(uintptr_t)(g_lmac.rx_ampdu_bufs + 5U * 256U);
+        ampdu_end = (uint32_t)(uintptr_t)(g_lmac.rx_ampdu_bufs + abuf_total);
+        ampdu_link = (uint32_t)(uintptr_t)&g_lmac.rx_ampdu_descs[head];
+#else
+        ampdu_start = (uint32_t)(uintptr_t)&g_lmac.empty_ampdu_desc;
+        ampdu_end = (uint32_t)(uintptr_t)(&g_lmac.empty_ampdu_word + 1U);
         ampdu_link = ampdu_start;
+#endif
     } else {
         ampdu_start = (uint32_t)(uintptr_t)&g_lmac.empty_ampdu_desc;
         ampdu_end = (uint32_t)(uintptr_t)(&g_lmac.empty_ampdu_word + 1U);
@@ -144,10 +174,30 @@ void lmac_dma_deinit(void)
     g_lmac.rx_descs = NULL;
     g_lmac.rx_frontdata = NULL;
     g_lmac.rx_extradata = NULL;
+    g_lmac.rx_handles = NULL;
     g_lmac.rx_ampdu_descs = NULL;
     g_lmac.rx_ampdu_bufs = NULL;
+#if CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+    g_lmac.rx_subframes = NULL;
+    g_lmac.rx_subframe_used_mask = 0U;
+    g_lmac.rx_ampdu_head_idx = 0U;
+#endif
     g_lmac.rx_avail_mask = 0U;
     g_lmac.rx_head_idx = 0U;
+}
+
+/**
+ * @brief Return true when the linearized frame extends into the shared rx_extradata scratch buffer.
+ *
+ * @param rx_buf RX buffer handle delivered to the upper layer.
+ * @return true if the frame crosses rx_extradata and must be heap-copied instead of zero-copied.
+ */
+bool esp_lmac_rx_buf_is_wrapped(const esp_lmac_rx_buf_t *rx_buf)
+{
+    if (rx_buf == NULL || rx_buf->frame == NULL || g_lmac.rx_extradata == NULL) {
+        return false;
+    }
+    return (rx_buf->frame + rx_buf->len) > g_lmac.rx_extradata;
 }
 
 uint8_t esp_lmac_rx_free_contiguous(void)
@@ -185,11 +235,30 @@ void esp_lmac_rx_free(esp_lmac_rx_buf_t *rx_buf)
     rx_buf->in_use = 0U;
 
     vPortETSIntrLock();
+#if CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+    if (g_lmac.rx_subframes != NULL &&
+        (uintptr_t)rx_buf >= (uintptr_t)g_lmac.rx_subframes &&
+        (uintptr_t)rx_buf < (uintptr_t)(g_lmac.rx_subframes + LMAC_AMPDU_SUBFRAME_POOL_SIZE)) {
+        size_t sidx = (size_t)((const lmac_rx_subframe_t *)(const void *)rx_buf - g_lmac.rx_subframes);
+        g_lmac.rx_subframe_used_mask &= ~(1U << sidx);
+    }
+#endif
     for (uint8_t i = 0U; i < cnt; i++) {
         lmac_lldesc_t *d = &g_lmac.rx_descs[idx];
+#if CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+        uint32_t rc = (d->ctrl & LLDESC_OFF_MASK) >> LLDESC_OFF_SHIFT;
+        if (rc > 1U) {
+            d->ctrl = (d->ctrl & ~LLDESC_OFF_MASK) | ((rc - 1U) << LLDESC_OFF_SHIFT);
+        } else {
+            uint32_t sz = d->ctrl & LLDESC_SIZE_MASK;
+            d->ctrl = LLDESC_OWNER | (sz << LLDESC_LEN_SHIFT) | sz;
+            lmac_rx_set_desc_bit_locked(idx);
+        }
+#else
         uint32_t sz = d->ctrl & LLDESC_SIZE_MASK;
         d->ctrl = LLDESC_OWNER | (sz << LLDESC_LEN_SHIFT) | sz;
         lmac_rx_set_desc_bit_locked(idx);
+#endif
         idx++;
         if (idx >= n) {
             idx = 0U;
@@ -201,50 +270,73 @@ void esp_lmac_rx_free(esp_lmac_rx_buf_t *rx_buf)
 
 void lmac_dma_dispatch_rx_evt(const lmac_nmi_evt_t *ev)
 {
-    uint8_t start_idx = ev->a;
-    uint8_t desc_cnt = ev->b;
-
-    if (start_idx >= g_lmac.cfg.rx_buf_num || desc_cnt == 0U) {
-        return;
-    }
-
-    esp_lmac_rx_buf_t *rb = &g_lmac.rx_handles[start_idx];
-    uint8_t *raw = g_lmac.rx_descs[start_idx].buf;
-    /* Convert hardware raw RSSI (byte 0) to calibrated dBm (raw - 96, matching ppProcessRxPktHdr) */
-    raw[0] = (uint8_t)((int8_t)raw[0] - 96);
-    const wifi_pkt_rx_ctrl_t *ctrl = (const wifi_pkt_rx_ctrl_t *)(const void *)raw;
-    uint8_t *frame = raw + sizeof(wifi_pkt_rx_ctrl_t);
+    esp_lmac_rx_buf_t *rb = NULL;
+    const wifi_pkt_rx_ctrl_t *ctrl = NULL;
+    uint8_t *frame = NULL;
     uint16_t flen = ev->len;
 
+#if CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+    if (ev->type == LMAC_NMI_EVT_RX_AMPDU) {
+        uint8_t sidx = ev->a;
+        if (g_lmac.rx_subframes == NULL || sidx >= LMAC_AMPDU_SUBFRAME_POOL_SIZE) {
+            return;
+        }
+        lmac_rx_subframe_t *sf = &g_lmac.rx_subframes[sidx];
+        rb = &sf->handle;
+        if (!rb->in_use || rb->desc_start >= g_lmac.cfg.rx_buf_num || rb->desc_cnt == 0U) {
+            return;
+        }
+        uint8_t *ctrl_raw = (uint8_t *)(void *)sf->rx_ctrl_w;
+        ctrl_raw[0] = (uint8_t)((int8_t)ctrl_raw[0] - 96);
+        ctrl = (const wifi_pkt_rx_ctrl_t *)(const void *)ctrl_raw;
+        frame = g_lmac.rx_descs[rb->desc_start].buf + sf->start_off;
+    } else
+#endif
+    {
+        uint8_t start_idx = ev->a;
+        uint8_t desc_cnt = ev->b;
+
+        if (g_lmac.rx_handles == NULL || start_idx >= g_lmac.cfg.rx_buf_num || desc_cnt == 0U) {
+            return;
+        }
+
+        rb = &g_lmac.rx_handles[start_idx];
+        uint8_t *raw = g_lmac.rx_descs[start_idx].buf;
+        /* Convert hardware raw RSSI (byte 0) to calibrated dBm (raw - 96, matching ppProcessRxPktHdr) */
+        raw[0] = (uint8_t)((int8_t)raw[0] - 96);
+        ctrl = (const wifi_pkt_rx_ctrl_t *)(const void *)raw;
+        frame = raw + sizeof(wifi_pkt_rx_ctrl_t);
+
+        uint32_t w0 = ((const uint32_t *)(const void *)ctrl)[0];
+        uint8_t vif_match = (uint8_t)((w0 >> 28) & 0x0FU);
+
+        rb->rx_ctrl = ctrl;
+        rb->frame = frame;
+        /* PLCP PSDU length includes the 4-byte hardware FCS; strip FCS for normal 802.11 consumers */
+        rb->len = (!g_lmac.sniffer_mode && flen >= 4U) ? (uint16_t)(flen - 4U) : flen;
+        rb->freq_offset = ev->d;
+        rb->vif_match = vif_match;
+        rb->desc_start = start_idx;
+        rb->desc_cnt = desc_cnt;
+        rb->in_use = 1U;
+    }
+
     /* Linearize circular wrap-around into extradata (safe because wrapped descriptors are pinned) */
-    uint8_t *frame_end = frame + flen;
+    uint16_t span_len = g_lmac.sniffer_mode ? flen : rb->len;
+    uint8_t *frame_end = frame + span_len;
     if (frame_end > g_lmac.rx_extradata) {
         size_t tail_bytes = (size_t)(frame_end - g_lmac.rx_extradata);
         if (tail_bytes <= g_lmac.cfg.rx_max_single_pkt_len) {
             memcpy(g_lmac.rx_extradata, g_lmac.rx_frontdata, tail_bytes);
         } else {
             /* Frame exceeds extradata scratch: drop and recycle */
-            rb->desc_start = start_idx;
-            rb->desc_cnt = desc_cnt;
-            rb->in_use = 1U;
             esp_lmac_rx_free(rb);
             return;
         }
     }
 
-    uint32_t w0 = ((const uint32_t *)(const void *)ctrl)[0];
-    uint8_t vif_match = (uint8_t)((w0 >> 28) & 0x0FU);
-
     rb->rx_ctrl = ctrl;
     rb->frame = frame;
-    /* PLCP PSDU length includes the 4-byte hardware FCS; strip FCS for normal 802.11 consumers */
-    rb->len = (!g_lmac.sniffer_mode && flen >= 4U) ? (uint16_t)(flen - 4U) : flen;
-    rb->freq_offset = ev->d;
-    rb->vif_match = vif_match;
-    rb->desc_start = start_idx;
-    rb->desc_cnt = desc_cnt;
-    rb->in_use = 1U;
-
     g_lmac.stats.rx_delivered++;
 
     if (g_lmac.sniffer_mode) {

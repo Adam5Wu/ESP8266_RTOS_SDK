@@ -551,17 +551,31 @@ static void deliver_eth_to_netif(uint8_t vif, uint8_t *eth_ptr, uint16_t eth_len
 {
     wifi_rxcb_t cb = (vif < 2U) ? g_n8.rxcb[vif] : NULL;
     if (cb == NULL) {
-        esp_lmac_rx_free(rx_buf);
+        if (rx_buf != NULL) {
+            esp_lmac_rx_free(rx_buf);
+        } else {
+            heap_caps_free(eth_ptr);
+        }
+        return;
+    }
+
+    /* Heap-reassembled defragmented Ethernet buffers are already owned by caller */
+    if (rx_buf == NULL) {
+        if (cb(eth_ptr, eth_len, NULL) != ESP_OK) {
+            heap_caps_free(eth_ptr);
+        }
         return;
     }
 
     /*
      * Hybrid RX ownership policy:
-     * Use zero-copy (eb = rx_buf) only when contiguous DMA ring headroom exceeds
-     * left_continuous_rx_buf_num AND free DRAM > 6 KB; otherwise copy to heap,
+     * Use zero-copy (eb = rx_buf) only when the frame did not wrap through the
+     * shared rx_extradata scratch, contiguous DMA ring headroom exceeds
+     * left_continuous_rx_buf_num, AND free DRAM > 6 KB; otherwise copy to heap,
      * recycle DMA immediately, and pass eb = NULL (tcpip_adapter frees via os_free).
      */
-    bool allow_zero_copy = (esp_lmac_rx_free_contiguous() > g_n8.init_cfg.left_continuous_rx_buf_num) &&
+    bool allow_zero_copy = !esp_lmac_rx_buf_is_wrapped(rx_buf) &&
+                           (esp_lmac_rx_free_contiguous() > g_n8.init_cfg.left_continuous_rx_buf_num) &&
                            (esp_get_free_heap_size() > N8_RX_COPY_HEAP_FLOOR);
 
     if (allow_zero_copy) {
@@ -706,6 +720,8 @@ static void handle_rx_data(esp_lmac_rx_buf_t *rx_buf)
     uint16_t hdr_len = IEEE80211_HDR_LEN + (is_qos ? IEEE80211_QOS_CTRL_LEN : 0U);
     uint8_t tid = is_qos ? (uint8_t)(frame[IEEE80211_HDR_LEN] & IEEE80211_QOS_TID_MASK) : N8_NON_QOS_TID;
     uint16_t tail_strip = 0U;
+    uint8_t key_idx = 0U;
+    uint64_t frag_pn = 0ULL;
     if (is_prot) {
         if (exp_cipher == ESP_LMAC_CIPHER_NONE) {
             esp_lmac_rx_free(rx_buf);
@@ -721,6 +737,7 @@ static void handle_rx_data(esp_lmac_rx_buf_t *rx_buf)
         }
         const uint8_t *iv = frame + hdr_len;
         uint8_t ext_iv = iv[3] & 0x20U;
+        key_idx = (uint8_t)((iv[3] >> 6) & 3U);
         if (exp_cipher == ESP_LMAC_CIPHER_CCMP || exp_cipher == ESP_LMAC_CIPHER_TKIP) {
             if (ext_iv == 0U) {
                 esp_lmac_rx_free(rx_buf);
@@ -732,7 +749,7 @@ static void handle_rx_data(esp_lmac_rx_buf_t *rx_buf)
             n8_replay_win_t *rwin = NULL;
             if (vif == ESP_LMAC_VIF_STA) {
                 if ((da[0] & N8_MAC_MCAST_BIT) != 0U) {
-                    uint8_t kidx = (uint8_t)((iv[3] >> 6) & 1U);
+                    uint8_t kidx = (uint8_t)(key_idx & 1U);
                     rwin = &g_n8.sta_rx_gtk_pn[kidx];
                 } else {
                     rwin = &g_n8.sta_rx_ptk_pn[tid];
@@ -744,6 +761,7 @@ static void handle_rx_data(esp_lmac_rx_buf_t *rx_buf)
                 esp_lmac_rx_free(rx_buf);
                 return;
             }
+            frag_pn = pn;
             hdr_len = (uint16_t)(hdr_len + 8U);
             tail_strip = (exp_cipher == ESP_LMAC_CIPHER_TKIP)
                          ? IEEE80211_TKIP_TRAILER_LEN
@@ -782,33 +800,69 @@ static void handle_rx_data(esp_lmac_rx_buf_t *rx_buf)
         }
     }
 
-    /* Need at least 8-byte RFC1042 LLC/SNAP header + trailer */
-    if (flen < (uint16_t)(hdr_len + 8U + tail_strip)) {
-        esp_lmac_rx_free(rx_buf);
-        return;
-    }
+    uint8_t *llc = NULL;
+    uint16_t msdu_len = 0U;
+    uint8_t *reasm = NULL;
 
-    uint8_t *llc = frame + hdr_len;
-    if (memcmp(llc, s_rfc1042_hdr, 6U) != 0) {
+#ifdef CONFIG_ESP8266_OSS_WIFI_RX_DEFRAG_ENABLED
+    bool more_frag = (fc1 & IEEE80211_FC1_MOREFRAG) != 0U;
+    uint8_t frag_num = (uint8_t)(seq_ctrl & IEEE80211_FRAG_NUM_MASK);
+    if (more_frag || frag_num != 0U) {
+        if ((da[0] & N8_MAC_MCAST_BIT) != 0U || flen < (uint16_t)(hdr_len + tail_strip + 1U)) {
+            esp_lmac_rx_free(rx_buf);
+            return;
+        }
+        uint16_t frag_payload_len = (uint16_t)(flen - hdr_len - tail_strip);
+        reasm = n8_defrag_rx_frag(vif, frame + IEEE80211_HDR_ADDR2_OFF, tid, seq_ctrl,
+                                  more_frag, is_prot, exp_cipher, key_idx, frag_pn,
+                                  frame + hdr_len, frag_payload_len, &msdu_len);
         esp_lmac_rx_free(rx_buf);
-        return;
+        rx_buf = NULL;
+        if (reasm == NULL) {
+            return;
+        }
+        if (msdu_len < 8U || memcmp(reasm, s_rfc1042_hdr, 6U) != 0) {
+            heap_caps_free(reasm);
+            return;
+        }
+        llc = reasm;
+    } else
+#else
+    (void)key_idx;
+    (void)frag_pn;
+#endif
+    {
+        /* Need at least 8-byte RFC1042 LLC/SNAP header + trailer */
+        if (flen < (uint16_t)(hdr_len + 8U + tail_strip)) {
+            esp_lmac_rx_free(rx_buf);
+            return;
+        }
+        llc = frame + hdr_len;
+        if (memcmp(llc, s_rfc1042_hdr, 6U) != 0) {
+            esp_lmac_rx_free(rx_buf);
+            return;
+        }
+        msdu_len = (uint16_t)(flen - hdr_len - tail_strip);
     }
 
     uint8_t etype_h = llc[6];
     uint8_t etype_l = llc[7];
     uint8_t *payload = llc + 8U;
-    uint16_t payload_len = (uint16_t)(flen - hdr_len - 8U - tail_strip);
+    uint16_t payload_len = (uint16_t)(msdu_len - 8U);
 
     /* Route EAPOL (0x888E) to wpa_supplicant */
     if (etype_h == ETH_P_EAPOL_H && etype_l == ETH_P_EAPOL_L) {
-        /* Copy EAPOL to heap & free DMA descriptor BEFORE calling supplicant (which may TX!) */
-        uint8_t *eapol = (uint8_t *)heap_caps_malloc(payload_len, MALLOC_CAP_8BIT);
-        if (eapol == NULL) {
+        uint8_t *eapol = payload;
+        if (rx_buf != NULL) {
+            /* Copy EAPOL to heap & free DMA descriptor BEFORE calling supplicant (which may TX!) */
+            eapol = (uint8_t *)heap_caps_malloc(payload_len, MALLOC_CAP_8BIT);
+            if (eapol == NULL) {
+                esp_lmac_rx_free(rx_buf);
+                return;
+            }
+            memcpy(eapol, payload, payload_len);
             esp_lmac_rx_free(rx_buf);
-            return;
         }
-        memcpy(eapol, payload, payload_len);
-        esp_lmac_rx_free(rx_buf);
 
         if (g_n8.wpa_cb != NULL) {
             if (vif == ESP_LMAC_VIF_STA && g_n8.wpa_cb->wpa_sta_rx_eapol != NULL) {
@@ -818,27 +872,55 @@ static void handle_rx_data(esp_lmac_rx_buf_t *rx_buf)
                 (void)g_n8.wpa_cb->wpa_ap_rx_eapol(g_n8.ap_hapd, ap_sta->wpa_sm, eapol, payload_len);
             }
         }
-        heap_caps_free(eapol);
+        if (reasm != NULL) {
+            heap_caps_free(reasm);
+        } else {
+            heap_caps_free(eapol);
+        }
         return;
     }
 
     /* Drop non-EAPOL data while port is unauthorized */
     if (vif == ESP_LMAC_VIF_STA && g_n8.sta_state != N8_STA_RUN) {
-        esp_lmac_rx_free(rx_buf);
+        if (reasm != NULL) {
+            heap_caps_free(reasm);
+        } else {
+            esp_lmac_rx_free(rx_buf);
+        }
         return;
     }
     if (vif == ESP_LMAC_VIF_AP && (ap_sta == NULL || !ap_sta->authorized)) {
-        esp_lmac_rx_free(rx_buf);
+        if (reasm != NULL) {
+            heap_caps_free(reasm);
+        } else {
+            esp_lmac_rx_free(rx_buf);
+        }
         return;
     }
 
-    /* In-place 802.3 Ethernet header rewrite immediately preceding payload (safe: hdr_len+8 >= 32 >= 14) */
-    uint8_t *eth_ptr = payload - 14U;
+    uint8_t *eth_ptr = NULL;
     uint16_t eth_len = (uint16_t)(14U + payload_len);
-    memcpy(eth_ptr, da, 6U);
-    memcpy(eth_ptr + 6U, sa, 6U);
-    eth_ptr[12] = etype_h;
-    eth_ptr[13] = etype_l;
+    if (reasm != NULL) {
+        eth_ptr = (uint8_t *)heap_caps_malloc(eth_len, MALLOC_CAP_8BIT);
+        if (eth_ptr == NULL) {
+            heap_caps_free(reasm);
+            return;
+        }
+        memcpy(eth_ptr, da, 6U);
+        memcpy(eth_ptr + 6U, sa, 6U);
+        eth_ptr[12] = etype_h;
+        eth_ptr[13] = etype_l;
+        memcpy(eth_ptr + 14U, payload, payload_len);
+        heap_caps_free(reasm);
+        reasm = NULL;
+    } else {
+        /* In-place 802.3 Ethernet header rewrite immediately preceding payload (safe: hdr_len+8 >= 32 >= 14) */
+        eth_ptr = payload - 14U;
+        memcpy(eth_ptr, da, 6U);
+        memcpy(eth_ptr + 6U, sa, 6U);
+        eth_ptr[12] = etype_h;
+        eth_ptr[13] = etype_l;
+    }
 
     /* SoftAP STA-to-STA hairpinning */
     if (vif == ESP_LMAC_VIF_AP) {
@@ -849,7 +931,11 @@ static void handle_rx_data(esp_lmac_rx_buf_t *rx_buf)
             n8_ap_sta_t *dst_sta = n8_ap_find_sta(da);
             if (dst_sta != NULL && dst_sta->authorized) {
                 (void)n8_data_tx_eth_ap_internal(eth_ptr, eth_len, false);
-                esp_lmac_rx_free(rx_buf);
+                if (rx_buf != NULL) {
+                    esp_lmac_rx_free(rx_buf);
+                } else {
+                    heap_caps_free(eth_ptr);
+                }
                 return;
             }
         }

@@ -103,6 +103,9 @@ else()
             "net80211/net80211_data.c"
             "net80211/net80211_pm.c"
             "net80211/net80211_api.c")
+        if(CONFIG_ESP8266_OSS_WIFI_RX_DEFRAG_ENABLED)
+            list(APPEND srcs "net80211/net80211_defrag.c")
+        endif()
     endif()
 
     if(CONFIG_ESP8266_VENDOR_SMARTCONFIG)

@@ -31,7 +31,11 @@ COMPONENT_OBJEXCLUDE += phy/phy_rf_chan.o phy/phy_rxgain.o \
                         net80211/net80211_supp_glue.o net80211/net80211_scan.o \
                         net80211/net80211_sta.o net80211/net80211_ap.o \
                         net80211/net80211_data.o net80211/net80211_pm.o \
-                        net80211/net80211_api.o
+                        net80211/net80211_api.o \
+                        net80211/net80211_defrag.o
+endif
+ifndef CONFIG_ESP8266_OSS_WIFI_RX_DEFRAG_ENABLED
+COMPONENT_OBJEXCLUDE += net80211/net80211_defrag.o
 endif
 ifndef CONFIG_ESP8266_VENDOR_SMARTCONFIG
 COMPONENT_OBJEXCLUDE += source/smartconfig.o source/smartconfig_ack.o

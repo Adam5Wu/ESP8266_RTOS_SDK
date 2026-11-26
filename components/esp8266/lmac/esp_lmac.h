@@ -145,6 +145,9 @@ typedef struct esp_lmac_config {
     uint8_t  left_continuous_rx_buf_num;  /* Copy fallback threshold (16 in ESPZWApplianceT2) */
     uint8_t  tx_slot_num;                 /* e.g. CONFIG_ESP8266_WIFI_TX_PKT_NUM (6) */
     uint8_t  ampdu_rx_enable;             /* Compiled out when CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED=n */
+    uint8_t  rx_ba_win;                   /* Max RX BA window (default 6, max 16) */
+    uint8_t  rx_ampdu_buf_num;            /* A-MPDU subframe info descriptor count (5) */
+    uint16_t rx_ampdu_buf_len;            /* A-MPDU subframe info buffer size (256) */
     uint16_t rx_buf_len;                  /* Default WIFI_HW_RX_BUFFER_LEN (524) */
     uint16_t rx_max_single_pkt_len;       /* Default WIFI_RX_MAX_SINGLE_PKT_LEN (1076 or 1600) */
 } esp_lmac_config_t;
@@ -157,6 +160,7 @@ void      esp_lmac_housekeeping_100ms(void);
 
 /* RX Buffer Ownership & Ring Headroom */
 uint8_t   esp_lmac_rx_free_contiguous(void);
+bool      esp_lmac_rx_buf_is_wrapped(const esp_lmac_rx_buf_t *rx_buf);
 void      esp_lmac_rx_free(esp_lmac_rx_buf_t *rx_buf);
 
 /* TX Submission & Queue Control */
@@ -210,7 +214,8 @@ void      esp_lmac_sniffer_disable(void);
 void      esp_lmac_sniffer_set_filter(uint32_t filter_mask, uint32_t ctrl_filter_mask);
 void      esp_lmac_sniffer_get_filter(uint32_t *filter_mask, uint32_t *ctrl_filter_mask);
 
-/* Milestone 6C: Hardware RX Block-Ack Scoreboards (0..7); ESP_ERR_NOT_SUPPORTED when AMPDU_RX=n */
+/* Hardware RX Block-Ack Scoreboards (0..3, max 4 sessions); ESP_ERR_NOT_SUPPORTED when AMPDU_RX=n */
+bool      esp_lmac_can_add_rx_ba(esp_lmac_peer_id_t peer_id, uint8_t tid);
 esp_err_t esp_lmac_add_rx_ba(esp_lmac_peer_id_t peer_id, uint8_t tid, uint16_t ssn, uint8_t win_size);
 void      esp_lmac_del_rx_ba(esp_lmac_peer_id_t peer_id, uint8_t tid);
 

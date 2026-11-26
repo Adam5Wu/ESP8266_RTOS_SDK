@@ -451,6 +451,7 @@ int esp_wifi_set_sta_key_internal(int alg, u8 *addr, int key_idx, int set_tx,
                            is_ptk ? g_n8.sta_peer_id : ESP_LMAC_PEER_INVALID,
                            is_ptk ? ESP_LMAC_KEY_TYPE_PTK : ESP_LMAC_KEY_TYPE_GTK,
                            kidx);
+        n8_defrag_purge_vif(ESP_LMAC_VIF_STA);
         if (is_ptk) {
             g_n8.sta_ptk_cipher = (uint8_t)ESP_LMAC_CIPHER_NONE;
             memset(g_n8.sta_ptk_key, 0, sizeof(g_n8.sta_ptk_key));
@@ -500,6 +501,7 @@ int esp_wifi_set_sta_key_internal(int alg, u8 *addr, int key_idx, int set_tx,
         g_n8.sta_gtk_key_idx = kidx;
         memset(&g_n8.sta_rx_gtk_pn[kidx & 1U], 0, sizeof(g_n8.sta_rx_gtk_pn[0]));
     }
+    n8_defrag_purge_vif(ESP_LMAC_VIF_STA);
     return 0;
 }
 
@@ -538,6 +540,7 @@ int esp_wifi_set_ap_key_internal(int alg, const u8 *addr, int idx, u8 *key, size
             esp_lmac_key_clear(ESP_LMAC_VIF_AP, ESP_LMAC_PEER_INVALID,
                                ESP_LMAC_KEY_TYPE_GTK, (uint8_t)(idx & 3));
             g_n8.ap_gtk_cipher = (uint8_t)ESP_LMAC_CIPHER_NONE;
+            n8_defrag_purge_vif(ESP_LMAC_VIF_AP);
         } else {
             n8_ap_sta_t *sta = n8_ap_find_sta(addr);
             if (sta != NULL) {
@@ -547,6 +550,7 @@ int esp_wifi_set_ap_key_internal(int alg, const u8 *addr, int idx, u8 *key, size
                     sta->authorized = 0U;
                 }
                 memset(sta->ptk_pn, 0, sizeof(sta->ptk_pn));
+                n8_defrag_purge_peer(ESP_LMAC_VIF_AP, sta->mac);
             }
         }
         return 0;
@@ -580,6 +584,7 @@ int esp_wifi_set_ap_key_internal(int alg, const u8 *addr, int idx, u8 *key, size
         g_n8.ap_gtk_cipher = (uint8_t)cipher;
         g_n8.ap_gtk_key_idx = (uint8_t)(idx & 3);
         g_n8.ap_gtk_pn = 1ULL;
+        n8_defrag_purge_vif(ESP_LMAC_VIF_AP);
         return 0;
     }
 
@@ -597,6 +602,7 @@ int esp_wifi_set_ap_key_internal(int alg, const u8 *addr, int idx, u8 *key, size
     sta->ptk_key_idx = (uint8_t)(idx & 3);
     sta->tx_pn = 1ULL;
     memset(sta->ptk_pn, 0, sizeof(sta->ptk_pn));
+    n8_defrag_purge_peer(ESP_LMAC_VIF_AP, sta->mac);
     return 0;
 }
 

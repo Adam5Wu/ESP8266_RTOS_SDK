@@ -232,6 +232,7 @@ static void n8_worker_task(void *arg)
                 n8_sta_on_tick_100ms();
                 n8_ap_on_tick_100ms();
                 n8_pm_on_tick_100ms();
+                n8_defrag_on_tick_100ms();
             }
         }
     }

@@ -58,8 +58,32 @@ esp_err_t esp_lmac_init(const esp_lmac_config_t *cfg, const esp_lmac_callbacks_t
     if (g_lmac.cfg.rx_buf_len == 0U) {
         g_lmac.cfg.rx_buf_len = 524U;
     }
+#if !CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+    g_lmac.cfg.ampdu_rx_enable = 0U;
+    g_lmac.cfg.rx_ba_win = 0U;
+    g_lmac.cfg.rx_ampdu_buf_num = 0U;
+    g_lmac.cfg.rx_ampdu_buf_len = 0U;
+#else
+    if (g_lmac.cfg.ampdu_rx_enable != 0U) {
+        if (g_lmac.cfg.rx_ba_win > 16U) {
+            g_lmac.cfg.rx_ba_win = 16U;
+        }
+        if (g_lmac.cfg.rx_ampdu_buf_num == 0U) {
+            g_lmac.cfg.rx_ampdu_buf_num = 5U;
+        }
+        if (g_lmac.cfg.rx_ampdu_buf_len < 64U) {
+            g_lmac.cfg.rx_ampdu_buf_len = 256U;
+        }
+    } else {
+        g_lmac.cfg.rx_ba_win = 0U;
+        g_lmac.cfg.rx_ampdu_buf_num = 0U;
+        g_lmac.cfg.rx_ampdu_buf_len = 0U;
+    }
+#endif
     if (g_lmac.cfg.rx_max_single_pkt_len == 0U) {
-        g_lmac.cfg.rx_max_single_pkt_len = 1600U;
+        g_lmac.cfg.rx_max_single_pkt_len = g_lmac.cfg.ampdu_rx_enable ? 1600U : 1076U;
+    } else if (g_lmac.cfg.ampdu_rx_enable == 0U && g_lmac.cfg.rx_max_single_pkt_len > 1076U) {
+        g_lmac.cfg.rx_max_single_pkt_len = 1076U;
     }
     if (g_lmac.cfg.tx_slot_num < 2U) {
         g_lmac.cfg.tx_slot_num = 6U;
@@ -142,7 +166,11 @@ bool esp_lmac_process_events(uint8_t max_rx_batch, uint8_t max_tx_batch)
         uint8_t rd = g_lmac.nmi_rd;
         lmac_nmi_evt_t ev = g_lmac.nmi_ring[rd];
 
-        if (ev.type == LMAC_NMI_EVT_RX_DESC && max_rx_batch > 0U && rx_done >= max_rx_batch) {
+        if ((ev.type == LMAC_NMI_EVT_RX_DESC
+#if CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+             || ev.type == LMAC_NMI_EVT_RX_AMPDU
+#endif
+             ) && max_rx_batch > 0U && rx_done >= max_rx_batch) {
             return true;
         }
 #ifdef CONFIG_ESP8266_OSS_WIFI_MIN_NMI
@@ -156,6 +184,9 @@ bool esp_lmac_process_events(uint8_t max_rx_batch, uint8_t max_tx_batch)
 
         switch (ev.type) {
         case LMAC_NMI_EVT_RX_DESC:
+#if CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+        case LMAC_NMI_EVT_RX_AMPDU:
+#endif
             lmac_dma_dispatch_rx_evt(&ev);
             rx_done++;
             break;

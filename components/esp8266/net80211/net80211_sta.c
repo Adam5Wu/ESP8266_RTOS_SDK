@@ -155,8 +155,35 @@ static uint8_t *sta_decrypt_pmf_mgmt(const uint8_t *frame, uint16_t len, size_t 
     return (uint8_t *)plain;
 }
 
-static esp_err_t sta_tx_mgmt(uint8_t subtype, const uint8_t *body, uint16_t body_len,
-                             bool force_lowest, bool protected_mgmt)
+typedef struct {
+    void                 *buf;
+    bool                  use_os_free;
+    esp_lmac_tx_done_cb_t cb;
+    void                 *ctx;
+} n8_sta_mgmt_wrap_t;
+
+static void sta_mgmt_wrap_tx_cb(void *ctx, const esp_lmac_tx_status_t *st)
+{
+    n8_sta_mgmt_wrap_t *w = (n8_sta_mgmt_wrap_t *)ctx;
+    if (w == NULL) {
+        return;
+    }
+    if (w->buf != NULL) {
+        if (w->use_os_free) {
+            os_free(w->buf);
+        } else {
+            heap_caps_free(w->buf);
+        }
+    }
+    if (w->cb != NULL) {
+        w->cb(w->ctx, st);
+    }
+    heap_caps_free(w);
+}
+
+static esp_err_t sta_tx_mgmt_cb(uint8_t subtype, const uint8_t *body, uint16_t body_len,
+                                bool force_lowest, bool protected_mgmt,
+                                esp_lmac_tx_done_cb_t done_cb, void *done_ctx)
 {
     if (protected_mgmt) {
         if (g_n8.sta_pmf_active == 0U || g_n8.sta_ptk_key_valid == 0U ||
@@ -214,6 +241,8 @@ static esp_err_t sta_tx_mgmt(uint8_t subtype, const uint8_t *body, uint16_t body
 
         if (enc_len + 4U <= N8_STA_LMAC_SCRATCH_MAX) {
             tx.hdr_len = (uint16_t)enc_len;
+            tx.done_cb = done_cb;
+            tx.done_ctx = done_ctx;
             esp_err_t err = esp_lmac_tx_submit(&tx);
             os_free(crypt);
             return err;
@@ -224,11 +253,31 @@ static esp_err_t sta_tx_mgmt(uint8_t subtype, const uint8_t *body, uint16_t body
         seg.len = (uint16_t)(enc_len - N8_STA_PROT_HDR_LEN);
         tx.segs = &seg;
         tx.seg_cnt = 1U;
-        tx.done_cb = sta_os_free_tx_cb;
-        tx.done_ctx = crypt;
+
+        n8_sta_mgmt_wrap_t *wrap = NULL;
+        if (done_cb != NULL) {
+            wrap = (n8_sta_mgmt_wrap_t *)heap_caps_malloc(sizeof(*wrap), MALLOC_CAP_8BIT);
+            if (wrap == NULL) {
+                os_free(crypt);
+                return ESP_ERR_NO_MEM;
+            }
+            wrap->buf = crypt;
+            wrap->use_os_free = true;
+            wrap->cb = done_cb;
+            wrap->ctx = done_ctx;
+            tx.done_cb = sta_mgmt_wrap_tx_cb;
+            tx.done_ctx = wrap;
+        } else {
+            tx.done_cb = sta_os_free_tx_cb;
+            tx.done_ctx = crypt;
+        }
+
         esp_err_t err = esp_lmac_tx_submit(&tx);
         if (err != ESP_OK) {
             os_free(crypt);
+            if (wrap != NULL) {
+                heap_caps_free(wrap);
+            }
         }
         return err;
     }
@@ -267,14 +316,44 @@ static esp_err_t sta_tx_mgmt(uint8_t subtype, const uint8_t *body, uint16_t body
     tx.segs = (copy != NULL) ? &seg : NULL;
     tx.seg_cnt = (copy != NULL) ? 1U : 0U;
     tx.trailer_len = 0U;
-    tx.done_cb = (copy != NULL) ? n8_mgmt_free_tx_cb : NULL;
-    tx.done_ctx = copy;
+
+    n8_sta_mgmt_wrap_t *wrap = NULL;
+    if (done_cb != NULL && copy != NULL) {
+        wrap = (n8_sta_mgmt_wrap_t *)heap_caps_malloc(sizeof(*wrap), MALLOC_CAP_8BIT);
+        if (wrap == NULL) {
+            heap_caps_free(copy);
+            return ESP_ERR_NO_MEM;
+        }
+        wrap->buf = copy;
+        wrap->use_os_free = false;
+        wrap->cb = done_cb;
+        wrap->ctx = done_ctx;
+        tx.done_cb = sta_mgmt_wrap_tx_cb;
+        tx.done_ctx = wrap;
+    } else if (done_cb != NULL) {
+        tx.done_cb = done_cb;
+        tx.done_ctx = done_ctx;
+    } else {
+        tx.done_cb = (copy != NULL) ? n8_mgmt_free_tx_cb : NULL;
+        tx.done_ctx = copy;
+    }
 
     esp_err_t err = esp_lmac_tx_submit(&tx);
-    if (err != ESP_OK && copy != NULL) {
-        heap_caps_free(copy);
+    if (err != ESP_OK) {
+        if (copy != NULL) {
+            heap_caps_free(copy);
+        }
+        if (wrap != NULL) {
+            heap_caps_free(wrap);
+        }
     }
     return err;
+}
+
+static esp_err_t sta_tx_mgmt(uint8_t subtype, const uint8_t *body, uint16_t body_len,
+                             bool force_lowest, bool protected_mgmt)
+{
+    return sta_tx_mgmt_cb(subtype, body, body_len, force_lowest, protected_mgmt, NULL, NULL);
 }
 
 /**
@@ -515,6 +594,7 @@ void n8_sta_disconnect(uint8_t reason, bool send_deauth, bool notify_event)
     esp_lmac_tx_flush_vif(ESP_LMAC_VIF_STA);
     esp_lmac_key_clear_vif(ESP_LMAC_VIF_STA);
     esp_lmac_set_bssid_filter(ESP_LMAC_VIF_STA, NULL, false);
+    n8_defrag_purge_vif(ESP_LMAC_VIF_STA);
 
     if (g_n8.sta_peer_id != ESP_LMAC_PEER_INVALID) {
         for (uint8_t tid = 0U; tid < 8U; tid++) {
@@ -785,6 +865,36 @@ void n8_sta_on_auth_done(void)
  * STA Management Frame RX (Beacon, Auth/SAE, AssocResp, Deauth, Action/BA)
  * -------------------------------------------------------------------------- */
 
+#ifdef CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+typedef struct {
+    esp_lmac_peer_id_t peer_id;
+    uint8_t            tid;
+    uint8_t            win;
+    uint16_t           ssn;
+} n8_sta_addba_ctx_t;
+
+/**
+ * @brief Arm STA hardware RX Block Ack only after ADDBA Response is ACKed over air.
+ *
+ * @param ctx Heap-allocated n8_sta_addba_ctx_t pending session state.
+ * @param st  LMAC TX status for the transmitted ADDBA Response.
+ */
+static void sta_addba_tx_done_cb(void *ctx, const esp_lmac_tx_status_t *st)
+{
+    n8_sta_addba_ctx_t *pending = (n8_sta_addba_ctx_t *)ctx;
+    if (pending == NULL) {
+        return;
+    }
+    if (st != NULL && st->ok != 0U &&
+        g_n8.sta_state == N8_STA_RUN &&
+        g_n8.sta_peer_id == pending->peer_id) {
+        (void)esp_lmac_add_rx_ba(pending->peer_id, pending->tid,
+                                 pending->ssn, pending->win);
+    }
+    heap_caps_free(pending);
+}
+#endif
+
 static void sta_handle_action(const uint8_t *frame, uint16_t len)
 {
     bool is_bcast = (frame[IEEE80211_HDR_ADDR1_OFF] & N8_MAC_MCAST_BIT) != 0U;
@@ -857,18 +967,48 @@ static void sta_handle_action(const uint8_t *frame, uint16_t len)
         return;
     }
 
-    /* 802.11n Block Ack (declined in P1 until Phase 3 NMI A-MPDU demux) */
+    /* 802.11n Block Ack (STA RX A-MPDU, including WPA3/PMF links) */
     if (cat == IEEE80211_CAT_BA && g_n8.sta_state == N8_STA_RUN &&
         (g_n8.sta_pmf_active == 0U || g_n8.sta_ptk_key_valid != 0U)) {
         if (act == IEEE80211_BA_ACTION_ADDBA_REQ && blen >= 9U) {
             uint8_t dialog = body[2];
             uint16_t ba_param = (uint16_t)((uint16_t)body[3] | ((uint16_t)body[4] << 8));
+            uint8_t policy = (uint8_t)((ba_param >> 1) & 1U);
             uint8_t tid = (uint8_t)((ba_param >> 2) & 0x0FU);
             uint16_t req_win = (uint16_t)((ba_param >> 6) & N8_STA_ADDBA_WIN_MASK);
             uint16_t timeout = (uint16_t)((uint16_t)body[5] | ((uint16_t)body[6] << 8));
+            uint16_t ssn = (uint16_t)((((uint16_t)body[7] | ((uint16_t)body[8] << 8)) >> 4) & 0x0FFFU);
             uint16_t status = WLAN_STATUS_REQUEST_DECLINED;
-            (void)req_win;
-            uint16_t resp_param = (uint16_t)(((req_win & N8_STA_ADDBA_WIN_MASK) << 6) |
+            uint16_t resp_win = req_win;
+            esp_lmac_tx_done_cb_t tx_cb = NULL;
+            void *tx_ctx = NULL;
+
+#ifdef CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+            if (g_n8.init_cfg.ampdu_rx_enable != 0U &&
+                g_n8.sta_ht_active != 0U &&
+                policy == 1U && tid < N8_MAX_TID &&
+                g_n8.init_cfg.rx_ba_win > 0U &&
+                esp_lmac_can_add_rx_ba(g_n8.sta_peer_id, tid)) {
+                uint16_t max_win = g_n8.init_cfg.rx_ba_win;
+                resp_win = (req_win == 0U || req_win > max_win) ? max_win : req_win;
+                n8_sta_addba_ctx_t *pending = (n8_sta_addba_ctx_t *)heap_caps_malloc(
+                    sizeof(*pending), MALLOC_CAP_8BIT);
+                if (pending != NULL) {
+                    pending->peer_id = g_n8.sta_peer_id;
+                    pending->tid = tid;
+                    pending->win = (uint8_t)resp_win;
+                    pending->ssn = ssn;
+                    status = WLAN_STATUS_SUCCESS_CODE;
+                    tx_cb = sta_addba_tx_done_cb;
+                    tx_ctx = pending;
+                }
+            }
+#else
+            (void)policy;
+            (void)ssn;
+#endif
+
+            uint16_t resp_param = (uint16_t)(((resp_win & N8_STA_ADDBA_WIN_MASK) << 6) |
                                              ((uint16_t)tid << 2) | 0x02U);
             uint8_t resp[9] = {
                 IEEE80211_CAT_BA, IEEE80211_BA_ACTION_ADDBA_RESP,
@@ -877,12 +1017,17 @@ static void sta_handle_action(const uint8_t *frame, uint16_t len)
                 (uint8_t)(resp_param & 0xFFU), (uint8_t)(resp_param >> 8),
                 (uint8_t)(timeout & 0xFFU), (uint8_t)(timeout >> 8)
             };
-            (void)sta_tx_mgmt(IEEE80211_SUBTYPE_ACTION, resp, sizeof(resp), false,
-                              (g_n8.sta_pmf_active != 0U));
+            esp_err_t tx_err = sta_tx_mgmt_cb(IEEE80211_SUBTYPE_ACTION, resp, sizeof(resp),
+                                              false, (g_n8.sta_pmf_active != 0U), tx_cb, tx_ctx);
+            if (tx_err != ESP_OK && tx_ctx != NULL) {
+                heap_caps_free(tx_ctx);
+            }
         } else if (act == IEEE80211_BA_ACTION_DELBA && blen >= 6U) {
             uint16_t del_param = (uint16_t)((uint16_t)body[2] | ((uint16_t)body[3] << 8));
             uint8_t tid = (uint8_t)((del_param >> 12) & 0x0FU);
-            esp_lmac_del_rx_ba(g_n8.sta_peer_id, tid);
+            if (tid < N8_MAX_TID) {
+                esp_lmac_del_rx_ba(g_n8.sta_peer_id, tid);
+            }
         }
     }
 

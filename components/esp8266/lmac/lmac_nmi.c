@@ -148,6 +148,237 @@ static void __attribute__((noinline)) IRAM_ATTR nmi_recycle_desc_range(uint8_t s
     }
 }
 
+#if CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+/**
+ * @brief Demux an A-MPDU RX chain in IRAM NMI using WDEV's subframe-info descriptor.
+ *
+ * Walks rx_ampdu_descs[rx_ampdu_head_idx], enforces CVE-2020-26146 fragment
+ * drops, allocates handles from the 32-entry static rx_subframes pool, tracks
+ * 5-bit LLDESC_OFF_MASK refcounts on shared rx_descs, immediately restores
+ * LLDESC_OWNER on rx_ampdu_descs, and recycles any unreferenced rx_descs.
+ *
+ * @return true if at least one subframe event was pushed to nmi_ring.
+ */
+static bool __attribute__((noinline)) IRAM_ATTR nmi_drain_ampdu(
+    uint8_t start_idx, uint8_t cnt, uint32_t w0, uint32_t w1, uint32_t w2, uint8_t ch)
+{
+    lmac_lldesc_t *descs = g_lmac.rx_descs;
+    uint8_t n = g_lmac.cfg.rx_buf_num;
+
+    if (g_lmac.cfg.ampdu_rx_enable == 0U || g_lmac.rx_ampdu_descs == NULL ||
+        g_lmac.rx_subframes == NULL || cnt == 0U) {
+        nmi_recycle_desc_range(start_idx, cnt);
+        return false;
+    }
+
+    uint8_t ahead = g_lmac.rx_ampdu_head_idx;
+    uint8_t anum = g_lmac.cfg.rx_ampdu_buf_num;
+    uint16_t abuf_len = g_lmac.cfg.rx_ampdu_buf_len;
+    lmac_lldesc_t *adesc = &g_lmac.rx_ampdu_descs[ahead];
+    uint32_t actrl = adesc->ctrl;
+    uint16_t sub_cnt = ((actrl & LLDESC_EOF) != 0U) ? (uint16_t)((actrl >> 14) & 0x3FFU) : 0U;
+    uint16_t max_entries = (uint16_t)(abuf_len >> 2);
+    if (sub_cnt > max_entries) {
+        sub_cnt = max_entries;
+    }
+
+    uint16_t buf_len = g_lmac.cfg.rx_buf_len;
+    uint8_t sf_desc_idx = start_idx;
+    uint16_t sf_off = sizeof(wifi_pkt_rx_ctrl_t);
+    uint16_t rem_in_desc = (uint16_t)(buf_len - sf_off);
+    uint8_t consumed_descs = 1U;
+    uint8_t first_fc1 = descs[start_idx].buf[13];
+    uint16_t strip = (!g_lmac.sniffer_mode && ((first_fc1 & 0x40U) != 0U))
+                     ? LMAC_AMPDU_STRIP_CRYPTO
+                     : LMAC_AMPDU_STRIP_PLAIN;
+    int16_t freq_off = (!g_lmac.sniffer_mode) ? phy_get_bb_freqoffset() : 0;
+    const uint32_t *entries = (const uint32_t *)(const void *)adesc->buf;
+    bool pushed_any = false;
+
+    for (uint16_t si = 0U; si < sub_cnt; si++) {
+        uint32_t entry = entries[si];
+        uint8_t sub_state = (uint8_t)(entry & 0xFFU);
+        uint16_t sub_len = (uint16_t)((entry >> 8) & 0xFFFU);
+
+        /* WDEV silicon only DMAs subframes with sub_state == 0 into rx_frontdata */
+        if (sub_state != LMAC_RXSTATE_OK) {
+            continue;
+        }
+        if (sub_len < LMAC_AMPDU_MIN_SUBFRAME_LEN) {
+            break;
+        }
+        if (sub_len <= strip) {
+            break;
+        }
+
+        uint16_t dma_bytes = (uint16_t)(((sub_len - strip) + 3U) & ~3U);
+        if (rem_in_desc == 0U) {
+            if (consumed_descs >= cnt) {
+                break;
+            }
+            sf_desc_idx++;
+            if (sf_desc_idx >= n) {
+                sf_desc_idx = 0U;
+            }
+            consumed_descs++;
+            rem_in_desc = buf_len;
+            sf_off = 0U;
+        }
+
+        uint32_t avail_bytes = (uint32_t)rem_in_desc +
+                               (uint32_t)(cnt - consumed_descs) * (uint32_t)buf_len;
+        if ((uint32_t)dma_bytes > avail_bytes) {
+            break;
+        }
+
+        uint8_t cur_start_desc = sf_desc_idx;
+        uint16_t cur_start_off = sf_off;
+        uint8_t cur_desc_cnt = 1U;
+
+        uint16_t rem = dma_bytes;
+        while (rem > rem_in_desc) {
+            rem = (uint16_t)(rem - rem_in_desc);
+            sf_desc_idx++;
+            if (sf_desc_idx >= n) {
+                sf_desc_idx = 0U;
+            }
+            consumed_descs++;
+            cur_desc_cnt++;
+            rem_in_desc = buf_len;
+            sf_off = 0U;
+        }
+        rem_in_desc = (uint16_t)(rem_in_desc - rem);
+        sf_off = (uint16_t)(buf_len - rem_in_desc);
+
+        if (sub_len > LMAC_AMPDU_MAX_SUBFRAME_LEN) {
+            continue;
+        }
+
+        /* Read 802.11 FC1 and Sequence Control LSB safely across descriptor wrap */
+        uint8_t sf_fc1 = descs[cur_start_desc].buf[cur_start_off + 1U];
+        uint8_t sf_seq_lo;
+        if ((uint16_t)(cur_start_off + 22U) < buf_len) {
+            sf_seq_lo = descs[cur_start_desc].buf[cur_start_off + 22U];
+        } else {
+            uint8_t next_d = (uint8_t)(cur_start_desc + 1U);
+            if (next_d >= n) {
+                next_d = 0U;
+            }
+            sf_seq_lo = descs[next_d].buf[cur_start_off + 22U - buf_len];
+        }
+
+        /* CVE-2020-26146: drop fragmented A-MPDU subframes (MoreFrag != 0 || FragNum != 0) */
+        if (!g_lmac.sniffer_mode && ((sf_fc1 & 0x04U) != 0U || (sf_seq_lo & 0x0FU) != 0U)) {
+            g_lmac.stats.rx_nmi_drops++;
+            continue;
+        }
+
+        /* Branchless 5-step LSB lookup in the 32-entry static subframe pool */
+        uint32_t free_mask = ~g_lmac.rx_subframe_used_mask;
+        if (free_mask == 0U) {
+            g_lmac.stats.rx_nmi_drops++;
+            continue;
+        }
+        uint32_t lsb = free_mask & (uint32_t)(-(int32_t)free_mask);
+        uint8_t sidx = 0U;
+        if ((lsb & 0xFFFF0000U) != 0U) { sidx += 16U; }
+        if ((lsb & 0xFF00FF00U) != 0U) { sidx += 8U; }
+        if ((lsb & 0xF0F0F0F0U) != 0U) { sidx += 4U; }
+        if ((lsb & 0xCCCCCCCCU) != 0U) { sidx += 2U; }
+        if ((lsb & 0xAAAAAAAAU) != 0U) { sidx += 1U; }
+
+        /* Guard 5-bit descriptor refcount against saturation (< 31) */
+        bool ref_ok = true;
+        uint8_t ridx = cur_start_desc;
+        for (uint8_t k = 0U; k < cur_desc_cnt; k++) {
+            uint32_t rc = (descs[ridx].ctrl & LLDESC_OFF_MASK) >> LLDESC_OFF_SHIFT;
+            if (rc >= LMAC_LLDESC_REFCNT_MAX) {
+                ref_ok = false;
+                break;
+            }
+            ridx++;
+            if (ridx >= n) {
+                ridx = 0U;
+            }
+        }
+        if (!ref_ok) {
+            g_lmac.stats.rx_nmi_drops++;
+            continue;
+        }
+
+        lmac_rx_subframe_t *sf = &g_lmac.rx_subframes[sidx];
+        sf->rx_ctrl_w[0] = ((w0 & 0xC000U) == 0U)
+                           ? ((w0 & 0xF000FFFFU) | ((uint32_t)sub_len << 16))
+                           : w0;
+        sf->rx_ctrl_w[1] = ((w0 & 0xC000U) != 0U)
+                           ? ((w1 & 0xFF0000FFU) | ((uint32_t)sub_len << 8))
+                           : w1;
+        sf->rx_ctrl_w[2] = (w2 & 0xFFF0FF00U) | (((uint32_t)ch & 0x0FU) << 16) | (uint32_t)sub_state;
+        sf->start_off = cur_start_off;
+        sf->handle.rx_ctrl = NULL;
+        sf->handle.frame = NULL;
+        sf->handle.len = (!g_lmac.sniffer_mode && sub_len >= 4U) ? (uint16_t)(sub_len - 4U) : sub_len;
+        sf->handle.freq_offset = freq_off;
+        sf->handle.vif_match = (uint8_t)((w0 >> 28) & 0x0FU);
+        sf->handle.desc_start = cur_start_desc;
+        sf->handle.desc_cnt = cur_desc_cnt;
+        sf->handle.in_use = 1U;
+
+        lmac_nmi_evt_t ev;
+        ev.type = LMAC_NMI_EVT_RX_AMPDU;
+        ev.a = sidx;
+        ev.b = 0U;
+        ev.c = sub_state;
+        ev.d = freq_off;
+        ev.len = sub_len;
+
+        if (nmi_ring_push(&ev)) {
+            g_lmac.rx_subframe_used_mask |= (1U << sidx);
+            ridx = cur_start_desc;
+            for (uint8_t k = 0U; k < cur_desc_cnt; k++) {
+                uint32_t rc = (descs[ridx].ctrl & LLDESC_OFF_MASK) >> LLDESC_OFF_SHIFT;
+                descs[ridx].ctrl = (descs[ridx].ctrl & ~LLDESC_OFF_MASK) |
+                                   ((rc + 1U) << LLDESC_OFF_SHIFT);
+                ridx++;
+                if (ridx >= n) {
+                    ridx = 0U;
+                }
+            }
+            g_lmac.stats.rx_nmi_frames++;
+            pushed_any = true;
+        } else {
+            sf->handle.in_use = 0U;
+            g_lmac.stats.rx_nmi_drops++;
+        }
+    }
+
+    /* Immediately restore rx_ampdu_descs owner and advance head index */
+    adesc->ctrl = LLDESC_OWNER | ((uint32_t)abuf_len << LLDESC_LEN_SHIFT) | (uint32_t)abuf_len;
+    ahead++;
+    if (ahead >= anum) {
+        ahead = 0U;
+    }
+    g_lmac.rx_ampdu_head_idx = ahead;
+
+    /* Immediately recycle any rx_descs not pinned by an accepted subframe */
+    uint8_t idx = start_idx;
+    for (uint8_t i = 0U; i < cnt; i++) {
+        lmac_lldesc_t *d = &descs[idx];
+        if ((d->ctrl & LLDESC_OFF_MASK) == 0U) {
+            uint32_t sz = d->ctrl & LLDESC_SIZE_MASK;
+            d->ctrl = LLDESC_OWNER | (sz << LLDESC_LEN_SHIFT) | sz;
+            lmac_rx_set_desc_bit_locked(idx);
+        }
+        idx++;
+        if (idx >= n) {
+            idx = 0U;
+        }
+    }
+
+    return pushed_any;
+}
+#endif
+
 /* --------------------------------------------------------------------------
  * Thin RX Descriptor Drain in NMI (<10 us, zero malloc/memcpy)
  * -------------------------------------------------------------------------- */
@@ -229,6 +460,17 @@ static bool IRAM_ATTR nmi_drain_rx(void)
                         : (uint16_t)((w0 >> 16) & 0x0FFFU);
         uint8_t rx_state = (uint8_t)(w2 & 0xFFU);
         bool is_ampdu = ((w1 & 0x08000000U) != 0U);
+#if CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+        if (reached_eof && is_ampdu) {
+            if (nmi_drain_ampdu(start_idx, cnt, w0, w1, w2, ch)) {
+                pushed_any = true;
+            }
+            if (reached_last) {
+                break;
+            }
+            continue;
+        }
+#endif
         int16_t freq_off = 0;
 
         bool accept = reached_eof && (flen >= 10U) && (flen <= 2346U) && (!is_ampdu);
@@ -255,6 +497,17 @@ static bool IRAM_ATTR nmi_drain_rx(void)
             ev.len = flen;
 
             if (nmi_ring_push(&ev)) {
+#if CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+                uint8_t ridx = start_idx;
+                for (uint8_t k = 0U; k < cnt; k++) {
+                    descs[ridx].ctrl = (descs[ridx].ctrl & ~LLDESC_OFF_MASK) |
+                                       (1U << LLDESC_OFF_SHIFT);
+                    ridx++;
+                    if (ridx >= n) {
+                        ridx = 0U;
+                    }
+                }
+#endif
                 pushed_any = true;
                 recycle = false;
             } else {

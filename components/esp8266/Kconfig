@@ -405,7 +405,13 @@ config ESP8266_WIFI_AMPDU_RX_ENABLED
     select ESP8266_WIFI_QOS_ENABLED
     default n
     help
-        Select this option to enable AMPDU RX feature
+        Select this option to enable AMPDU RX feature.
+
+        Under Open-source Wi-Fi, enabling AMPDU RX automatically selects
+        ESP8266_WIFI_QOS_ENABLED, allocates the A-MPDU subframe descriptor
+        arena and 32-entry subframe pool (~2.4-9 KB total DRAM depending on
+        RX_BUFFER_NUM and ~450-800 B static IRAM), and recommends
+        ESP8266_WIFI_RX_BUFFER_NUM >= 24.
 
 config ESP8266_WIFI_RX_BA_WIN_SIZE
     int "WiFi AMPDU RX BA window size"
@@ -431,7 +437,7 @@ config ESP8266_WIFI_RX_BUFFER_NUM
         Set the number of Wi-Fi RX buffers.
 
         - Open-source Wi-Fi (lmac_internal.h, lmac_pm_compat.c): each buffer
-          is 524 B in a contiguous DMA arena and the count is capped at 24
+          is 524 B in a contiguous DMA arena and the count is capped at 28
           (LMAC_MAX_RX_BUFS).
         - Vendor Wi-Fi: honors up to 28 buffers (each ~524 B; 26 is
           recommended for shieldbox iperf).
@@ -537,6 +543,15 @@ config ESP8266_OSS_WIFI_RTC_FAST_CONNECT
         Cache the derived 32-byte WPA2 PMK, BSSID, and channel in 64 bytes of
         RTC_SYS memory so warm resets / OTA reboots skip PBKDF2-SHA1 and probe
         the cached channel first. Cleared automatically on power-on reset.
+
+config ESP8266_OSS_WIFI_RX_DEFRAG_ENABLED
+    bool "Enable 802.11 RX frame defragmentation (OSS Wi-Fi)"
+    depends on ESP8266_OSS_PHY_WIFI
+    default n
+    help
+        Reassemble incoming fragmented 802.11 data frames (with FragAttacks
+        cipher/PN/A-MSDU consistency checks). When disabled (default),
+        fragmented MPDUs are dropped immediately with zero RAM/Flash overhead.
 
 config ESP8266_WIFI_DEBUG_LOG_ENABLE
     bool "Enable WiFi debug log"

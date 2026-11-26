@@ -259,6 +259,7 @@ void esp_lmac_peer_remove(esp_lmac_peer_id_t peer_id)
     if (p == NULL) {
         return;
     }
+    lmac_rx_ba_clear_peer(p->mac);
     if (p->ptk_hw_slot < LMAC_HW_KEY_SLOTS) {
         esp_lmac_key_clear(p->vif, peer_id, ESP_LMAC_KEY_TYPE_PTK, 0U);
     }
@@ -293,8 +294,9 @@ void esp_lmac_peer_update_rssi(esp_lmac_peer_id_t peer_id, int8_t rssi)
         }
         return;
     }
-    /* Exponential moving average: 7/8 old + 1/8 new */
-    int32_t avg = ((int32_t)p->rssi_avg * 7 + (int32_t)rssi) / 8;
+    /* Exponential moving average: 7/8 old + 1/8 new with directional rounding to avoid stalls */
+    int32_t sum = (int32_t)p->rssi_avg * 7 + (int32_t)rssi;
+    int32_t avg = (rssi < p->rssi_avg) ? ((sum - 7) / 8) : (sum / 8);
     p->rssi_avg = (int8_t)avg;
 }
 

@@ -543,6 +543,7 @@ void esp_lmac_vif_disable(esp_lmac_vif_t vif)
     }
 
     esp_lmac_tx_flush_vif(vif);
+    lmac_rx_ba_clear_vif(vif);
     esp_lmac_key_clear_vif(vif);
     if (vif == ESP_LMAC_VIF_AP) {
         esp_lmac_stop_beacon(vif);
@@ -844,22 +845,83 @@ void esp_lmac_sniffer_get_filter(uint32_t *filter_mask, uint32_t *ctrl_filter_ma
 }
 
 /* --------------------------------------------------------------------------
- * Hardware RX Block-Ack Scoreboards (0..7, Gated by AMPDU_RX Kconfig)
+ * Hardware RX Block-Ack Scoreboards (0..3, max 4 sessions, Gated by AMPDU_RX)
  * -------------------------------------------------------------------------- */
+
+#ifdef CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+static void lmac_rx_ba_clear_slot(uint8_t slot)
+{
+    lmac_reg_write(LMAC_WDEV_RXBA_ADDR_LO(slot), 0U);
+    lmac_reg_write(LMAC_WDEV_RXBA_ADDR_HI(slot), 0U);
+    lmac_reg_write(LMAC_WDEV_RXBA_SSN_WIN(slot), 0U);
+    lmac_reg_write(LMAC_WDEV_RXBA_CONF(slot), 0U);
+    g_lmac.rx_ba_used_mask &= (uint8_t)~(1U << slot);
+    g_lmac.rx_ba_vif_mask &= (uint8_t)~(1U << slot);
+}
+#endif
+
+/**
+ * @brief Return true if a hardware RX BA scoreboard slot is available or already assigned to (peer_id, tid).
+ *
+ * @param peer_id LMAC peer identifier.
+ * @param tid     802.11 Traffic Identifier (0..7).
+ * @return true when esp_lmac_add_rx_ba() can accept the session.
+ */
+bool esp_lmac_can_add_rx_ba(esp_lmac_peer_id_t peer_id, uint8_t tid)
+{
+#ifdef CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+    lmac_peer_t *p = lmac_trc_get_peer(peer_id);
+    if (g_lmac.cfg.ampdu_rx_enable == 0U || p == NULL || tid >= 8U) {
+        return false;
+    }
+    uint32_t addr_lo = read_le32(p->mac);
+    uint32_t addr_hi = (uint32_t)read_le16(p->mac + 4);
+    for (uint8_t i = 0U; i < LMAC_RXBA_MAX_SESSIONS; i++) {
+        if ((g_lmac.rx_ba_used_mask & (1U << i)) == 0U) {
+            return true;
+        }
+        uint32_t conf = lmac_reg_read(LMAC_WDEV_RXBA_CONF(i));
+        if (((conf >> 12) & 0x0FU) == tid &&
+            lmac_reg_read(LMAC_WDEV_RXBA_ADDR_LO(i)) == addr_lo &&
+            (lmac_reg_read(LMAC_WDEV_RXBA_ADDR_HI(i)) & 0xFFFFU) == addr_hi) {
+            return true;
+        }
+    }
+    return false;
+#else
+    (void)peer_id;
+    (void)tid;
+    return false;
+#endif
+}
 
 esp_err_t esp_lmac_add_rx_ba(esp_lmac_peer_id_t peer_id, uint8_t tid, uint16_t ssn, uint8_t win_size)
 {
 #ifdef CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
     lmac_peer_t *p = lmac_trc_get_peer(peer_id);
+    if (g_lmac.cfg.ampdu_rx_enable == 0U) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
     if (p == NULL || tid >= 8U || win_size == 0U || win_size > 64U) {
         return ESP_ERR_INVALID_ARG;
     }
 
+    uint32_t addr_lo = read_le32(p->mac);
+    uint32_t addr_hi = (uint32_t)read_le16(p->mac + 4);
     uint8_t slot = 0xFFU;
-    for (uint8_t i = 0U; i < 8U; i++) {
-        if ((g_lmac.rx_ba_used_mask & (1U << i)) == 0U) {
+
+    /* Deduplicate existing (peer, tid) session before claiming a new scoreboard slot */
+    for (uint8_t i = 0U; i < LMAC_RXBA_MAX_SESSIONS; i++) {
+        if ((g_lmac.rx_ba_used_mask & (1U << i)) != 0U) {
+            uint32_t conf = lmac_reg_read(LMAC_WDEV_RXBA_CONF(i));
+            if (((conf >> 12) & 0x0FU) == tid &&
+                lmac_reg_read(LMAC_WDEV_RXBA_ADDR_LO(i)) == addr_lo &&
+                (lmac_reg_read(LMAC_WDEV_RXBA_ADDR_HI(i)) & 0xFFFFU) == addr_hi) {
+                slot = i;
+                break;
+            }
+        } else if (slot == 0xFFU) {
             slot = i;
-            break;
         }
     }
     if (slot == 0xFFU) {
@@ -867,13 +929,18 @@ esp_err_t esp_lmac_add_rx_ba(esp_lmac_peer_id_t peer_id, uint8_t tid, uint16_t s
     }
 
     /* Exact wDev_AddRXBA register layout (wdev.o.c:2451-2466) */
-    lmac_reg_write(LMAC_WDEV_RXBA_ADDR_LO(slot), read_le32(p->mac));
-    lmac_reg_write(LMAC_WDEV_RXBA_ADDR_HI(slot), (uint32_t)read_le16(p->mac + 4));
+    lmac_reg_write(LMAC_WDEV_RXBA_ADDR_LO(slot), addr_lo);
+    lmac_reg_write(LMAC_WDEV_RXBA_ADDR_HI(slot), addr_hi);
     lmac_reg_write(LMAC_WDEV_RXBA_SSN_WIN(slot),
                    (((uint32_t)win_size & 0x7FU) << 13) | ((uint32_t)ssn & 0xFFFU));
     lmac_reg_write(LMAC_WDEV_RXBA_CONF(slot),
                    (((uint32_t)tid & 0x0FU) << 12) | 0xC0000005U);
     g_lmac.rx_ba_used_mask |= (uint8_t)(1U << slot);
+    if (p->vif == ESP_LMAC_VIF_AP) {
+        g_lmac.rx_ba_vif_mask |= (uint8_t)(1U << slot);
+    } else {
+        g_lmac.rx_ba_vif_mask &= (uint8_t)~(1U << slot);
+    }
     return ESP_OK;
 #else
     (void)peer_id;
@@ -895,7 +962,7 @@ void esp_lmac_del_rx_ba(esp_lmac_peer_id_t peer_id, uint8_t tid)
     uint32_t addr_lo = read_le32(p->mac);
     uint32_t addr_hi = (uint32_t)read_le16(p->mac + 4);
 
-    for (uint8_t i = 0U; i < 8U; i++) {
+    for (uint8_t i = 0U; i < LMAC_RXBA_MAX_SESSIONS; i++) {
         if ((g_lmac.rx_ba_used_mask & (1U << i)) == 0U) {
             continue;
         }
@@ -903,17 +970,59 @@ void esp_lmac_del_rx_ba(esp_lmac_peer_id_t peer_id, uint8_t tid)
         if (((conf >> 12) & 0x0FU) == tid &&
             lmac_reg_read(LMAC_WDEV_RXBA_ADDR_LO(i)) == addr_lo &&
             (lmac_reg_read(LMAC_WDEV_RXBA_ADDR_HI(i)) & 0xFFFFU) == addr_hi) {
-            lmac_reg_write(LMAC_WDEV_RXBA_ADDR_LO(i), 0U);
-            lmac_reg_write(LMAC_WDEV_RXBA_ADDR_HI(i), 0U);
-            lmac_reg_write(LMAC_WDEV_RXBA_SSN_WIN(i), 0U);
-            lmac_reg_write(LMAC_WDEV_RXBA_CONF(i), 0U);
-            g_lmac.rx_ba_used_mask &= (uint8_t)~(1U << i);
+            lmac_rx_ba_clear_slot(i);
             break;
         }
     }
 #else
     (void)peer_id;
     (void)tid;
+#endif
+}
+
+/**
+ * @brief Clear all hardware RX BA scoreboard slots belonging to a peer MAC address.
+ *
+ * @param mac Peer 6-byte MAC address.
+ */
+void lmac_rx_ba_clear_peer(const uint8_t mac[6])
+{
+#ifdef CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+    if (mac == NULL) {
+        return;
+    }
+    uint32_t addr_lo = read_le32(mac);
+    uint32_t addr_hi = (uint32_t)read_le16(mac + 4);
+
+    for (uint8_t i = 0U; i < LMAC_RXBA_MAX_SESSIONS; i++) {
+        if ((g_lmac.rx_ba_used_mask & (1U << i)) != 0U &&
+            lmac_reg_read(LMAC_WDEV_RXBA_ADDR_LO(i)) == addr_lo &&
+            (lmac_reg_read(LMAC_WDEV_RXBA_ADDR_HI(i)) & 0xFFFFU) == addr_hi) {
+            lmac_rx_ba_clear_slot(i);
+        }
+    }
+#else
+    (void)mac;
+#endif
+}
+
+/**
+ * @brief Clear all hardware RX BA scoreboard slots owned by a virtual interface.
+ *
+ * @param vif Virtual interface index (ESP_LMAC_VIF_STA or ESP_LMAC_VIF_AP).
+ */
+void lmac_rx_ba_clear_vif(esp_lmac_vif_t vif)
+{
+#ifdef CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+    uint8_t want_ap = (vif == ESP_LMAC_VIF_AP) ? 1U : 0U;
+    for (uint8_t i = 0U; i < LMAC_RXBA_MAX_SESSIONS; i++) {
+        if ((g_lmac.rx_ba_used_mask & (1U << i)) != 0U &&
+            (((g_lmac.rx_ba_vif_mask >> i) & 1U) == want_ap)) {
+            lmac_rx_ba_clear_slot(i);
+        }
+    }
+#else
+    (void)vif;
 #endif
 }
 

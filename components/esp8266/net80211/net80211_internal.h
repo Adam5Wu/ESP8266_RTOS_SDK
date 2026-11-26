@@ -604,6 +604,26 @@ esp_err_t n8_data_tx_eth_ap_internal(const uint8_t *eth_frame, uint16_t len, boo
 bool      n8_replay_win_accept(n8_replay_win_t *win, uint64_t pn);
 uint64_t  n8_ccmp_iv_to_pn(const uint8_t *iv);
 
+/* net80211_defrag.c (opt-in via CONFIG_ESP8266_OSS_WIFI_RX_DEFRAG_ENABLED) */
+#ifdef CONFIG_ESP8266_OSS_WIFI_RX_DEFRAG_ENABLED
+uint8_t  *n8_defrag_rx_frag(uint8_t vif, const uint8_t ta[IEEE80211_ADDR_LEN],
+                             uint8_t tid, uint16_t seq_ctrl, bool more_frag,
+                             bool is_prot, esp_lmac_cipher_t cipher, uint8_t key_idx,
+                             uint64_t pn, const uint8_t *frag_data, uint16_t frag_len,
+                             uint16_t *out_len);
+void      n8_defrag_purge_vif(uint8_t vif);
+void      n8_defrag_purge_peer(uint8_t vif, const uint8_t ta[IEEE80211_ADDR_LEN]);
+void      n8_defrag_on_tick_100ms(void);
+#else
+static inline void n8_defrag_purge_vif(uint8_t vif) { (void)vif; }
+static inline void n8_defrag_purge_peer(uint8_t vif, const uint8_t ta[IEEE80211_ADDR_LEN])
+{
+    (void)vif;
+    (void)ta;
+}
+static inline void n8_defrag_on_tick_100ms(void) {}
+#endif
+
 /* net80211_pm.c */
 void      n8_pm_init(void);
 void      n8_pm_deinit(void);

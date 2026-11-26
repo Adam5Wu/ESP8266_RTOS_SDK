@@ -35,8 +35,10 @@ extern uint32_t g_log_level;
 extern uint32_t g_log_mod;
 extern void n8_mgmt_free_tx_cb(void *ctx, const esp_lmac_tx_status_t *st);
 
-#define N8_TX_POWER_QDB_MIN 8
-#define N8_TX_POWER_QDB_MAX 84
+#define N8_TX_POWER_QDB_MIN           8
+#define N8_TX_POWER_QDB_MAX           84
+#define N8_MAX_SINGLE_PKT_NO_AMPDU    (1600U - 524U) /* 1076 B extradata clamp when A-MPDU off */
+#define N8_MAX_SINGLE_PKT_AMPDU       1600U
 
 /**
  * @brief Apply the effective TX power ceiling across Kconfig, regulatory country, and user cap.
@@ -133,14 +135,44 @@ esp_err_t esp_wifi_init_internal(const wifi_init_config_t *config)
         return err;
     }
 
+#ifdef CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED
+    uint8_t ampdu_en = (config->ampdu_rx_enable != 0U) ? 1U : 0U;
+    uint8_t ba_win = ampdu_en ? (uint8_t)((config->rx_ba_win > 16U) ? 16U : config->rx_ba_win) : 0U;
+    uint8_t abuf_num = ampdu_en
+                       ? (uint8_t)(config->rx_ampdu_buf_num ? config->rx_ampdu_buf_num : WIFI_AMPDU_RX_AMPDU_BUF_NUM)
+                       : 0U;
+    uint16_t abuf_len = ampdu_en
+                        ? (uint16_t)((config->rx_ampdu_buf_len >= 64U) ? config->rx_ampdu_buf_len : WIFI_AMPDU_RX_AMPDU_BUF_LEN)
+                        : 0U;
+#else
+    uint8_t ampdu_en = 0U;
+    uint8_t ba_win = 0U;
+    uint8_t abuf_num = 0U;
+    uint16_t abuf_len = 0U;
+#endif
+    uint16_t max_single = (config->rx_max_single_pkt_len >= 256U)
+                          ? (uint16_t)config->rx_max_single_pkt_len
+                          : N8_MAX_SINGLE_PKT_AMPDU;
+    if (ampdu_en == 0U && max_single > N8_MAX_SINGLE_PKT_NO_AMPDU) {
+        max_single = N8_MAX_SINGLE_PKT_NO_AMPDU;
+    }
+
+    g_n8.init_cfg.ampdu_rx_enable = ampdu_en;
+    g_n8.init_cfg.rx_ba_win = ba_win;
+    g_n8.init_cfg.rx_ampdu_buf_num = abuf_num;
+    g_n8.init_cfg.rx_ampdu_buf_len = abuf_len;
+    g_n8.init_cfg.rx_max_single_pkt_len = max_single;
+
     esp_lmac_config_t lcfg = {
         .rx_buf_num = (config->rx_buf_num >= 4) ? (uint8_t)config->rx_buf_num : 16U,
         .left_continuous_rx_buf_num = (uint8_t)config->left_continuous_rx_buf_num,
         .tx_slot_num = (config->tx_buf_num >= 2) ? (uint8_t)config->tx_buf_num : 6U,
-        .ampdu_rx_enable = (uint8_t)(config->ampdu_rx_enable != 0),
+        .ampdu_rx_enable = ampdu_en,
+        .rx_ba_win = ba_win,
+        .rx_ampdu_buf_num = abuf_num,
+        .rx_ampdu_buf_len = abuf_len,
         .rx_buf_len = (config->rx_buf_len >= 64) ? (uint16_t)config->rx_buf_len : 524U,
-        .rx_max_single_pkt_len = (config->rx_max_single_pkt_len >= 256)
-                                 ? (uint16_t)config->rx_max_single_pkt_len : 1600U,
+        .rx_max_single_pkt_len = max_single,
     };
     esp_lmac_callbacks_t lcbs = {
         .notify_from_isr = n8_lmac_notify_from_isr,
