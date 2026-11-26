@@ -89,13 +89,28 @@ extern "C" {
 #define IEEE80211_IE_DS_PARAM           3U
 #define IEEE80211_IE_TIM                5U
 #define IEEE80211_IE_COUNTRY            7U
+#define IEEE80211_IE_CSA                37U
+#define IEEE80211_IE_ERP_INFO           42U
 #define IEEE80211_IE_HT_CAP             45U
 #define IEEE80211_IE_RSN                48U
 #define IEEE80211_IE_EXT_RATES          50U
 #define IEEE80211_IE_HT_OP              61U
+#define IEEE80211_IE_RM_ENABLED_CAP     70U
 #define IEEE80211_IE_MMIE               76U
 #define IEEE80211_IE_VENDOR             221U
 #define IEEE80211_IE_HDR_LEN            2U
+#define IEEE80211_CSA_IE_LEN            3U
+#define IEEE80211_CSA_MODE_QUIET        1U
+#define IEEE80211_ERP_USE_PROTECTION    0x02U
+#define IEEE80211_HT_CAP_INFO_SGI20     0x20U
+#define IEEE80211_HT_OP_MIN_LEN         4U
+#define IEEE80211_HT_OP_PROT_OFF        2U
+#define IEEE80211_HT_OP_PROT_MASK       0x03U
+#define IEEE80211_RM_CAPS_LEN           5U
+#define IEEE80211_CAP_RADIO_MEASUREMENT 0x1000U
+#define IEEE80211_STYPE_IDX_PROBE_RESP  5U
+#define IEEE80211_STYPE_IDX_BEACON      8U
+#define IEEE80211_STYPE_IDX_ACTION      13U
 #define IEEE80211_OUI_MS_0              0x00U
 #define IEEE80211_OUI_MS_1              0x50U
 #define IEEE80211_OUI_MS_2              0xF2U
@@ -322,6 +337,7 @@ typedef struct {
     uint16_t          rate_mask_11bg;
     uint8_t           ht_mcs_mask;
     uint8_t           ht_cap;
+    uint8_t           ht_sgi20;
     uint8_t           wmm_cap;
     uint8_t           pmf_capable;
     uint8_t           pmf_required;
@@ -437,6 +453,13 @@ typedef struct {
     wifi_wpa_igtk_t   sta_igtk;
     uint16_t          sta_state_ticks;    /* 100 ms ticks in current auth/assoc/4way state */
     uint32_t          sta_bcn_miss_ticks; /* 100 ms ticks since last AP beacon */
+    uint8_t           sta_csa_active;     /* CSA IE 37 countdown active */
+    uint8_t           sta_csa_mode;       /* CSA mode (1 = quiet / pause STA TX) */
+    uint8_t           sta_csa_new_ch;     /* CSA target channel (1..14) */
+    uint8_t           sta_csa_count;      /* Remaining TBTTs until channel switch */
+    uint8_t           sta_csa_tx_paused;  /* Non-zero while STA data TX paused for CSA */
+    uint8_t           sta_erp_prot;       /* ERP/HT protection active on connected AP */
+    uint8_t           sta_tx_retry_burst; /* Consecutive STA heavy-retry/fail burst count */
 
     /* STA Modem Sleep (TSF-synced us wake timer + pm_config) */
     n8_pm_state_t     pm_state;
@@ -500,6 +523,10 @@ typedef struct {
     uint8_t            wps_start_flag;
     uint8_t            sta_conn_timer_disarmed;
     wpa2_ent_eap_state_t wpa2_ent_state;
+#ifdef CONFIG_WPA_11KV_SUPPORT
+    uint32_t           frame_reg_type;
+    uint32_t           frame_reg_subtype;
+#endif
 
     /* Promiscuous & Data Plane hooks */
     uint8_t                 promis_enabled;
@@ -593,6 +620,9 @@ void      n8_sta_on_tick_100ms(void);
 void      n8_sta_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, int16_t freq_offset,
                          const uint8_t *frame, uint16_t len);
 uint16_t  n8_sta_next_seq(void);
+#ifdef CONFIG_WPA_11KV_SUPPORT
+esp_err_t n8_sta_tx_action(const uint8_t *body, uint16_t body_len);
+#endif
 
 /* net80211_ap.c */
 esp_err_t n8_ap_start(void);

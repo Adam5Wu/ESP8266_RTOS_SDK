@@ -137,6 +137,11 @@ static bool n8_open_seq_dedup(uint16_t last_seq[N8_REPLAY_TID_SLOTS], uint16_t *
     return true;
 }
 
+#define N8_ERP_RTS_THRESHOLD_BYTES      256U
+#define N8_RTS_HEAVY_RETRIES            4U
+#define N8_RTS_BURST_THRESH             3U
+#define N8_RTS_BURST_CAP                6U
+
 /* --------------------------------------------------------------------------
  * TX Completion Callback (Packs wifi_tx_status_t for lwIP wlanif.c & EAPOL)
  * -------------------------------------------------------------------------- */
@@ -150,7 +155,18 @@ static void data_tx_done_cb(void *user_ctx, const esp_lmac_tx_status_t *st)
 
     esp_aio_t aio = job->aio;
     uint8_t is_eapol = job->is_eapol;
+    uint8_t vif = job->vif;
     job->in_use = 0U;
+
+    if (vif == ESP_LMAC_VIF_STA && is_eapol == 0U && st != NULL) {
+        if (st->ok == 0U || st->retries >= N8_RTS_HEAVY_RETRIES) {
+            if (g_n8.sta_tx_retry_burst < N8_RTS_BURST_CAP) {
+                g_n8.sta_tx_retry_burst++;
+            }
+        } else if (st->retries <= 1U && g_n8.sta_tx_retry_burst > 0U) {
+            g_n8.sta_tx_retry_burst--;
+        }
+    }
 
     wifi_tx_status_t tx_st;
     memset(&tx_st, 0, sizeof(tx_st));
@@ -283,6 +299,9 @@ static esp_err_t tx_eth_frame_on_worker(uint8_t vif, const uint8_t *eth, uint16_
         peer_id = g_n8.sta_peer_id;
         if (is_eapol) {
             flags |= ESP_LMAC_TX_FLAG_FORCE_LOWEST_RATE;
+        } else if (eth_len >= N8_ERP_RTS_THRESHOLD_BYTES &&
+                   (g_n8.sta_erp_prot != 0U || g_n8.sta_tx_retry_burst >= N8_RTS_BURST_THRESH)) {
+            flags |= ESP_LMAC_TX_FLAG_USE_RTS;
         }
 
         /* Encrypt data frames once PTK is installed (never encrypt 4-way EAPOL before RUN) */
@@ -506,6 +525,11 @@ void n8_data_process_tx_queue(void)
             }
             taskEXIT_CRITICAL();
             continue;
+        }
+
+        /* Pause STA data TX while CSA quiet mode (mode == 1) is active */
+        if (job->vif == ESP_LMAC_VIF_STA && g_n8.sta_csa_tx_paused != 0U) {
+            break;
         }
 
         /* Pause data TX while scanning off-channel so frames never collide with off-ch ProbeResp */
@@ -876,7 +900,7 @@ static void handle_rx_data(esp_lmac_rx_buf_t *rx_buf)
             if (n8_wps_is_pending() && g_n8.wps_cb->wps_sm_rx_eapol != NULL) {
                 (void)g_n8.wps_cb->wps_sm_rx_eapol(sa, eapol, payload_len);
             } else if (g_n8.wpa2_cb != NULL && g_n8.sta_supp_authmode == WPA2_AUTH_ENT &&
-                       payload_len >= 2U && eapol[1] != N8_EAPOL_TYPE_KEY &&
+                       eapol[1] != N8_EAPOL_TYPE_KEY &&
                        g_n8.wpa2_cb->wpa2_sm_rx_eapol != NULL) {
                 (void)g_n8.wpa2_cb->wpa2_sm_rx_eapol(sa, eapol, payload_len, g_n8.sta_bssid);
             } else if (g_n8.wpa_cb != NULL && g_n8.wpa_cb->wpa_sta_rx_eapol != NULL) {

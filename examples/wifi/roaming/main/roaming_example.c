@@ -152,7 +152,7 @@ static char * get_btm_neighbor_list(uint8_t *report, size_t report_len)
 
 		ESP_LOGI(TAG, "RMM neigbor report bssid=" MACSTR
 				" info=0x%x op_class=%u chan=%u phy_type=%u%s%s%s%s",
-				MAC2STR(nr), WPA_GET_LE32(nr + ETH_ALEN),
+				MAC2STR(nr), (unsigned int)WPA_GET_LE32(nr + ETH_ALEN),
 				nr[ETH_ALEN + 4], nr[ETH_ALEN + 5],
 				nr[ETH_ALEN + 6],
 				lci[0] ? " lci=" : "", lci,
@@ -165,7 +165,7 @@ static char * get_btm_neighbor_list(uint8_t *report, size_t report_len)
 		/* , */
 		len += snprintf(buf + len, MAX_NEIGHBOR_LEN - len, ",");
 		/* bssid info */
-		len += snprintf(buf + len, MAX_NEIGHBOR_LEN - len, "0x%04x", WPA_GET_LE32(nr + ETH_ALEN));
+		len += snprintf(buf + len, MAX_NEIGHBOR_LEN - len, "0x%04x", (unsigned int)WPA_GET_LE32(nr + ETH_ALEN));
 		len += snprintf(buf + len, MAX_NEIGHBOR_LEN - len, ",");
 		/* operating class */
 		len += snprintf(buf + len, MAX_NEIGHBOR_LEN - len, "%u", nr[ETH_ALEN + 4]);

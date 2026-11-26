@@ -811,6 +811,7 @@ void n8_ap_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, const uint8_t *frame, uint16_
         uint16_t sec_ie_len = 0U;
         uint8_t ht_cap = 0U;
         uint8_t ht_mcs = 0U;
+        uint8_t ht_sgi20 = 0U;
         uint8_t wmm_cap = 0U;
 
         while (pos + 2U <= ie_len) {
@@ -821,6 +822,7 @@ void n8_ap_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, const uint8_t *frame, uint16_
             }
             if (id == IEEE80211_IE_HT_CAP && elen >= 26U) {
                 ht_cap = 1U;
+                ht_sgi20 = ((ies[pos + 2U] & IEEE80211_HT_CAP_INFO_SGI20) != 0U) ? 1U : 0U;
                 ht_mcs = ies[pos + 2U + 3U];
             } else if (id == IEEE80211_IE_RSN) {
                 sec_ie = &ies[pos];
@@ -864,6 +866,7 @@ void n8_ap_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, const uint8_t *frame, uint16_
         pcaps.rate_mask_11bg = 0x0FFFU;
         pcaps.ht20_mcs_mask = (ht_cap && (g_n8.proto[1] & WIFI_PROTOCOL_11N)) ? (ht_mcs ? ht_mcs : 0xFFU) : 0U;
         pcaps.ht_enabled = (pcaps.ht20_mcs_mask != 0U) ? 1U : 0U;
+        pcaps.short_gi_20 = (pcaps.ht_enabled && ht_sgi20 != 0U) ? 1U : 0U;
         pcaps.qos_enabled = (n8_qos_cfg_enabled() && (wmm_cap || pcaps.ht_enabled)) ? 1U : 0U;
         sta->peer_id = esp_lmac_peer_add(ESP_LMAC_VIF_AP, &pcaps);
         sta->ht_enabled = pcaps.ht_enabled;

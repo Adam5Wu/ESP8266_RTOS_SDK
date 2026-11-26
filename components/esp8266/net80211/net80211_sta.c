@@ -357,6 +357,93 @@ static esp_err_t sta_tx_mgmt(uint8_t subtype, const uint8_t *body, uint16_t body
     return sta_tx_mgmt_cb(subtype, body, body_len, force_lowest, protected_mgmt, NULL, NULL);
 }
 
+#ifdef CONFIG_WPA_11KV_SUPPORT
+/**
+ * @brief Transmit an 802.11 Action frame from the STA interface with PMF protection when active.
+ *
+ * @param body     Action frame payload starting at Category octet.
+ * @param body_len Payload length in bytes.
+ * @return ESP_OK on submission, or error code.
+ */
+esp_err_t n8_sta_tx_action(const uint8_t *body, uint16_t body_len)
+{
+    if (body == NULL || body_len == 0U || body_len > 512U) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (g_n8.sta_state < N8_STA_ASSOC) {
+        return ESP_ERR_WIFI_NOT_CONNECT;
+    }
+    bool prot = (g_n8.sta_pmf_active != 0U) && sta_is_robust_action(body[0]);
+    return sta_tx_mgmt(IEEE80211_SUBTYPE_ACTION, body, body_len, true, prot);
+}
+#endif
+
+/**
+ * @brief Clear active STA Channel Switch Announcement (CSA) state and resume STA TX.
+ */
+static void sta_csa_reset(void)
+{
+    g_n8.sta_csa_active = 0U;
+    g_n8.sta_csa_mode = 0U;
+    g_n8.sta_csa_new_ch = 0U;
+    g_n8.sta_csa_count = 0U;
+    g_n8.sta_csa_tx_paused = 0U;
+}
+
+/**
+ * @brief Validate a CSA target channel against 1..14 and active country regulatory bounds.
+ *
+ * @param ch Candidate channel number.
+ * @return true if channel is valid and permitted; false otherwise.
+ */
+static bool sta_csa_is_valid_channel(uint8_t ch)
+{
+    if (ch < 1U || ch > 14U) {
+        return false;
+    }
+    const wifi_country_t *cc = n8_get_active_country();
+    uint8_t schan = (cc->schan >= 1U && cc->schan <= 14U) ? cc->schan : 1U;
+    uint8_t nchan = (cc->nchan >= 1U && cc->nchan <= 14U) ? cc->nchan : 13U;
+    uint16_t end_ch = (uint16_t)schan + (uint16_t)nchan;
+    if (end_ch > 15U) {
+        end_ch = 15U;
+    }
+    return (ch >= schan) && ((uint16_t)ch < end_ch);
+}
+
+/**
+ * @brief Execute a validated STA channel switch without dropping association.
+ *
+ * Updates sta_channel/cur_channel, tunes PHY when not scanning, restores rxmax_ext,
+ * resynchronizes SoftAP in APSTA mode, clears CSA quiet pause, and drains TX queue.
+ *
+ * @param new_ch Target channel number (1..14).
+ */
+static void sta_csa_apply_switch(uint8_t new_ch)
+{
+    sta_csa_reset();
+    g_n8.sta_channel = new_ch;
+    g_n8.sta_bcn_miss_ticks = 0U;
+
+    if (g_n8.sta_state == N8_STA_RUN) {
+        n8_rtc_cache_save(g_n8.sta_channel, g_n8.sta_bssid, g_n8.sta_authmode);
+    }
+
+    if (!g_n8.scan_active) {
+        (void)esp_lmac_set_channel(new_ch);
+        g_n8.cur_channel = new_ch;
+        if (g_n8.sta_rxmax_ext_state != 0U) {
+            esp_lmac_set_rxmax_ext(g_n8.sta_rxmax_ext_state);
+        }
+    }
+
+    if (g_n8.ap_running && g_n8.ap_cfg.ap.channel != new_ch) {
+        n8_ap_sync_channel(new_ch);
+    }
+
+    n8_data_process_tx_queue();
+}
+
 /**
  * @brief Transmit a PMF-protected 802.11w SA-Query Request or Response frame.
  *
@@ -451,6 +538,16 @@ static void sta_send_assoc_req(void)
     if ((g_n8.sta_capinfo & 0x0020U) != 0U) {
         cap |= 0x0020U; /* Short Preamble */
     }
+#ifdef CONFIG_WPA_11KV_SUPPORT
+    uint16_t rm_len = 0U;
+    const uint8_t *rm_ie = NULL;
+    if (esp_wifi_is_rm_enabled_internal(WIFI_IF_STA)) {
+        rm_ie = n8_supp_get_ie_bytes(WIFI_APPIE_RM_ENABLED_CAPS, &rm_len);
+        if (rm_ie != NULL && rm_len == IEEE80211_RM_CAPS_LEN) {
+            cap |= IEEE80211_CAP_RADIO_MEASUREMENT;
+        }
+    }
+#endif
 
     body[off++] = (uint8_t)(cap & 0xFFU);
     body[off++] = (uint8_t)(cap >> 8);
@@ -499,6 +596,17 @@ static void sta_send_assoc_req(void)
         off = (uint16_t)(off + sizeof(s_sta_wmm_info_ie));
     }
 
+#ifdef CONFIG_WPA_11KV_SUPPORT
+    /* 802.11k RRM Enabled Capabilities IE (WIFI_APPIE_RM_ENABLED_CAPS holds 5-byte body) */
+    if (rm_ie != NULL && rm_len == IEEE80211_RM_CAPS_LEN &&
+        (uint16_t)(off + IEEE80211_IE_HDR_LEN + rm_len) <= sizeof(body)) {
+        body[off++] = IEEE80211_IE_RM_ENABLED_CAP;
+        body[off++] = (uint8_t)rm_len;
+        memcpy(body + off, rm_ie, rm_len);
+        off = (uint16_t)(off + rm_len);
+    }
+#endif
+
     /* User-configured AssocReq vendor IEs */
     off = n8_append_vendor_ies(WIFI_VND_IE_TYPE_ASSOC_REQ, body, off, sizeof(body));
 
@@ -546,6 +654,10 @@ void n8_sta_stop(void)
     if (g_n8.wpa_cb != NULL && g_n8.wpa_cb->wpa_sta_deinit != NULL) {
         (void)g_n8.wpa_cb->wpa_sta_deinit();
     }
+#ifdef CONFIG_WPA_11KV_SUPPORT
+    g_n8.frame_reg_type = 0U;
+    g_n8.frame_reg_subtype = 0U;
+#endif
     esp_lmac_vif_disable(ESP_LMAC_VIF_STA);
 
     system_event_t evt;
@@ -665,6 +777,9 @@ void n8_sta_disconnect(uint8_t reason, bool send_deauth, bool notify_event)
     g_n8.sta_aid = 0U;
     g_n8.sta_state_ticks = 0U;
     g_n8.sta_bcn_miss_ticks = 0U;
+    sta_csa_reset();
+    g_n8.sta_erp_prot = 0U;
+    g_n8.sta_tx_retry_burst = 0U;
     bool had_ap_country = (g_n8.sta_ap_country_valid != 0U);
     g_n8.sta_ap_country_valid = 0U;
     memset(&g_n8.sta_ap_country, 0, sizeof(g_n8.sta_ap_country));
@@ -712,6 +827,9 @@ static void sta_begin_auth(const n8_scan_entry_t *ap)
     g_n8.sta_last_freq_offset = ap->rec.freq_offset;
     g_n8.sta_tsf_diff_us = 0;
     g_n8.sta_tsf_valid = 0U;
+    sta_csa_reset();
+    g_n8.sta_erp_prot = 0U;
+    g_n8.sta_tx_retry_burst = 0U;
     g_n8.sta_ht_active = ap->ht_cap && ((g_n8.proto[0] & WIFI_PROTOCOL_11N) != 0U);
     g_n8.sta_qos_active = (n8_qos_cfg_enabled() && (ap->wmm_cap || g_n8.sta_ht_active)) ? 1U : 0U;
 
@@ -798,6 +916,7 @@ static void sta_begin_auth(const n8_scan_entry_t *ap)
     pcaps.rate_mask_11bg = ap->rate_mask_11bg ? ap->rate_mask_11bg : 0x0FFFU;
     pcaps.ht20_mcs_mask = g_n8.sta_ht_active ? (ap->ht_mcs_mask ? ap->ht_mcs_mask : 0xFFU) : 0U;
     pcaps.short_preamble = (ap->capinfo & 0x0020U) ? 1U : 0U;
+    pcaps.short_gi_20 = (g_n8.sta_ht_active && ap->ht_sgi20 != 0U) ? 1U : 0U;
     pcaps.qos_enabled = g_n8.sta_qos_active ? 1U : 0U;
     pcaps.ht_enabled = g_n8.sta_ht_active ? 1U : 0U;
     g_n8.sta_peer_id = esp_lmac_peer_add(ESP_LMAC_VIF_STA, &pcaps);
@@ -935,7 +1054,18 @@ static void sta_addba_tx_done_cb(void *ctx, const esp_lmac_tx_status_t *st)
 }
 #endif
 
-static void sta_handle_action(const uint8_t *frame, uint16_t len)
+/**
+ * @brief Handle an incoming 802.11 Action frame for the STA interface.
+ *
+ * Decrypts PMF-protected unicast Action frames, verifies BIP MMIE on robust
+ * broadcast Action frames, processes SA-Query and Block Ack frames, and
+ * forwards registered Action categories (e.g., RRM/WNM) to wpa_supplicant.
+ *
+ * @param ctrl  RX radio metadata header (RSSI/channel), may be NULL in unit tests.
+ * @param frame Full 802.11 Action frame starting at Frame Control.
+ * @param len   Frame length in bytes.
+ */
+static void sta_handle_action(const wifi_pkt_rx_ctrl_t *ctrl, const uint8_t *frame, uint16_t len)
 {
     bool is_bcast = (frame[IEEE80211_HDR_ADDR1_OFF] & N8_MAC_MCAST_BIT) != 0U;
     bool is_prot = (frame[1] & IEEE80211_FC1_PROTECTED) != 0U;
@@ -1070,6 +1200,24 @@ static void sta_handle_action(const uint8_t *frame, uint16_t len)
             }
         }
     }
+#ifdef CONFIG_WPA_11KV_SUPPORT
+    else if (g_n8.sta_state == N8_STA_RUN && g_n8.wpa_cb != NULL &&
+             g_n8.wpa_cb->esp_sta_rx_mgmt != NULL &&
+             (g_n8.frame_reg_type & (1UL << IEEE80211_STYPE_IDX_ACTION)) != 0U &&
+             cat < 32U && (g_n8.frame_reg_subtype & (1UL << cat)) != 0U) {
+        int32_t rssi_val = (ctrl != NULL) ? (int32_t)(int8_t)ctrl->rssi : -127;
+        (void)g_n8.wpa_cb->esp_sta_rx_mgmt(
+            IEEE80211_STYPE_IDX_ACTION,
+            (u8 *)(uintptr_t)body,
+            (size_t)blen,
+            (u8 *)(uintptr_t)(frame + IEEE80211_HDR_ADDR2_OFF),
+            (u32)rssi_val,
+            g_n8.cur_channel,
+            esp_lmac_get_tsf_us(ESP_LMAC_VIF_STA));
+    }
+#else
+    (void)ctrl;
+#endif
 
     if (plain != NULL) {
         os_free(plain);
@@ -1094,6 +1242,27 @@ void n8_sta_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, int16_t freq_offset,
     }
 
     if (subtype == IEEE80211_SUBTYPE_BEACON || subtype == IEEE80211_SUBTYPE_PROBE_RESP) {
+#ifdef CONFIG_WPA_11KV_SUPPORT
+        /* Forward before n8_scan_rx_beacon_or_probe(), which stops fast connect scan inline */
+        if (len > IEEE80211_HDR_LEN && g_n8.wpa_cb != NULL && g_n8.wpa_cb->esp_sta_rx_mgmt != NULL) {
+            uint8_t stype_idx = (uint8_t)(subtype >> 4);
+            bool reg_match = (g_n8.frame_reg_type & (1UL << stype_idx)) != 0U;
+            bool conn_scan_11kv = (g_n8.scan_active != 0U && g_n8.scan_for_connect != 0U &&
+                                   (esp_wifi_is_rm_enabled_internal(WIFI_IF_STA) ||
+                                    esp_wifi_is_btm_enabled_internal(WIFI_IF_STA)));
+            if (reg_match || conn_scan_11kv) {
+                int32_t rssi_val = (ctrl != NULL) ? (int32_t)(int8_t)ctrl->rssi : -127;
+                (void)g_n8.wpa_cb->esp_sta_rx_mgmt(
+                    stype_idx,
+                    (u8 *)(uintptr_t)(frame + IEEE80211_HDR_LEN),
+                    (size_t)(len - IEEE80211_HDR_LEN),
+                    (u8 *)(uintptr_t)(frame + IEEE80211_HDR_ADDR2_OFF),
+                    (u32)rssi_val,
+                    g_n8.cur_channel,
+                    esp_lmac_get_tsf_us(ESP_LMAC_VIF_STA));
+            }
+        }
+#endif
         if (g_n8.scan_active) {
             n8_scan_rx_beacon_or_probe(ctrl, freq_offset, frame, len);
         }
@@ -1140,6 +1309,11 @@ void n8_sta_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, int16_t freq_offset,
                 uint16_t wpa_len = 0U;
                 bool wps_seen = false;
                 bool country_adopted = false;
+                bool erp_prot = false;
+                bool csa_seen = false;
+                uint8_t csa_mode = 0U;
+                uint8_t csa_new_ch = 0U;
+                uint8_t csa_count = 0U;
 
                 while (pos + 2U <= ie_len) {
                     uint8_t id = ies[pos];
@@ -1158,6 +1332,19 @@ void n8_sta_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, int16_t freq_offset,
                             g_n8.sta_ap_country.policy = WIFI_COUNTRY_POLICY_AUTO;
                             g_n8.sta_ap_country_valid = 1U;
                             country_adopted = true;
+                        }
+                    } else if (id == IEEE80211_IE_CSA && elen >= IEEE80211_CSA_IE_LEN) {
+                        csa_seen = true;
+                        csa_mode = ies[pos + 2U];
+                        csa_new_ch = ies[pos + 3U];
+                        csa_count = ies[pos + 4U];
+                    } else if (id == IEEE80211_IE_ERP_INFO && elen >= 1U) {
+                        if ((ies[pos + 2U] & IEEE80211_ERP_USE_PROTECTION) != 0U) {
+                            erp_prot = true;
+                        }
+                    } else if (id == IEEE80211_IE_HT_OP && elen >= IEEE80211_HT_OP_MIN_LEN) {
+                        if ((ies[pos + 2U + IEEE80211_HT_OP_PROT_OFF] & IEEE80211_HT_OP_PROT_MASK) != 0U) {
+                            erp_prot = true;
                         }
                     } else if (id == IEEE80211_IE_RSN) {
                         rsn_ie = &ies[pos];
@@ -1183,6 +1370,33 @@ void n8_sta_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, int16_t freq_offset,
 
                 if (pos == ie_len) {
                     g_n8.sta_ap_wps = wps_seen ? 1U : 0U;
+                    g_n8.sta_erp_prot = erp_prot ? 1U : 0U;
+
+                    if (csa_seen) {
+                        if (csa_new_ch == g_n8.sta_channel) {
+                            if (g_n8.sta_csa_active != 0U || g_n8.sta_csa_tx_paused != 0U) {
+                                sta_csa_reset();
+                                n8_data_process_tx_queue();
+                            }
+                        } else if (sta_csa_is_valid_channel(csa_new_ch)) {
+                            g_n8.sta_csa_tx_paused = (csa_mode == IEEE80211_CSA_MODE_QUIET) ? 1U : 0U;
+                            if (csa_count <= 1U) {
+                                sta_csa_apply_switch(csa_new_ch);
+                            } else {
+                                g_n8.sta_csa_active = 1U;
+                                g_n8.sta_csa_mode = csa_mode;
+                                g_n8.sta_csa_new_ch = csa_new_ch;
+                                g_n8.sta_csa_count = csa_count;
+                                if (g_n8.sta_csa_tx_paused == 0U && g_n8.tx_q_head != g_n8.tx_q_tail) {
+                                    n8_data_process_tx_queue();
+                                }
+                            }
+                        }
+                    } else if (g_n8.sta_csa_active != 0U) {
+                        sta_csa_reset();
+                        n8_data_process_tx_queue();
+                    }
+
                     if (g_n8.sta_state == N8_STA_RUN && g_n8.wpa_cb != NULL &&
                         g_n8.wpa_cb->wpa_parse_wpa_ie != NULL) {
                         bool rsn_ok = false;
@@ -1365,7 +1579,7 @@ void n8_sta_rx_mgmt(const wifi_pkt_rx_ctrl_t *ctrl, int16_t freq_offset,
     }
 
     if (subtype == IEEE80211_SUBTYPE_ACTION && g_n8.sta_state >= N8_STA_ASSOC) {
-        sta_handle_action(frame, len);
+        sta_handle_action(ctrl, frame, len);
     }
 }
 
@@ -1429,6 +1643,15 @@ void n8_sta_on_tick_100ms(void)
         }
         if (!g_n8.scan_active) {
             g_n8.sta_bcn_miss_ticks++;
+            if (g_n8.sta_csa_active != 0U && g_n8.sta_bcn_miss_ticks >= 2U) {
+                /* Missed-beacon CSA countdown fallback when AP hops before count=1 beacon */
+                if (g_n8.sta_csa_count > 1U) {
+                    g_n8.sta_csa_count--;
+                }
+                if (g_n8.sta_csa_count <= 1U) {
+                    sta_csa_apply_switch(g_n8.sta_csa_new_ch);
+                }
+            }
             uint32_t max_miss = (uint32_t)g_n8.inactive_sec[0] * 10U;
             if (max_miss < 30U) {
                 max_miss = 30U;

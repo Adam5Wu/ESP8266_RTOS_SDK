@@ -198,7 +198,7 @@ static void esp_regsiter_action_frame(struct wpa_supplicant *wpa_s)
 }
 
 static void esp_supplicant_sta_conn_handler(void* arg, esp_event_base_t event_base,
-					    int event_id, void* event_data)
+					    int32_t event_id, void* event_data)
 {
 	u8 bssid[ETH_ALEN];
 	u8 *ie;
@@ -216,7 +216,7 @@ static void esp_supplicant_sta_conn_handler(void* arg, esp_event_base_t event_ba
 	wpa_s->current_bss = bss;
 	ie = (u8 *)bss;
 	ie += sizeof(struct wpa_bss);
-	ieee802_11_parse_elems(wpa_s, ie, bss->ie_len);
+	ieee802_11_parse_elems(wpa_s, ie, bss->ie_len ? bss->ie_len : bss->beacon_ie_len);
 	wpa_bss_flush(wpa_s);
 	/* Register for action frames */
 	esp_regsiter_action_frame(wpa_s);
@@ -225,7 +225,7 @@ static void esp_supplicant_sta_conn_handler(void* arg, esp_event_base_t event_ba
 }
 
 static void esp_supplicant_sta_disconn_handler(void* arg, esp_event_base_t event_base,
-						int event_id, void* event_data)
+						int32_t event_id, void* event_data)
 {
 	struct wpa_supplicant *wpa_s = &g_wpa_supp;
 	wpas_rrm_reset(wpa_s);

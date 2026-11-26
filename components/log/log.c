@@ -261,7 +261,7 @@ void esp_log_write(esp_log_level_t level, const char *tag,  const char *fmt, ...
     uint32_t color = level >= ESP_LOG_MAX ? 0 : s_log_color[level];
 
     if (color) {
-        sprintf(buf, LOG_COLOR_HEAD, color);
+        sprintf(buf, LOG_COLOR_HEAD, (int)color);
         ret = esp_log_write_str(buf);
         if (ret == EOF)
             goto exit;

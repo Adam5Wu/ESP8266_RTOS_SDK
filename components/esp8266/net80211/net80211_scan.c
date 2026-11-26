@@ -677,6 +677,7 @@ void n8_scan_rx_beacon_or_probe(const wifi_pkt_rx_ctrl_t *ctrl, int16_t freq_off
     uint16_t rate_mask = 0U;
     uint8_t ht_mcs = 0U;
     uint8_t ht_present = 0U;
+    uint8_t ht_sgi20 = 0U;
     uint8_t wmm_present = 0U;
     uint8_t wps_present = 0U;
     const uint8_t *ssid_ie = NULL;
@@ -742,6 +743,7 @@ void n8_scan_rx_beacon_or_probe(const wifi_pkt_rx_ctrl_t *ctrl, int16_t freq_off
         case IEEE80211_IE_HT_CAP:
             if (elen >= 26U) {
                 ht_present = 1U;
+                ht_sgi20 = ((val[0] & IEEE80211_HT_CAP_INFO_SGI20) != 0U) ? 1U : 0U;
                 ht_mcs = val[3]; /* Supported MCS Set byte 0 = MCS0..7 */
             }
             break;
@@ -855,6 +857,7 @@ void n8_scan_rx_beacon_or_probe(const wifi_pkt_rx_ctrl_t *ctrl, int16_t freq_off
     ent->rate_mask_11bg = rate_mask;
     ent->ht_mcs_mask = ht_mcs;
     ent->ht_cap = ht_present;
+    ent->ht_sgi20 = ht_sgi20;
     ent->wmm_cap = wmm_present;
     ent->beacon_int = (bcn_int >= 10U && bcn_int <= 255U) ? (uint8_t)bcn_int : 100U;
 

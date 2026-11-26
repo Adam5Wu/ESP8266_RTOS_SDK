@@ -14,7 +14,9 @@
 #include "drivers/driver.h"
 #include "eap_peer/eap.h"
 #include "wpa_supplicant_i.h"
+#ifndef ESP_SUPPLICANT
 #include "config.h"
+#endif
 #include "scan.h"
 #include "bss.h"
 #ifdef ESP_SUPPLICANT
@@ -110,7 +112,7 @@ static int wpa_bss_known(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 {
 	struct wifi_ssid *ssid = esp_wifi_sta_get_prof_ssid_internal();
 
-	if (ssid->ssid == NULL || ssid->len == 0)
+	if (ssid->len == 0)
 		return 0;
 	if (ssid->len == bss->ssid_len &&
 	    os_memcmp(ssid->ssid, bss->ssid, ssid->len) == 0)
@@ -123,6 +125,8 @@ static int wpa_bss_in_use(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 {
 	if (bss == wpa_s->current_bss)
 		return 1;
+	if (!wpa_s->current_bss)
+		return 0;
 
 	if (wpa_s->current_bss &&
 	    (bss->ssid_len != wpa_s->current_bss->ssid_len ||
@@ -130,7 +134,7 @@ static int wpa_bss_in_use(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 		       bss->ssid_len) != 0))
 		return 0; /* SSID has changed */
 
-	return !is_zero_ether_addr(bss->bssid) && wpa_s->current_bss->bssid &&
+	return !is_zero_ether_addr(bss->bssid) &&
 		(os_memcmp(bss->bssid, wpa_s->current_bss->bssid, ETH_ALEN) == 0);
 
 	return 0;
@@ -468,7 +472,8 @@ struct wpa_bss * wpa_bss_get_next_bss(struct wpa_supplicant *wpa_s,
  */
 const u8 * wpa_bss_get_ie(const struct wpa_bss *bss, u8 ie)
 {
-	return get_ie((const u8 *) (bss + 1), bss->ie_len, ie);
+	return get_ie((const u8 *) (bss + 1),
+		      bss->ie_len ? bss->ie_len : bss->beacon_ie_len, ie);
 }
 
 int wpa_bss_ext_capab(const struct wpa_bss *bss, unsigned int capab)

@@ -32,6 +32,21 @@
  *   11n HT20 (bit4=1) : 0x10..0x17 = MCS0..MCS7
  * -------------------------------------------------------------------------- */
 
+#define LMAC_PEER_FLAG_SHORT_PRE  0x01U
+#define LMAC_PEER_FLAG_SGI20      0x02U
+#define LMAC_PEER_FLAG_QOS        0x04U
+#define LMAC_PEER_FLAG_HT         0x08U
+#define LMAC_RATE_11B_SHORT_BIT   0x04U
+#define LMAC_RATE_HT_SGI_BIT      0x08U
+#define LMAC_RATE_HT_MCS5         0x15U
+#define LMAC_RATE_HT_MCS6         0x16U
+#define LMAC_RATE_HT_MCS7         0x17U
+#define LMAC_RATE_HT_MCS7_SGI     0x1FU
+#define LMAC_TRC_11N_MCS0_IDX     4U
+#define LMAC_TRC_11N_MCS4_IDX     8U
+#define LMAC_TRC_11N_MCS7_IDX     11U
+#define LMAC_TRC_11N_MCS7_SGI_IDX 12U
+
 static const uint8_t s_sched_11b[] = {
     0x00U, 0x01U, 0x02U, 0x03U,
 };
@@ -42,6 +57,7 @@ static const uint8_t s_sched_11g[] = {
 
 static const uint8_t s_sched_11n[] = {
     0x00U, 0x01U, 0x02U, 0x0BU, 0x10U, 0x11U, 0x12U, 0x13U, 0x14U, 0x15U, 0x16U, 0x17U,
+    LMAC_RATE_HT_MCS7_SGI,
 };
 
 static uint8_t sched_len(uint8_t mode)
@@ -141,6 +157,11 @@ static void trc_reset_window(lmac_peer_t *p, uint32_t now_us)
     p->win_start_us = now_us;
 }
 
+/**
+ * @brief Configure initial rate schedule bounds and starting index for a peer.
+ *
+ * @param p Peer state entry in LMAC TRC table.
+ */
 static void configure_peer_schedule(lmac_peer_t *p)
 {
     uint8_t proto = (p->vif < ESP_LMAC_VIF_MAX) ? g_lmac.vif[p->vif].proto_mask : 0U;
@@ -148,7 +169,7 @@ static void configure_peer_schedule(lmac_peer_t *p)
         proto = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N;
     }
 
-    if ((p->flags & 0x08U) != 0U && (proto & WIFI_PROTOCOL_11N) != 0U && p->ht20_mcs_mask != 0U) {
+    if ((p->flags & LMAC_PEER_FLAG_HT) != 0U && (proto & WIFI_PROTOCOL_11N) != 0U && p->ht20_mcs_mask != 0U) {
         p->sched_mode = 2U;
         uint8_t top_mcs = 0U;
         for (uint8_t m = 0U; m < 8U; m++) {
@@ -156,12 +177,14 @@ static void configure_peer_schedule(lmac_peer_t *p)
                 top_mcs = m;
             }
         }
-        p->max_idx = (uint8_t)(4U + top_mcs);
+        uint8_t base_max = (uint8_t)(LMAC_TRC_11N_MCS0_IDX + top_mcs);
+        p->max_idx = (top_mcs == 7U && (p->flags & LMAC_PEER_FLAG_SGI20) != 0U)
+                     ? LMAC_TRC_11N_MCS7_SGI_IDX : base_max;
         p->min_idx = ((proto & WIFI_PROTOCOL_11B) != 0U) ? 0U : 3U;
 #ifdef CONFIG_WIFI_TX_RATE_SEQUENCE_FROM_HIGH
-        p->cur_idx = p->max_idx; /* Start at highest supported MCS (MCS7) */
+        p->cur_idx = base_max; /* Start at highest LGI MCS (MCS7) and step to SGI after clean window */
 #else
-        p->cur_idx = (p->max_idx >= 8U) ? 8U : p->max_idx; /* Start at MCS4 */
+        p->cur_idx = (base_max >= LMAC_TRC_11N_MCS4_IDX) ? LMAC_TRC_11N_MCS4_IDX : base_max; /* Start at MCS4 */
 #endif
     } else if ((proto & WIFI_PROTOCOL_11G) != 0U && (p->rate_mask_11bg == 0U || (p->rate_mask_11bg & 0x0FF0U) != 0U)) {
         p->sched_mode = 1U;
@@ -241,10 +264,10 @@ esp_lmac_peer_id_t esp_lmac_peer_add(esp_lmac_vif_t vif, const esp_lmac_peer_cap
     memcpy(p->mac, caps->mac, 6U);
     p->rate_mask_11bg = caps->rate_mask_11bg;
     p->ht20_mcs_mask = caps->ht20_mcs_mask;
-    p->flags = (uint8_t)((caps->short_preamble ? 0x01U : 0U) |
-                         (caps->short_gi_20    ? 0x02U : 0U) |
-                         (caps->qos_enabled    ? 0x04U : 0U) |
-                         (caps->ht_enabled     ? 0x08U : 0U));
+    p->flags = (uint8_t)((caps->short_preamble ? LMAC_PEER_FLAG_SHORT_PRE : 0U) |
+                         (caps->short_gi_20    ? LMAC_PEER_FLAG_SGI20     : 0U) |
+                         (caps->qos_enabled    ? LMAC_PEER_FLAG_QOS       : 0U) |
+                         (caps->ht_enabled     ? LMAC_PEER_FLAG_HT        : 0U));
     p->rssi_avg = -65;
     p->ptk_hw_slot = saved_slot;
     p->ptk_cipher = saved_cipher;
@@ -318,6 +341,18 @@ void esp_lmac_set_protocol_mask(esp_lmac_vif_t vif, uint8_t proto_bitmap)
     }
 }
 
+/**
+ * @brief Select hardware TX rate encoding for a transmission attempt.
+ *
+ * Applies retry fallback stepping, 11b short preamble, and SGI20 promotion
+ * on MCS5..6 when the link exhibits zero failures and low retry ratio.
+ *
+ * @param peer_id   Target LMAC peer ID, or ESP_LMAC_PEER_INVALID.
+ * @param vif       Virtual interface (STA or AP).
+ * @param flags     ESP_LMAC_TX_FLAG_* bitmask.
+ * @param retry_idx Current hardware retry index (0 = initial attempt).
+ * @return WDEV hardware rate byte.
+ */
 uint8_t lmac_trc_select_rate(esp_lmac_peer_id_t peer_id, esp_lmac_vif_t vif,
                              uint8_t flags, uint8_t retry_idx)
 {
@@ -343,8 +378,15 @@ uint8_t lmac_trc_select_rate(esp_lmac_peer_id_t peer_id, esp_lmac_vif_t vif,
 
     /* Apply 11b short preamble for 2M/5.5M/11M when peer supports it */
     if (hw_rate >= 1U && hw_rate <= 3U && ((flags & ESP_LMAC_TX_FLAG_SHORT_PREAMBLE) != 0U ||
-                                           (p->flags & 0x01U) != 0U)) {
-        hw_rate |= 0x04U;
+                                           (p->flags & LMAC_PEER_FLAG_SHORT_PRE) != 0U)) {
+        hw_rate |= LMAC_RATE_11B_SHORT_BIT;
+    } else if ((hw_rate == LMAC_RATE_HT_MCS5 || hw_rate == LMAC_RATE_HT_MCS6) &&
+               (p->flags & LMAC_PEER_FLAG_SGI20) != 0U &&
+               retry_idx <= 1U && p->win_fails == 0U && p->consec_heavy == 0U &&
+               ((uint16_t)p->win_retries * 8U) <= (uint16_t)p->win_frames &&
+               (p->clean_windows > 0U || p->cur_idx == p->max_idx)) {
+        /* Enable Short GI 20 MHz on MCS5/MCS6 when peer supports SGI20 and link PER is low */
+        hw_rate |= LMAC_RATE_HT_SGI_BIT;
     }
 
     return hw_rate;

@@ -774,11 +774,23 @@ int esp_wifi_ipc_internal(wifi_ipc_config_t *cfg, bool sync)
     return (int)n8_api_call(ipc_trampoline, cfg);
 }
 
-esp_err_t esp_wifi_send_mgmt_frm_internal(const mgmt_frm_req_t *req)
+/**
+ * @brief Transmit a management frame on the net80211 worker task.
+ *
+ * Routes STA Action frames through n8_sta_tx_action() when CONFIG_WPA_11KV_SUPPORT
+ * is enabled so 802.11w PMF CCMP encryption is applied when active.
+ *
+ * @param arg Pointer to const mgmt_frm_req_t.
+ * @return ESP_OK on submission, or error code.
+ */
+static esp_err_t api_send_mgmt_frm(void *arg)
 {
-    if (req == NULL || req->data_len == 0U || req->data_len > 512U) {
-        return ESP_ERR_INVALID_ARG;
+    const mgmt_frm_req_t *req = (const mgmt_frm_req_t *)arg;
+#ifdef CONFIG_WPA_11KV_SUPPORT
+    if (req->ifx == WIFI_IF_STA && req->subtype == IEEE80211_STYPE_IDX_ACTION) {
+        return n8_sta_tx_action((const uint8_t *)req->data, (uint16_t)req->data_len);
     }
+#endif
 
     uint8_t hdr[24];
     memset(hdr, 0, sizeof(hdr));
@@ -825,6 +837,20 @@ esp_err_t esp_wifi_send_mgmt_frm_internal(const mgmt_frm_req_t *req)
         heap_caps_free(body);
     }
     return err;
+}
+
+/**
+ * @brief Send a management frame on behalf of wpa_supplicant (thread-safe).
+ *
+ * @param req Management frame request descriptor.
+ * @return ESP_OK on success, or error code.
+ */
+esp_err_t esp_wifi_send_mgmt_frm_internal(const mgmt_frm_req_t *req)
+{
+    if (req == NULL || req->data_len == 0U || req->data_len > 512U) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return n8_api_call(api_send_mgmt_frm, (void *)(uintptr_t)req);
 }
 
 /* --------------------------------------------------------------------------
@@ -879,6 +905,53 @@ bool esp_wifi_enable_sta_privacy_internal(void)    { return true; }
 int esp_wifi_disarm_sta_connection_timer_internal(void) { g_n8.sta_conn_timer_disarmed = 1U; return ESP_OK; }
 esp_err_t esp_wifi_set_wps_start_flag_internal(bool start) { g_n8.wps_start_flag = start ? 1U : 0U; return ESP_OK; }
 uint8_t esp_wifi_get_user_init_flag_internal(void) { return g_n8.user_init_flag; }
-bool esp_wifi_is_rm_enabled_internal(uint8_t ifx)  { return (ifx == WIFI_IF_STA) && (g_n8.sta_cfg.sta.rm_enabled != 0U); }
-bool esp_wifi_is_btm_enabled_internal(uint8_t ifx) { return (ifx == WIFI_IF_STA) && (g_n8.sta_cfg.sta.btm_enabled != 0U); }
-void esp_wifi_register_frame_internal(uint32_t type, uint32_t subtype) { (void)type; (void)subtype; }
+/**
+ * @brief Return whether 802.11k Radio Measurement is enabled on an interface.
+ *
+ * @param ifx Wi-Fi interface index (only WIFI_IF_STA is supported).
+ * @return true when CONFIG_WPA_11KV_SUPPORT is enabled and sta.rm_enabled != 0.
+ */
+bool esp_wifi_is_rm_enabled_internal(uint8_t ifx)
+{
+#ifdef CONFIG_WPA_11KV_SUPPORT
+    return (ifx == WIFI_IF_STA) && (g_n8.sta_cfg.sta.rm_enabled != 0U);
+#else
+    (void)ifx;
+    return false;
+#endif
+}
+
+/**
+ * @brief Return whether 802.11v BSS Transition Management is enabled on an interface.
+ *
+ * @param ifx Wi-Fi interface index (only WIFI_IF_STA is supported).
+ * @return true when CONFIG_WPA_11KV_SUPPORT is enabled and sta.btm_enabled != 0.
+ */
+bool esp_wifi_is_btm_enabled_internal(uint8_t ifx)
+{
+#ifdef CONFIG_WPA_11KV_SUPPORT
+    return (ifx == WIFI_IF_STA) && (g_n8.sta_cfg.sta.btm_enabled != 0U);
+#else
+    (void)ifx;
+    return false;
+#endif
+}
+
+/**
+ * @brief Register management frame subtype and Action category interest bitmasks.
+ *
+ * @param type    Bitmask of 802.11 management subtypes (1 << WLAN_FC_STYPE_*).
+ * @param subtype Bitmask of 802.11 Action categories (1 << WLAN_ACTION_*).
+ */
+void esp_wifi_register_frame_internal(uint32_t type, uint32_t subtype)
+{
+#ifdef CONFIG_WPA_11KV_SUPPORT
+    taskENTER_CRITICAL();
+    g_n8.frame_reg_type = type;
+    g_n8.frame_reg_subtype = subtype;
+    taskEXIT_CRITICAL();
+#else
+    (void)type;
+    (void)subtype;
+#endif
+}
