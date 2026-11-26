@@ -40,6 +40,7 @@ typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
 #endif
+#include "esp_wps.h"
 #include "esp_wifi_driver.h"
 
 #ifdef __cplusplus
@@ -101,6 +102,9 @@ extern "C" {
 #define IEEE80211_OUI_TYPE_WPA          0x01U
 #define IEEE80211_OUI_TYPE_WMM          0x02U
 #define IEEE80211_OUI_TYPE_WPS          0x04U
+#define IEEE80211_WPS_OUI_HDR_LEN       4U
+#define N8_EAPOL_HDR_LEN                4U
+#define N8_EAPOL_TYPE_KEY               3U
 #define IEEE80211_WMM_SUBTYPE_INFO      0x00U
 #define IEEE80211_WMM_SUBTYPE_PARAM     0x01U
 #define IEEE80211_WMM_VERSION           0x01U
@@ -262,6 +266,8 @@ typedef enum {
     N8_PM_SLEEPING,
     N8_PM_WAKING,
 } n8_pm_state_t;
+
+typedef void (*n8_scan_done_cb_t)(void *arg, STATUS status);
 
 /** Compact 64-packet sliding-window RX PN/TSC replay state (0ULL bitmap == uninitialized). */
 typedef struct {
@@ -481,6 +487,7 @@ typedef struct {
     uint16_t          scan_result_cnt;
     uint16_t          scan_result_cap;
     SemaphoreHandle_t scan_done_sem;
+    n8_scan_done_cb_t scan_done_cb;
 
     /* Supplicant callbacks & App IEs */
     struct wpa_funcs  *wpa_cb;
@@ -491,6 +498,7 @@ typedef struct {
     int                wps_type;
     int                wps_status;
     uint8_t            wps_start_flag;
+    uint8_t            sta_conn_timer_disarmed;
     wpa2_ent_eap_state_t wpa2_ent_state;
 
     /* Promiscuous & Data Plane hooks */
@@ -513,6 +521,14 @@ extern net80211_ctx_t g_n8;
 static inline bool n8_qos_cfg_enabled(void)
 {
     return (g_n8.init_cfg.qos_enable != 0U) || (g_n8.init_cfg.ampdu_rx_enable != 0U);
+}
+
+/** @brief Return true when a WPS enrollee exchange is pending STA association/EAPOL. */
+static inline bool n8_wps_is_pending(void)
+{
+    return (g_n8.wps_cb != NULL) &&
+           (g_n8.wps_type != WPS_TYPE_DISABLE) &&
+           (g_n8.wps_status == WPS_STATUS_PENDING);
 }
 
 /* --------------------------------------------------------------------------
@@ -564,6 +580,7 @@ wifi_auth_mode_t n8_parse_ap_authmode(uint16_t capinfo, const uint8_t *rsn_ie, u
 void      n8_scan_rx_beacon_or_probe(const wifi_pkt_rx_ctrl_t *ctrl, int16_t freq_offset,
                                      const uint8_t *frame, uint16_t len);
 n8_scan_entry_t *n8_scan_pick_best_ap(void);
+int       esp_wifi_promiscuous_scan_start(wifi_scan_config_t *config, n8_scan_done_cb_t cb);
 
 /* net80211_sta.c */
 esp_err_t n8_sta_start(void);

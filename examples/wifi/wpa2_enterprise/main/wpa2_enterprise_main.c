@@ -141,7 +141,7 @@ static void wpa2_enterprise_example_task(void* pvParameters)
     while (1) {
         vTaskDelay(2000 / portTICK_PERIOD_MS);
 
-        if (tcpip_adapter_get_ip_info(ESP_IF_WIFI_STA, &ip) == 0) {
+        if (tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip) == 0) {
             ESP_LOGI(TAG, "~~~~~~~~~~~");
             ESP_LOGI(TAG, "IP:"IPSTR, IP2STR(&ip.ip));
             ESP_LOGI(TAG, "MASK:"IPSTR, IP2STR(&ip.netmask));
@@ -149,7 +149,7 @@ static void wpa2_enterprise_example_task(void* pvParameters)
             ESP_LOGI(TAG, "~~~~~~~~~~~");
         }
 
-        ESP_LOGI(TAG, "free heap:%d\n", esp_get_free_heap_size());
+        ESP_LOGI(TAG, "free heap:%u\n", (unsigned)esp_get_free_heap_size());
     }
 }
 

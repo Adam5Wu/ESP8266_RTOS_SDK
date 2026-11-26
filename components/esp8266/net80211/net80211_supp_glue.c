@@ -87,22 +87,66 @@ int esp_wifi_unregister_wpa_cb_internal(void)
     return ESP_OK;
 }
 
-int esp_wifi_register_wpa2_cb_internal(struct wpa2_funcs *cb)
+static esp_err_t api_register_wpa2_cb(void *arg)
 {
+    struct wpa2_funcs *cb = (struct wpa2_funcs *)arg;
+    if (g_n8.wpa2_cb != NULL && g_n8.wpa2_cb != cb) {
+        heap_caps_free(g_n8.wpa2_cb);
+    }
     g_n8.wpa2_cb = cb;
     return ESP_OK;
 }
 
-int esp_wifi_unregister_wpa2_cb_internal(void)
+/**
+ * @brief Register the WPA2-Enterprise supplicant callback table on the worker task.
+ *
+ * @param cb Heap-allocated wpa2_funcs callback table (ownership transferred).
+ * @return ESP_OK on success.
+ */
+int esp_wifi_register_wpa2_cb_internal(struct wpa2_funcs *cb)
 {
-    g_n8.wpa2_cb = NULL;
+    return (int)n8_api_call(api_register_wpa2_cb, cb);
+}
+
+static esp_err_t api_unregister_wpa2_cb(void *arg)
+{
+    (void)arg;
+    if (g_n8.wpa2_cb != NULL) {
+        heap_caps_free(g_n8.wpa2_cb);
+        g_n8.wpa2_cb = NULL;
+    }
     return ESP_OK;
 }
 
-int esp_wifi_set_wps_cb_internal(struct wps_funcs *wps_cb)
+/**
+ * @brief Unregister and free the WPA2-Enterprise supplicant callback table on the worker task.
+ *
+ * @return ESP_OK on success.
+ */
+int esp_wifi_unregister_wpa2_cb_internal(void)
 {
+    return (int)n8_api_call(api_unregister_wpa2_cb, NULL);
+}
+
+static esp_err_t api_set_wps_cb(void *arg)
+{
+    struct wps_funcs *wps_cb = (struct wps_funcs *)arg;
+    if (g_n8.wps_cb != NULL && g_n8.wps_cb != wps_cb) {
+        heap_caps_free(g_n8.wps_cb);
+    }
     g_n8.wps_cb = wps_cb;
     return ESP_OK;
+}
+
+/**
+ * @brief Register or clear the WPS supplicant callback table on the worker task.
+ *
+ * @param wps_cb Heap-allocated wps_funcs callback table (or NULL to clear).
+ * @return ESP_OK on success.
+ */
+int esp_wifi_set_wps_cb_internal(struct wps_funcs *wps_cb)
+{
+    return (int)n8_api_call(api_set_wps_cb, wps_cb);
 }
 
 int esp_wifi_register_tx_cb_internal(wifi_tx_cb_t fn, u8 id)
@@ -784,23 +828,41 @@ esp_err_t esp_wifi_send_mgmt_frm_internal(const mgmt_frm_req_t *req)
 }
 
 /* --------------------------------------------------------------------------
- * WPS / WPA2-Enterprise / 11k/11v Stubs (Required by esp_wifi_driver.h)
+ * WPS / WPA2-Enterprise / 11k/11v Hooks (Required by esp_wifi_driver.h)
  * -------------------------------------------------------------------------- */
 
-esp_err_t esp_wifi_sta_wpa2_ent_enable_internal(wifi_wpa2_param_t *param)
+static esp_err_t api_wpa2_ent_param(void *arg)
 {
-    if (param != NULL && param->fn != NULL) {
-        return param->fn(param->param);
-    }
-    return ESP_OK;
+    wifi_wpa2_param_t *param = (wifi_wpa2_param_t *)arg;
+    return param->fn(param->param);
 }
 
+/**
+ * @brief Marshal WPA2-Enterprise enable callback onto the net80211 worker task.
+ *
+ * @param param Callback descriptor containing fn and opaque arg from esp_wpa2.c.
+ * @return Return value of param->fn, or ESP_ERR_INVALID_ARG if NULL.
+ */
+esp_err_t esp_wifi_sta_wpa2_ent_enable_internal(wifi_wpa2_param_t *param)
+{
+    if (param == NULL || param->fn == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return n8_api_call(api_wpa2_ent_param, param);
+}
+
+/**
+ * @brief Marshal WPA2-Enterprise disable callback onto the net80211 worker task.
+ *
+ * @param param Callback descriptor containing fn and opaque arg from esp_wpa2.c.
+ * @return Return value of param->fn, or ESP_ERR_INVALID_ARG if NULL.
+ */
 esp_err_t esp_wifi_sta_wpa2_ent_disable_internal(wifi_wpa2_param_t *param)
 {
-    if (param != NULL && param->fn != NULL) {
-        return param->fn(param->param);
+    if (param == NULL || param->fn == NULL) {
+        return ESP_ERR_INVALID_ARG;
     }
-    return ESP_OK;
+    return n8_api_call(api_wpa2_ent_param, param);
 }
 
 esp_err_t esp_wifi_set_wpa2_ent_state_internal(wpa2_ent_eap_state_t state)
@@ -814,7 +876,7 @@ int esp_wifi_set_wps_type_internal(uint32_t type)  { g_n8.wps_type = (int)type; 
 int esp_wifi_get_wps_status_internal(void)         { return g_n8.wps_status; }
 int esp_wifi_set_wps_status_internal(uint32_t st)  { g_n8.wps_status = (int)st; return ESP_OK; }
 bool esp_wifi_enable_sta_privacy_internal(void)    { return true; }
-int esp_wifi_disarm_sta_connection_timer_internal(void) { return ESP_OK; }
+int esp_wifi_disarm_sta_connection_timer_internal(void) { g_n8.sta_conn_timer_disarmed = 1U; return ESP_OK; }
 esp_err_t esp_wifi_set_wps_start_flag_internal(bool start) { g_n8.wps_start_flag = start ? 1U : 0U; return ESP_OK; }
 uint8_t esp_wifi_get_user_init_flag_internal(void) { return g_n8.user_init_flag; }
 bool esp_wifi_is_rm_enabled_internal(uint8_t ifx)  { return (ifx == WIFI_IF_STA) && (g_n8.sta_cfg.sta.rm_enabled != 0U); }

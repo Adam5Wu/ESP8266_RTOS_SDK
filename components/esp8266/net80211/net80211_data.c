@@ -852,6 +852,14 @@ static void handle_rx_data(esp_lmac_rx_buf_t *rx_buf)
 
     /* Route EAPOL (0x888E) to wpa_supplicant */
     if (etype_h == ETH_P_EAPOL_H && etype_l == ETH_P_EAPOL_L) {
+        if (payload_len < N8_EAPOL_HDR_LEN) {
+            if (reasm != NULL) {
+                heap_caps_free(reasm);
+            } else {
+                esp_lmac_rx_free(rx_buf);
+            }
+            return;
+        }
         uint8_t *eapol = payload;
         if (rx_buf != NULL) {
             /* Copy EAPOL to heap & free DMA descriptor BEFORE calling supplicant (which may TX!) */
@@ -864,13 +872,19 @@ static void handle_rx_data(esp_lmac_rx_buf_t *rx_buf)
             esp_lmac_rx_free(rx_buf);
         }
 
-        if (g_n8.wpa_cb != NULL) {
-            if (vif == ESP_LMAC_VIF_STA && g_n8.wpa_cb->wpa_sta_rx_eapol != NULL) {
+        if (vif == ESP_LMAC_VIF_STA) {
+            if (n8_wps_is_pending() && g_n8.wps_cb->wps_sm_rx_eapol != NULL) {
+                (void)g_n8.wps_cb->wps_sm_rx_eapol(sa, eapol, payload_len);
+            } else if (g_n8.wpa2_cb != NULL && g_n8.sta_supp_authmode == WPA2_AUTH_ENT &&
+                       payload_len >= 2U && eapol[1] != N8_EAPOL_TYPE_KEY &&
+                       g_n8.wpa2_cb->wpa2_sm_rx_eapol != NULL) {
+                (void)g_n8.wpa2_cb->wpa2_sm_rx_eapol(sa, eapol, payload_len, g_n8.sta_bssid);
+            } else if (g_n8.wpa_cb != NULL && g_n8.wpa_cb->wpa_sta_rx_eapol != NULL) {
                 (void)g_n8.wpa_cb->wpa_sta_rx_eapol(sa, eapol, payload_len);
-            } else if (vif == ESP_LMAC_VIF_AP && ap_sta != NULL &&
-                       g_n8.wpa_cb->wpa_ap_rx_eapol != NULL) {
-                (void)g_n8.wpa_cb->wpa_ap_rx_eapol(g_n8.ap_hapd, ap_sta->wpa_sm, eapol, payload_len);
             }
+        } else if (vif == ESP_LMAC_VIF_AP && ap_sta != NULL &&
+                   g_n8.wpa_cb != NULL && g_n8.wpa_cb->wpa_ap_rx_eapol != NULL) {
+            (void)g_n8.wpa_cb->wpa_ap_rx_eapol(g_n8.ap_hapd, ap_sta->wpa_sm, eapol, payload_len);
         }
         if (reasm != NULL) {
             heap_caps_free(reasm);

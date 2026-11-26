@@ -28,10 +28,11 @@ extern const bool _g_esp_wifi_connect_open_router_when_pwd_is_set;
 extern void n8_mgmt_free_tx_cb(void *ctx, const esp_lmac_tx_status_t *st);
 
 /* Key management masks from wpa_supplicant/src/common/defs.h */
-#define SUPP_KEY_MGMT_IEEE8021X      (1 << 0)
-#define SUPP_KEY_MGMT_PSK            (1 << 1)
-#define SUPP_KEY_MGMT_PSK_SHA256     (1 << 8)
-#define SUPP_KEY_MGMT_SAE            (1 << 10)
+#define SUPP_KEY_MGMT_IEEE8021X         (1 << 0)
+#define SUPP_KEY_MGMT_PSK               (1 << 1)
+#define SUPP_KEY_MGMT_IEEE8021X_SHA256  (1 << 7)
+#define SUPP_KEY_MGMT_PSK_SHA256        (1 << 8)
+#define SUPP_KEY_MGMT_SAE               (1 << 10)
 #define SUPP_CAP_MFPR                (1 << 6)
 #define SUPP_CAP_MFPC                (1 << 7)
 
@@ -104,6 +105,14 @@ static void scan_send_probe_req(const uint8_t *ssid, uint8_t ssid_len)
     body[off++] = IEEE80211_IE_DS_PARAM;
     body[off++] = 1U;
     body[off++] = esp_lmac_get_channel();
+
+    /* Append WPS Probe Request App-IE when installed by esp_wps */
+    uint16_t wps_len = 0U;
+    const uint8_t *wps_ie = n8_supp_get_ie_bytes(WIFI_APPIE_WPS_PR, &wps_len);
+    if (wps_ie != NULL && wps_len > 0U && (uint16_t)(off + wps_len) <= sizeof(body)) {
+        memcpy(body + off, wps_ie, wps_len);
+        off = (uint16_t)(off + wps_len);
+    }
 
     /* Append user Probe Request vendor IEs if configured */
     off = n8_append_vendor_ies(WIFI_VND_IE_TYPE_PROBE_REQ, body, off, sizeof(body));
@@ -286,6 +295,7 @@ esp_err_t n8_scan_start_internal(const wifi_scan_config_t *cfg, bool for_connect
     }
     g_n8.scan_result_cap = (uint16_t)max_ap;
     g_n8.scan_result_cnt = 0U;
+    g_n8.scan_done_cb = NULL;
 
     g_n8.scan_for_connect = for_connect ? 1U : 0U;
     g_n8.scan_assoc_mode = (!for_connect && g_n8.sta_state == N8_STA_RUN) ? 1U : 0U;
@@ -396,9 +406,11 @@ void n8_scan_stop_internal(bool post_event)
 
     bool was_for_connect = (g_n8.scan_for_connect != 0U);
     bool was_assoc = (g_n8.scan_assoc_mode != 0U);
+    n8_scan_done_cb_t done_cb = g_n8.scan_done_cb;
     g_n8.scan_active = 0U;
     g_n8.scan_for_connect = 0U;
     g_n8.scan_assoc_mode = 0U;
+    g_n8.scan_done_cb = NULL;
     esp_lmac_set_scan_rx_mode(false);
 
     /* Restore operating channel (STA if connected, else SoftAP if running) */
@@ -432,6 +444,11 @@ void n8_scan_stop_internal(bool post_event)
         xSemaphoreGive(g_n8.scan_done_sem);
     }
 
+    if (post_event && done_cb != NULL) {
+        done_cb(NULL, OK);
+        return;
+    }
+
     if (post_event) {
         system_event_t evt;
         memset(&evt, 0, sizeof(evt));
@@ -441,6 +458,40 @@ void n8_scan_stop_internal(bool post_event)
         evt.event_info.scan_done.scan_id = 0U;
         n8_send_system_event(&evt);
     }
+}
+
+typedef struct {
+    const wifi_scan_config_t *cfg;
+    n8_scan_done_cb_t         cb;
+} n8_promisc_scan_arg_t;
+
+static esp_err_t api_promiscuous_scan_start(void *arg)
+{
+    const n8_promisc_scan_arg_t *a = (const n8_promisc_scan_arg_t *)arg;
+    esp_err_t err = n8_scan_start_internal(a->cfg, false, 0U);
+    if (err == ESP_OK) {
+        g_n8.scan_done_cb = a->cb;
+    }
+    return err;
+}
+
+/**
+ * @brief Start a callback-driven active/passive scan for internal supplicant consumers (WPS).
+ *
+ * Marshals scan startup onto the net80211 worker task and invokes @p cb on normal
+ * completion instead of emitting SYSTEM_EVENT_SCAN_DONE.
+ *
+ * @param config Scan parameters (channel, active/passive mode, dwell times).
+ * @param cb     Optional completion callback invoked on worker context.
+ * @return ESP_OK on success, or an ESP_ERR_* code on failure.
+ */
+int esp_wifi_promiscuous_scan_start(wifi_scan_config_t *config, n8_scan_done_cb_t cb)
+{
+    if (!g_n8.initialized) {
+        return ESP_ERR_WIFI_NOT_INIT;
+    }
+    n8_promisc_scan_arg_t req = { .cfg = config, .cb = cb };
+    return (int)n8_api_call(api_promiscuous_scan_start, &req);
 }
 
 static void scan_timer_cb(void *arg)
@@ -582,7 +633,7 @@ wifi_auth_mode_t n8_parse_ap_authmode(uint16_t capinfo, const uint8_t *rsn_ie, u
         if (rsn_data.key_mgmt & SUPP_KEY_MGMT_SAE) {
             return WIFI_AUTH_WPA3_PSK;
         }
-        if (rsn_data.key_mgmt & SUPP_KEY_MGMT_IEEE8021X) {
+        if (rsn_data.key_mgmt & (SUPP_KEY_MGMT_IEEE8021X | SUPP_KEY_MGMT_IEEE8021X_SHA256)) {
             return WIFI_AUTH_WPA2_ENTERPRISE;
         }
         if (wpa_ok) {
@@ -628,10 +679,12 @@ void n8_scan_rx_beacon_or_probe(const wifi_pkt_rx_ctrl_t *ctrl, int16_t freq_off
     uint8_t ht_present = 0U;
     uint8_t wmm_present = 0U;
     uint8_t wps_present = 0U;
+    const uint8_t *ssid_ie = NULL;
     const uint8_t *rsn_ie = NULL;
     uint16_t rsn_len = 0U;
     const uint8_t *wpa_ie = NULL;
     uint16_t wpa_len = 0U;
+    const uint8_t *wps_ie = NULL;
     wifi_country_t bcn_country;
     bool has_country = false;
 
@@ -650,6 +703,7 @@ void n8_scan_rx_beacon_or_probe(const wifi_pkt_rx_ctrl_t *ctrl, int16_t freq_off
         case IEEE80211_IE_SSID:
             if (!got_ssid) {
                 got_ssid = true;
+                ssid_ie = &ies[pos];
                 uint8_t raw_len = (elen > 32U) ? 32U : elen;
                 if (ssid_is_hidden(val, raw_len)) {
                     ssid_len = 0U;
@@ -711,6 +765,9 @@ void n8_scan_rx_beacon_or_probe(const wifi_pkt_rx_ctrl_t *ctrl, int16_t freq_off
                     wmm_present = 1U;
                 } else if (val[3] == IEEE80211_OUI_TYPE_WPS) {
                     wps_present = 1U;
+                    if (elen > IEEE80211_WPS_OUI_HDR_LEN) {
+                        wps_ie = &ies[pos];
+                    }
                 }
             }
             break;
@@ -723,6 +780,22 @@ void n8_scan_rx_beacon_or_probe(const wifi_pkt_rx_ctrl_t *ctrl, int16_t freq_off
 
     if (ssid_len == 0U && !g_n8.scan_show_hidden) {
         return;
+    }
+
+    /* Forward Beacon/ProbeResp IE pointers to WPS enrollee scanner while active */
+    if (g_n8.wps_cb != NULL && g_n8.wps_cb->wps_parse_scan_result != NULL &&
+        g_n8.wps_type != WPS_TYPE_DISABLE &&
+        (g_n8.wps_status == WPS_STATUS_DISABLE || g_n8.wps_status == WPS_STATUS_SCANNING) &&
+        ssid_ie != NULL && ssid_len > 0U && ssid_ie[1] <= 32U) {
+        struct wps_scan_ie scan_ie;
+        scan_ie.bssid = (uint8_t *)(uintptr_t)bssid;
+        scan_ie.chan = ds_ch;
+        scan_ie.capinfo = capinfo;
+        scan_ie.ssid = (uint8_t *)(uintptr_t)ssid_ie;
+        scan_ie.wpa = (uint8_t *)(uintptr_t)wpa_ie;
+        scan_ie.rsn = (uint8_t *)(uintptr_t)rsn_ie;
+        scan_ie.wps = (uint8_t *)(uintptr_t)wps_ie;
+        (void)g_n8.wps_cb->wps_parse_scan_result(&scan_ie);
     }
     if (g_n8.scan_target_ssid_len > 0U) {
         if (ssid_len != g_n8.scan_target_ssid_len ||
@@ -837,6 +910,8 @@ n8_scan_entry_t *n8_scan_pick_best_ap(void)
     }
 
     bool has_pwd = (g_n8.sta_cfg.sta.password[0] != 0U);
+    bool wps_pending = n8_wps_is_pending();
+    bool wpa2_ent_en = (g_n8.wpa2_cb != NULL);
     bool sae_allowed = false;
 #ifdef CONFIG_ESP8266_WIFI_ENABLE_WPA3_SAE
     sae_allowed = (g_n8.init_cfg.wpa3_sae_enable != 0U);
@@ -857,21 +932,25 @@ n8_scan_entry_t *n8_scan_pick_best_ap(void)
             e->rec.rssi < g_n8.sta_cfg.sta.threshold.rssi) {
             continue;
         }
-        if (e->rec.authmode < g_n8.sta_cfg.sta.threshold.authmode) {
-            continue;
-        }
-        if (!has_pwd && e->rec.authmode != WIFI_AUTH_OPEN) {
-            continue;
-        }
-        if (has_pwd && e->rec.authmode == WIFI_AUTH_OPEN &&
-            !_g_esp_wifi_connect_open_router_when_pwd_is_set) {
-            continue;
-        }
-        if (g_n8.sta_cfg.sta.pmf_cfg.required && !e->pmf_capable) {
-            continue;
-        }
-        if (!sae_allowed && e->rec.authmode == WIFI_AUTH_WPA3_PSK) {
-            continue;
+        if (!wps_pending) {
+            if (e->rec.authmode < g_n8.sta_cfg.sta.threshold.authmode) {
+                continue;
+            }
+            bool allow_no_pwd = (e->rec.authmode == WIFI_AUTH_OPEN) ||
+                                (wpa2_ent_en && e->rec.authmode == WIFI_AUTH_WPA2_ENTERPRISE);
+            if (!has_pwd && !allow_no_pwd) {
+                continue;
+            }
+            if (has_pwd && e->rec.authmode == WIFI_AUTH_OPEN &&
+                !_g_esp_wifi_connect_open_router_when_pwd_is_set) {
+                continue;
+            }
+            if (g_n8.sta_cfg.sta.pmf_cfg.required && !e->pmf_capable) {
+                continue;
+            }
+            if (!sae_allowed && e->rec.authmode == WIFI_AUTH_WPA3_PSK) {
+                continue;
+            }
         }
         if (best == NULL) {
             best = e;

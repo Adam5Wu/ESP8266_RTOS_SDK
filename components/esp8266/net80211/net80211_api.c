@@ -216,6 +216,20 @@ esp_err_t esp_wifi_deinit_internal(void)
     n8_worker_stop();
     misc_nvs_deinit();
 
+    if (g_n8.wpa2_cb != NULL) {
+        heap_caps_free(g_n8.wpa2_cb);
+        g_n8.wpa2_cb = NULL;
+    }
+    if (g_n8.wps_cb != NULL) {
+        heap_caps_free(g_n8.wps_cb);
+        g_n8.wps_cb = NULL;
+    }
+    g_n8.wps_type = WPS_TYPE_DISABLE;
+    g_n8.wps_status = WPS_STATUS_DISABLE;
+    g_n8.wps_start_flag = 0U;
+    g_n8.sta_conn_timer_disarmed = 0U;
+    g_n8.wpa2_ent_state = WPA2_ENT_EAP_STATE_NOT_START;
+
     g_n8.initialized = false;
     g_n8.user_init_flag = 0U;
     return ESP_OK;

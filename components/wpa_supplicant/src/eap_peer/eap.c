@@ -46,6 +46,23 @@ void eap_peer_config_deinit(struct eap_sm *sm);
 void eap_peer_blob_deinit(struct eap_sm *sm);
 void eap_deinit_prev_method(struct eap_sm *sm, const char *txt);
 
+u8 *g_wpa_anonymous_identity = NULL;
+int g_wpa_anonymous_identity_len = 0;
+u8 *g_wpa_username = NULL;
+int g_wpa_username_len = 0;
+const u8 *g_wpa_client_cert = NULL;
+int g_wpa_client_cert_len = 0;
+const u8 *g_wpa_private_key = NULL;
+int g_wpa_private_key_len = 0;
+const u8 *g_wpa_private_key_passwd = NULL;
+int g_wpa_private_key_passwd_len = 0;
+const u8 *g_wpa_ca_cert = NULL;
+int g_wpa_ca_cert_len = 0;
+u8 *g_wpa_password = NULL;
+int g_wpa_password_len = 0;
+u8 *g_wpa_new_password = NULL;
+int g_wpa_new_password_len = 0;
+
 #ifdef EAP_PEER_METHOD
 static struct eap_method *eap_methods = NULL;
 
