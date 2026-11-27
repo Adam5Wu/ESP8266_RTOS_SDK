@@ -159,9 +159,18 @@ sequenceDiagram
 
 Measured on `ESPZWApplianceT2` (`esp01_4m`, GCC 16.2, release `-Os`, full STA + SoftAP + WPA2/WPA3-SAE + lwIP + mbedTLS + HTTP/WebDAV + LittleFS + dual-slot OTA; all P1–P5 features active, `CONFIG_WPA_11KV_SUPPORT=n`, `0` compiler warnings, `0` vendor blobs in OSS builds):
 
-<table><tr><td width="50%">
+<table><tr><td width="480">
 
 ```mermaid
+---
+config:
+  xyChart:
+    width: 480
+    height: 390
+  themeVariables:
+    xyChart:
+      plotColorPalette: "#3b82f6"
+---
 xychart-beta
     title "Static IRAM (.iram0.text + .bss)"
     x-axis ["Vendor", "Min NMI", "Default", "A-MPDU RX"]
@@ -169,9 +178,18 @@ xychart-beta
     bar [25.21, 11.79, 12.56, 13.85]
 ```
 
-</td><td width="50%">
+</td><td width="480">
 
 ```mermaid
+---
+config:
+  xyChart:
+    width: 480
+    height: 390
+  themeVariables:
+    xyChart:
+      plotColorPalette: "#f59e0b"
+---
 xychart-beta
     title "Static DRAM (.dram0.data + .bss)"
     x-axis ["Vendor", "Min NMI", "Default", "A-MPDU RX"]
@@ -187,11 +205,11 @@ xychart-beta
 
 | Memory Metric<br>(bytes, lower is better) | Vendor Blobs | OSS Minimal NMI<br>([`OSS_WIFI_MIN_NMI=y`](#cfg-oss-wifi-min-nmi)) | OSS Default<br>([`OSS_WIFI_MIN_NMI=n`](#cfg-oss-wifi-min-nmi)) | OSS A-MPDU RX (`n=28, win=6`)<br>([`AMPDU_RX_ENABLED=y`](#cfg-wifi-ampdu-rx-enabled)) |
 | :--- | ---: | ---: | ---: | ---: |
-| `bootloader.bin` (B) | `9,872` | `9,872` (`+0.0%`) | `9,872` (`+0.0%`) | `9,872` (`+0.0%`) |
-| **Static IRAM**<br>(`.iram0.text + .bss`, B) | `25,811` | `12,075` ($`\color{green}{-53.2\%}`$, `-13,736 B`) | `12,863` ($`\color{green}{-50.2\%}`$, `-12,948 B`) | `14,187` ($`\color{green}{-45.0\%}`$, `-11,624 B`) |
-| **Static DRAM**<br>(`.dram0.data + .bss`, B) | `11,880` | `8,724` ($`\color{green}{-26.6\%}`$, `-3,156 B`) | `8,724` ($`\color{green}{-26.6\%}`$, `-3,156 B`) | `8,740` ($`\color{green}{-26.4\%}`$, `-3,140 B`) |
-| **Flash Code + Rodata**<br>(`.flash.text + .rodata`, B) | `558,368` | `484,844` ($`\color{green}{-13.2\%}`$, `-73,524 B`) | `484,824` ($`\color{green}{-13.2\%}`$, `-73,544 B`) | `484,824` ($`\color{green}{-13.2\%}`$, `-73,544 B`)<sup>[\*a](#note-ampdu-flash)</sup> |
-| **Firmware Binary**<br>(`firmware.bin`, B) | `581,520` | `495,088` ($`\color{green}{-14.9\%}`$, `-86,432 B`) | `495,856` ($`\color{green}{-14.7\%}`$, `-85,664 B`) | `497,184` ($`\color{green}{-14.5\%}`$, `-84,336 B`) |
+| `bootloader.bin` (B) | `9,872` | `9,872`<br>(`+0.0%`) | `9,872`<br>(`+0.0%`) | `9,872`<br>(`+0.0%`) |
+| **Static IRAM**<br>(`.iram0.text + .bss`, B) | `25,811` | `12,075`<br>($`\color{green}{-53.2\%}`$, `-13,736 B`) | `12,863`<br>($`\color{green}{-50.2\%}`$, `-12,948 B`) | `14,187`<br>($`\color{green}{-45.0\%}`$, `-11,624 B`) |
+| **Static DRAM**<br>(`.dram0.data + .bss`, B) | `11,880` | `8,724`<br>($`\color{green}{-26.6\%}`$, `-3,156 B`) | `8,724`<br>($`\color{green}{-26.6\%}`$, `-3,156 B`) | `8,740`<br>($`\color{green}{-26.4\%}`$, `-3,140 B`) |
+| **Flash Code + Rodata**<br>(`.flash.text + .rodata`, B) | `558,368` | `484,844`<br>($`\color{green}{-13.2\%}`$, `-73,524 B`) | `484,824`<br>($`\color{green}{-13.2\%}`$, `-73,544 B`) | `484,824`<sup>[\*a](#note-ampdu-flash)</sup><br>($`\color{green}{-13.2\%}`$, `-73,544 B`) |
+| **Firmware Binary**<br>(`firmware.bin`, B) | `581,520` | `495,088`<br>($`\color{green}{-14.9\%}`$, `-86,432 B`) | `495,856`<br>($`\color{green}{-14.7\%}`$, `-85,664 B`) | `497,184`<br>($`\color{green}{-14.5\%}`$, `-84,336 B`) |
 
 *(<a id="note-ampdu-flash"></a><sup>\*a</sup>Relative to OSS Default, `OSS A-MPDU RX` adds `+1,324 B` static IRAM, `+16 B` static DRAM, `+1,328 B` `firmware.bin`, and `+2,591 B` to `libesp8266.a` `.flash.text` (which fits inside existing 4 KB `.flash.text` alignment slack before `.flash.rodata`, so total `.flash.text` remains `421,872 B` and `.flash.rodata` remains `62,952 B`).)*
 
@@ -218,23 +236,23 @@ Measured back-to-back on identical ESP8266 hardware (160 MHz, 4 MB flash, `ESPZW
 
 | Metric<br>(unit, lower/higher is better) | Vendor Blobs | OSS Minimal NMI<br>([`OSS_WIFI_MIN_NMI=y`](#cfg-oss-wifi-min-nmi)) | OSS Default<br>([`OSS_WIFI_MIN_NMI=n`](#cfg-oss-wifi-min-nmi)) | OSS A-MPDU RX (`n=28, win=6`)<br>([`AMPDU_RX_ENABLED=y`](#cfg-wifi-ampdu-rx-enabled)) |
 | :--- | ---: | ---: | ---: | ---: |
-| Warm Reboot -> HTTP Ready<sup>[\*2](#note-warm-reboot)</sup><br>(ms, lower is better) | 3159.57 ± 11.06 | 2375.86 ± 446.88 ($`\color{green}{-24.8\%}`$) | 2380.12 ± 434.45 ($`\color{green}{-24.7\%}`$) | 2578.15 ± 532.10 ($`\color{green}{-18.4\%}`$) |
-| Modem-Sleep Wake Latency (5 s idle)<sup>[\*1](#note-fast-tx)</sup><br>(ms, lower is better) | 113.07 ± 8.02 | 153.69 ± 24.03 ($`\color{red}{+35.9\%}`$) | 114.29 ± 10.88 (on par) | 109.78 ± 14.98 (on par) |
-| Active Wi-Fi Scan (APSTA)<br>(ms, lower is better) | 1813.20 ± 9.85 | 1711.40 ± 19.82 ($`\color{green}{-5.6\%}`$) | 1738.45 ± 10.96 ($`\color{green}{-4.1\%}`$) | 1729.60 ± 18.75 ($`\color{green}{-4.6\%}`$) |
-| Idle ICMP RTT (32 B, p50)<br>(ms, lower is better) | 4.93 ± 0.30 | 5.72 ± 0.11 ($`\color{red}{+16.1\%}`$) | 5.74 ± 0.43 ($`\color{red}{+16.6\%}`$) | 5.67 ± 0.15 ($`\color{red}{+15.0\%}`$) |
-| Fragmented ICMP Burst (5800 B, 4-frag)<sup>[\*3](#note-ampdu-rx)</sup><br>(pps, higher is better) | 33.31 ± 3.67 | 26.70 ± 1.13 ($`\color{red}{-19.8\%}`$) | 23.71 ± 5.90 ($`\color{red}{-28.8\%}`$) | 32.25 ± 2.98 (on par) |
-| Heavy-MTU Saturation (4w x 100 @ 1400 B)<sup>[\*3](#note-ampdu-rx)</sup><br>(pps, higher is better) | 178.45 ± 34.15 | 197.32 ± 26.52 (on par) | 194.14 ± 10.80 (on par) | 223.89 ± 12.95 ($`\color{green}{+25.5\%}`$) |
-| Heavy-MTU Saturation Tail p99 (4w @ 1400 B)<sup>[\*1](#note-fast-tx)</sup><br>(ms, lower is better) | 84.46 ± 17.79 | 85.07 ± 12.36 (on par) | 75.41 ± 20.87 (on par) | 74.98 ± 11.40 (on par) |
-| Uncontested Downlink (1 MB flash read)<br>(KB/s, higher is better) | 161.72 ± 29.22 | 148.44 ± 9.66 (on par) | 159.40 ± 6.83 (on par) | 162.89 ± 7.62 (on par) |
-| Flash-Read Contended Downlink (1 MB + 1400 B)<sup>[\*3](#note-ampdu-rx)</sup><br>(KB/s, higher is better) | 175.38 ± 14.31 | 159.18 ± 10.69 ($`\color{red}{-9.2\%}`$) | 133.85 ± 15.02 ($`\color{red}{-23.7\%}`$) | 124.97 ± 21.61 ($`\color{red}{-28.7\%}`$) |
-| WebDAV Storage Write (128 KB PUT)<br>(KB/s, higher is better) | 70.95 ± 1.62 | 67.29 ± 7.87 (on par) | 72.35 ± 2.00 (on par) | 73.24 ± 2.76 (on par) |
-| WebDAV Storage Read (128 KB GET)<br>(KB/s, higher is better) | 109.17 ± 18.66 | 93.14 ± 42.52 (on par) | 113.98 ± 13.50 (on par) | 112.22 ± 7.68 (on par) |
-| Flash-Erase Contention Probe p95 (PUT + 32 B)<br>(ms, lower is better) | 49.35 ± 11.45 | 49.21 ± 12.21 (on par) | 49.29 ± 7.62 (on par) | 50.58 ± 4.35 (on par) |
-| Flash-Erase Contention Stalls >40 ms (PUT + 32 B)<br>(%, lower is better) | 10.52 ± 4.91 | 8.28 ± 4.67 (on par) | 8.53 ± 2.32 (on par) | 10.42 ± 0.91 (on par) |
-| Flash-Erase Burst Contention PUT (PUT + 4200 B)<sup>[\*1](#note-fast-tx)</sup><br>(KB/s, higher is better) | 61.95 ± 3.50 | 51.23 ± 9.22 ($`\color{red}{-17.3\%}`$) | 62.92 ± 4.13 (on par) | 63.28 ± 1.57 (on par) |
-| Flash-Erase Burst Contention Probe p95 (+4200 B)<sup>[\*1](#note-fast-tx)</sup><br>(ms, lower is better) | 76.07 ± 17.80 | 134.00 ± 39.39 ($`\color{red}{+76.2\%}`$) | 87.82 ± 19.84 (on par) | 77.82 ± 12.62 (on par) |
-| Concurrent HTTP Close (6w x 25 /!sys/discover)<sup>[\*3](#note-ampdu-rx)</sup><br>(req/s, higher is better) | 33.13 ± 2.03 | 34.43 ± 1.25 (on par) | 33.34 ± 1.29 (on par) | 37.16 ± 1.16 ($`\color{green}{+12.2\%}`$) |
-| Concurrent HTTP Keep-Alive (4w x 40 boot_serial)<br>(req/s, higher is better) | 43.30 ± 2.14 | 46.79 ± 1.48 ($`\color{green}{+8.1\%}`$) | 44.18 ± 0.77 (on par) | 45.26 ± 2.25 (on par) |
+| Warm Reboot -> HTTP Ready<sup>[\*2](#note-warm-reboot)</sup><br>(ms, lower is better) | 3159.57 ± 11.06 | 2375.86 ± 446.88<br>($`\color{green}{-24.8\%}`$) | 2380.12 ± 434.45<br>($`\color{green}{-24.7\%}`$) | 2578.15 ± 532.10<br>($`\color{green}{-18.4\%}`$) |
+| Modem-Sleep Wake Latency (5 s idle)<sup>[\*1](#note-fast-tx)</sup><br>(ms, lower is better) | 113.07 ± 8.02 | 153.69 ± 24.03<br>($`\color{red}{+35.9\%}`$) | 114.29 ± 10.88<br>(on par) | 109.78 ± 14.98<br>(on par) |
+| Active Wi-Fi Scan (APSTA)<br>(ms, lower is better) | 1813.20 ± 9.85 | 1711.40 ± 19.82<br>($`\color{green}{-5.6\%}`$) | 1738.45 ± 10.96<br>($`\color{green}{-4.1\%}`$) | 1729.60 ± 18.75<br>($`\color{green}{-4.6\%}`$) |
+| Idle ICMP RTT (32 B, p50)<br>(ms, lower is better) | 4.93 ± 0.30 | 5.72 ± 0.11<br>($`\color{red}{+16.1\%}`$) | 5.74 ± 0.43<br>($`\color{red}{+16.6\%}`$) | 5.67 ± 0.15<br>($`\color{red}{+15.0\%}`$) |
+| Fragmented ICMP Burst (5800 B, 4-frag)<sup>[\*3](#note-ampdu-rx)</sup><br>(pps, higher is better) | 33.31 ± 3.67 | 26.70 ± 1.13<br>($`\color{red}{-19.8\%}`$) | 23.71 ± 5.90<br>($`\color{red}{-28.8\%}`$) | 32.25 ± 2.98<br>(on par) |
+| Heavy-MTU Saturation (4w x 100 @ 1400 B)<sup>[\*3](#note-ampdu-rx)</sup><br>(pps, higher is better) | 178.45 ± 34.15 | 197.32 ± 26.52<br>(on par) | 194.14 ± 10.80<br>(on par) | 223.89 ± 12.95<br>($`\color{green}{+25.5\%}`$) |
+| Heavy-MTU Saturation Tail p99 (4w @ 1400 B)<sup>[\*1](#note-fast-tx)</sup><br>(ms, lower is better) | 84.46 ± 17.79 | 85.07 ± 12.36<br>(on par) | 75.41 ± 20.87<br>(on par) | 74.98 ± 11.40<br>(on par) |
+| Uncontested Downlink (1 MB flash read)<br>(KB/s, higher is better) | 161.72 ± 29.22 | 148.44 ± 9.66<br>(on par) | 159.40 ± 6.83<br>(on par) | 162.89 ± 7.62<br>(on par) |
+| Flash-Read Contended Downlink (1 MB + 1400 B)<sup>[\*3](#note-ampdu-rx)</sup><br>(KB/s, higher is better) | 175.38 ± 14.31 | 159.18 ± 10.69<br>($`\color{red}{-9.2\%}`$) | 133.85 ± 15.02<br>($`\color{red}{-23.7\%}`$) | 124.97 ± 21.61<br>($`\color{red}{-28.7\%}`$) |
+| WebDAV Storage Write (128 KB PUT)<br>(KB/s, higher is better) | 70.95 ± 1.62 | 67.29 ± 7.87<br>(on par) | 72.35 ± 2.00<br>(on par) | 73.24 ± 2.76<br>(on par) |
+| WebDAV Storage Read (128 KB GET)<br>(KB/s, higher is better) | 109.17 ± 18.66 | 93.14 ± 42.52<br>(on par) | 113.98 ± 13.50<br>(on par) | 112.22 ± 7.68<br>(on par) |
+| Flash-Erase Contention Probe p95 (PUT + 32 B)<br>(ms, lower is better) | 49.35 ± 11.45 | 49.21 ± 12.21<br>(on par) | 49.29 ± 7.62<br>(on par) | 50.58 ± 4.35<br>(on par) |
+| Flash-Erase Contention Stalls >40 ms (PUT + 32 B)<br>(%, lower is better) | 10.52 ± 4.91 | 8.28 ± 4.67<br>(on par) | 8.53 ± 2.32<br>(on par) | 10.42 ± 0.91<br>(on par) |
+| Flash-Erase Burst Contention PUT (PUT + 4200 B)<sup>[\*1](#note-fast-tx)</sup><br>(KB/s, higher is better) | 61.95 ± 3.50 | 51.23 ± 9.22<br>($`\color{red}{-17.3\%}`$) | 62.92 ± 4.13<br>(on par) | 63.28 ± 1.57<br>(on par) |
+| Flash-Erase Burst Contention Probe p95 (+4200 B)<sup>[\*1](#note-fast-tx)</sup><br>(ms, lower is better) | 76.07 ± 17.80 | 134.00 ± 39.39<br>($`\color{red}{+76.2\%}`$) | 87.82 ± 19.84<br>(on par) | 77.82 ± 12.62<br>(on par) |
+| Concurrent HTTP Close (6w x 25 /!sys/discover)<sup>[\*3](#note-ampdu-rx)</sup><br>(req/s, higher is better) | 33.13 ± 2.03 | 34.43 ± 1.25<br>(on par) | 33.34 ± 1.29<br>(on par) | 37.16 ± 1.16<br>($`\color{green}{+12.2\%}`$) |
+| Concurrent HTTP Keep-Alive (4w x 40 boot_serial)<br>(req/s, higher is better) | 43.30 ± 2.14 | 46.79 ± 1.48<br>($`\color{green}{+8.1\%}`$) | 44.18 ± 0.77<br>(on par) | 45.26 ± 2.25<br>(on par) |
 
 *(All values are 5-of-7 trimmed means ± stdev from matched back-to-back sessions on live 2.4 GHz air; `0` HTTP errors across all runs.)*
 
