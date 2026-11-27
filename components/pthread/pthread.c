@@ -70,6 +70,7 @@ static SemaphoreHandle_t s_threads_mux  = NULL;
 static SLIST_HEAD(esp_thread_list_head, esp_pthread_entry) s_threads_list
                                         = SLIST_HEAD_INITIALIZER(s_threads_list);
 static pthread_key_t s_pthread_cfg_key;
+static bool s_pthread_initialized = false;
 
 
 static int pthread_mutex_lock_internal(esp_pthread_mutex_t *mux, TickType_t tmo);
@@ -92,14 +93,35 @@ int pthread_setcancelstate(int state, int *oldstate)
 
 esp_err_t esp_pthread_init(void)
 {
-    if (pthread_key_create(&s_pthread_cfg_key, esp_pthread_cfg_key_destructor) != 0) {
+    if (__atomic_load_n(&s_pthread_initialized, __ATOMIC_ACQUIRE)) {
+        return ESP_OK;
+    }
+
+    pthread_key_t new_key = 0;
+    if (pthread_key_create(&new_key, esp_pthread_cfg_key_destructor) != 0) {
         return ESP_ERR_NO_MEM;
     }
-    s_threads_mux = xSemaphoreCreateMutex();
-    if (s_threads_mux == NULL) {
-        pthread_key_delete(s_pthread_cfg_key);
+
+    SemaphoreHandle_t new_mux = xSemaphoreCreateMutex();
+    if (new_mux == NULL) {
+        pthread_key_delete(new_key);
         return ESP_ERR_NO_MEM;
     }
+
+    portENTER_CRITICAL();
+    if (!__atomic_load_n(&s_pthread_initialized, __ATOMIC_RELAXED)) {
+        s_pthread_cfg_key = new_key;
+        s_threads_mux = new_mux;
+        __atomic_store_n(&s_pthread_initialized, true, __ATOMIC_RELEASE);
+        new_mux = NULL;
+    }
+    portEXIT_CRITICAL();
+
+    if (new_mux != NULL) {
+        vSemaphoreDelete(new_mux);
+        pthread_key_delete(new_key);
+    }
+
     return ESP_OK;
 }
 
@@ -154,6 +176,11 @@ esp_err_t esp_pthread_set_cfg(const esp_pthread_cfg_t *cfg)
         return ESP_ERR_INVALID_ARG;
     }
 
+    esp_err_t err = esp_pthread_init();
+    if (err != ESP_OK) {
+        return err;
+    }
+
     /* If a value is already set, update that value */
     esp_pthread_cfg_t *p = pthread_getspecific(s_pthread_cfg_key);
     if (!p) {
@@ -169,6 +196,11 @@ esp_err_t esp_pthread_set_cfg(const esp_pthread_cfg_t *cfg)
 
 esp_err_t esp_pthread_get_cfg(esp_pthread_cfg_t *p)
 {
+    if (!__atomic_load_n(&s_pthread_initialized, __ATOMIC_ACQUIRE)) {
+        memset(p, 0, sizeof(*p));
+        return ESP_ERR_NOT_FOUND;
+    }
+
     esp_pthread_cfg_t *cfg = pthread_getspecific(s_pthread_cfg_key);
     if (cfg) {
         *p = *cfg;
@@ -230,6 +262,10 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
     TaskHandle_t xHandle = NULL;
 
     ESP_LOGV(TAG, "%s", __FUNCTION__);
+    if (esp_pthread_init() != ESP_OK) {
+        return ENOMEM;
+    }
+
     esp_pthread_task_arg_t *task_arg = calloc(1, sizeof(esp_pthread_task_arg_t));
     if (task_arg == NULL) {
         ESP_LOGE(TAG, "Failed to allocate task args!");
@@ -339,6 +375,10 @@ int pthread_join(pthread_t thread, void **retval)
 
     ESP_LOGV(TAG, "%s %p", __FUNCTION__, pthread);
 
+    if (esp_pthread_init() != ESP_OK) {
+        return ENOMEM;
+    }
+
     // find task
     if (xSemaphoreTake(s_threads_mux, portMAX_DELAY) != pdTRUE) {
         assert(false && "Failed to lock threads list!");
@@ -399,6 +439,10 @@ int pthread_detach(pthread_t thread)
     esp_pthread_t *pthread = (esp_pthread_t *)thread;
     int ret = 0;
 
+    if (esp_pthread_init() != ESP_OK) {
+        return ENOMEM;
+    }
+
     if (xSemaphoreTake(s_threads_mux, portMAX_DELAY) != pdTRUE) {
         assert(false && "Failed to lock threads list!");
     }
@@ -430,6 +474,11 @@ void pthread_exit(void *value_ptr)
     /* preemptively clean up thread local storage, rather than
        waiting for the idle task to clean up the thread */
     pthread_internal_local_storage_destructor_callback();
+
+    if (esp_pthread_init() != ESP_OK) {
+        assert(false && "Failed to initialize pthread!");
+        abort();
+    }
 
     if (xSemaphoreTake(s_threads_mux, portMAX_DELAY) != pdTRUE) {
         assert(false && "Failed to lock threads list!");
@@ -484,6 +533,11 @@ int sched_yield( void )
 
 pthread_t pthread_self(void)
 {
+    if (esp_pthread_init() != ESP_OK) {
+        assert(false && "Failed to initialize pthread!");
+        return (pthread_t)0;
+    }
+
     if (xSemaphoreTake(s_threads_mux, portMAX_DELAY) != pdTRUE) {
         assert(false && "Failed to lock threads list!");
     }

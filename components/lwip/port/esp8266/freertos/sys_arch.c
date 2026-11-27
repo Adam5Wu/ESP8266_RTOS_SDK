@@ -32,7 +32,6 @@
 
 /* lwIP includes. */
 
-#include <pthread.h>
 #include "lwip/debug.h"
 #include "lwip/def.h"
 #include "lwip/sys.h"
@@ -41,12 +40,15 @@
 #include "lwip/stats.h"
 #include "esp_log.h"
 
+#define LWIP_TLS_INDEX 0
+_Static_assert(sizeof(sys_sem_t) == sizeof(void *),
+               "sys_sem_t must fit directly in a FreeRTOS TLS pointer slot");
+_Static_assert(LWIP_TLS_INDEX < configNUM_THREAD_LOCAL_STORAGE_POINTERS - 1,
+               "LWIP_TLS_INDEX must not overlap ERRNO_TLS_INDEX");
+
 static const char* TAG = "lwip_arch";
 
 static sys_mutex_t g_lwip_protect_mutex = NULL;
-
-static pthread_key_t sys_thread_sem_key;
-static void sys_thread_sem_free(void* data);
 
 #if !LWIP_COMPAT_MUTEX
 
@@ -448,9 +450,6 @@ sys_init(void)
     }
   }
 
-  // Create the pthreads key for the per-thread semaphore storage
-  pthread_key_create(&sys_thread_sem_key, sys_thread_sem_free);
-
   esp_vfs_lwip_sockets_register();
 }
 
@@ -508,62 +507,56 @@ sys_arch_unprotect(sys_prot_t pval)
 /*
  * get per thread semaphore
  */
-sys_sem_t*
-sys_thread_sem_get(void)
-{
-  sys_sem_t *sem = pthread_getspecific(sys_thread_sem_key);
-
-  if (!sem) {
-      sem = sys_thread_sem_init();
-  }
-  LWIP_DEBUGF(ESP_THREAD_SAFE_DEBUG, ("sem_get s=%p\n", sem));
-  return sem;
-}
-
 static void
-sys_thread_sem_free(void* data) // destructor for TLS semaphore
+sys_thread_sem_del_cb(int index, void *data)
 {
-  sys_sem_t *sem = (sys_sem_t*)(data);
-
-  if (sem && *sem){
-    LWIP_DEBUGF(ESP_THREAD_SAFE_DEBUG, ("sem del, sem=%p\n", *sem));
-    vSemaphoreDelete(*sem);
-  }
-
-  if (sem) {
-    LWIP_DEBUGF(ESP_THREAD_SAFE_DEBUG, ("sem pointer del, sem_p=%p\n", sem));
-    free(sem);
+  LWIP_UNUSED_ARG(index);
+  SemaphoreHandle_t sem = (SemaphoreHandle_t)data;
+  if (sem != NULL) {
+    LWIP_DEBUGF(ESP_THREAD_SAFE_DEBUG, ("sem del, sem=%p\n", sem));
+    vSemaphoreDelete(sem);
   }
 }
 
 sys_sem_t*
 sys_thread_sem_init(void)
 {
-  sys_sem_t *sem = (sys_sem_t*)mem_malloc(sizeof(sys_sem_t*));
-
-  if (!sem){
-    ESP_LOGE(TAG, "thread_sem_init: out of memory");
-    return 0;
+  sys_sem_t *sem_slot = (sys_sem_t *)pvTaskGetThreadLocalStorageBufferPointer(NULL, LWIP_TLS_INDEX);
+  if (sem_slot == NULL) {
+    return NULL;
+  }
+  if (*sem_slot != NULL) {
+    return sem_slot;
   }
 
-  *sem = xSemaphoreCreateBinary();
-  if (!(*sem)){
-    free(sem);
+  SemaphoreHandle_t sem = xSemaphoreCreateBinary();
+  if (sem == NULL) {
     ESP_LOGE(TAG, "thread_sem_init: out of memory");
-    return 0;
+    return NULL;
   }
 
-  pthread_setspecific(sys_thread_sem_key, sem);
-  return sem;
+  vTaskSetThreadLocalStoragePointerAndDelCallback(NULL, LWIP_TLS_INDEX, sem, sys_thread_sem_del_cb);
+  return sem_slot;
+}
+
+sys_sem_t*
+sys_thread_sem_get(void)
+{
+  sys_sem_t *sem_slot = (sys_sem_t *)pvTaskGetThreadLocalStorageBufferPointer(NULL, LWIP_TLS_INDEX);
+  if (sem_slot == NULL || *sem_slot == NULL) {
+    sem_slot = sys_thread_sem_init();
+  }
+  LWIP_DEBUGF(ESP_THREAD_SAFE_DEBUG, ("sem_get s=%p\n", sem_slot));
+  return sem_slot;
 }
 
 void
 sys_thread_sem_deinit(void)
 {
-  sys_sem_t *sem = pthread_getspecific(sys_thread_sem_key);
+  SemaphoreHandle_t sem = (SemaphoreHandle_t)pvTaskGetThreadLocalStoragePointer(NULL, LWIP_TLS_INDEX);
   if (sem != NULL) {
-    sys_thread_sem_free(sem);
-    pthread_setspecific(sys_thread_sem_key, NULL);
+    vTaskSetThreadLocalStoragePointerAndDelCallback(NULL, LWIP_TLS_INDEX, NULL, NULL);
+    vSemaphoreDelete(sem);
   }
 }
 

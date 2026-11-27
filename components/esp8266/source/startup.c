@@ -37,7 +37,6 @@
 
 #include "esp_newlib.h"
 
-extern esp_err_t esp_pthread_init(void);
 extern void chip_boot(void);
 extern int base_gpio_init(void);
 
@@ -89,12 +88,6 @@ static void user_init_entry(void *param)
 
 #ifdef CONFIG_ESP_TASK_WDT
     esp_task_wdt_init();
-#endif
-
-#ifdef NDEBUG
-    esp_pthread_init();
-#else
-    assert(esp_pthread_init() == 0);
 #endif
 
 #ifdef CONFIG_BOOTLOADER_FAST_BOOT

@@ -129,11 +129,20 @@ NVIC value of 255. */
 #endif
 
 /**
- * 0: LwIP
- * 1: pthread (optional)
- * 2: errno
+ * TLS pointer layout:
+ * With CONFIG_PTHREAD_ENABLE:
+ *   0: LwIP
+ *   1: pthread
+ *   2: errno (configNUM_THREAD_LOCAL_STORAGE_POINTERS - 1)
+ * Without CONFIG_PTHREAD_ENABLE:
+ *   0: LwIP
+ *   1: errno (configNUM_THREAD_LOCAL_STORAGE_POINTERS - 1)
  */
+#ifdef CONFIG_PTHREAD_ENABLE
 #define configNUM_THREAD_LOCAL_STORAGE_POINTERS 3
+#else
+#define configNUM_THREAD_LOCAL_STORAGE_POINTERS 2
+#endif
 #define configTHREAD_LOCAL_STORAGE_DELETE_CALLBACKS 1
 
 /* add this to dump task stack information */

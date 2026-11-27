@@ -22,7 +22,11 @@ extern "C" {
 #endif
 
 #ifndef PTHREAD_STACK_MIN
+#ifdef CONFIG_PTHREAD_STACK_MIN
 #define PTHREAD_STACK_MIN    CONFIG_PTHREAD_STACK_MIN
+#else
+#define PTHREAD_STACK_MIN    768
+#endif
 #endif
 
 /** pthread configuration structure that influences pthread creation */

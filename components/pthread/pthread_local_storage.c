@@ -24,6 +24,8 @@
 #include "pthread_internal.h"
 
 #define PTHREAD_TLS_INDEX 1
+_Static_assert(PTHREAD_TLS_INDEX < configNUM_THREAD_LOCAL_STORAGE_POINTERS - 1,
+               "PTHREAD_TLS_INDEX overlaps ERRNO_TLS_INDEX");
 
 typedef void (*pthread_destructor_t)(void*);
 

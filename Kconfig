@@ -129,6 +129,7 @@ mainmenu "Espressif IoT Development Framework Configuration"
         menuconfig COMPILER_CXX_EXCEPTIONS
             bool "Enable C++ exceptions"
             default n
+            select PTHREAD_ENABLE
             help
                 Enabling this option compiles all IDF C++ files with exception support enabled.
 

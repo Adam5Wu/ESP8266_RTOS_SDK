@@ -1,4 +1,17 @@
-menu "PThreads"
+menuconfig PTHREAD_ENABLE
+    bool "Enable POSIX Threads (pthread) support"
+    default n
+    help
+        Enable POSIX Threads (pthread) API, including pthread_create/join,
+        pthread_mutex_*, pthread_cond_*, pthread_once, and pthread TLS keys.
+
+        Core SDK components (lwip, newlib, etc.) do not require pthreads.
+        Keeping this disabled saves 8 bytes per FreeRTOS task TCB and catches
+        accidental gthread/pthread_* dependencies at link time. Enable this
+        if your application uses std::mutex, std::thread, std::condition_variable,
+        or pthread_* APIs (COMPILER_CXX_EXCEPTIONS selects this automatically).
+
+if PTHREAD_ENABLE
 
         config PTHREAD_TASK_PRIO_DEFAULT
             int "Default task priority"
@@ -25,4 +38,4 @@ menu "PThreads"
             help
                 The default name of pthreads.
 
-endmenu
+endif
