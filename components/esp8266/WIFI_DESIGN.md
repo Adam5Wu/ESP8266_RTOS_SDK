@@ -11,8 +11,8 @@ Design notes for the clean-room open-source Wi-Fi stack in `components/esp8266/`
 
 Every major choice in this stack flows from four hard realities of the ESP8266 (Xtensa LX106):
 
-1. **Scarce IRAM (`32 KB`)** — Shared among exception vectors, RTOS/SPI-flash critical paths, and code that must run while flash is unavailable. Blanket placement of Wi-Fi archives into IRAM leaves almost no headroom for application code or 32-bit heap.
-2. **Tight DRAM (`80 KB`)** — Shared by application heap, lwIP, TLS (`mbedtls`), and Wi-Fi DMA arenas. Static worst-case pools for features that are idle (such as SoftAP or sniffer mode) directly erode system stability.
+1. **Scarce IRAM (`32 KiB`)** — Shared among exception vectors, RTOS/SPI-flash critical paths, and code that must run while flash is unavailable. Blanket placement of Wi-Fi archives into IRAM leaves almost no headroom for application code or 32-bit heap.
+2. **Tight DRAM (`80 KiB`)** — Shared by application heap, lwIP, TLS (`mbedtls`), and Wi-Fi DMA arenas. Static worst-case pools for features that are idle (such as SoftAP or sniffer mode) directly erode system stability.
 3. **Execute-in-Place (XIP) Flash Stalls** — Writing or erasing SPI flash (OTA, LittleFS, WebDAV) disables the flash XIP cache for `30–60 ms`, pausing every flash-resident FreeRTOS task while Level-3 NMI remains live in IRAM.
 4. **Single-Core MCU + Quirky Radio Hardware** — Application logic, TCP/IP, TLS, and 802.11 state machines share one CPU core alongside the WDEV MAC peripheral, whose hardware multi-queue transmit engine is prone to contention stalls.
 
@@ -22,12 +22,12 @@ Every major choice in this stack flows from four hard realities of the ESP8266 (
 
 | Dimension | Vendor Blobs (`libphy` / `libpp` / `libnet80211`) | Open-Source Stack (`phy/` / `lmac/` / `net80211/`) | Practical Impact |
 | :--- | :--- | :--- | :--- |
-| **IRAM Placement** | Blanket `noflash_text` linker rules across `libphy.a` and `libpp.a` (`25.2 KB` static IRAM) | Targeted IRAM strictly on Level-3 NMI, SoftISR trampoline, and 10 flash-disabled PHY primitives (`12.6 KB` default; `11.8 KB` with [`MIN_NMI=y`](#cfg-oss-wifi-min-nmi)) | **-50.2% to -53.2% static IRAM**, unlocking `+23.6%` to `+34.9%` more runtime heap |
+| **IRAM Placement** | Blanket `noflash_text` linker rules across `libphy.a` and `libpp.a` (`25.2 KiB` static IRAM) | Targeted IRAM strictly on Level-3 NMI, SoftISR trampoline, and 10 flash-disabled PHY primitives (`12.6 KiB` default; `11.8 KiB` with [`MIN_NMI=y`](#cfg-oss-wifi-min-nmi)) | **-50.2% to -53.2% static IRAM**, unlocking `+23.6%` to `+34.9%` more runtime heap |
 | **Concurrency Model** | `ppT` task using scheduler-wide freezes (`vTaskSuspendAll`) | Single cooperative worker task + lock-free NMI ring + brief hardware critical sections | **Zero scheduler freezes**; predictable RTOS and HTTP tail latency |
 | **TX Queueing** | Multi-queue hardware WDEV TX (`q=0..7`) with complex stall recovery | Serialized hardware **`TXQ0`** with software priority ordering + default IRAM NMI retry/launch | Eliminates multi-queue hardware lockups and keeps TX moving across flash erases |
 | **Rate Control & RF Math** | Closed rate table; mixed soft-float and legacy GCC 5.2 codegen | Pure-integer windowed AARF (up to `MCS7-SGI`, `72.2 Mbps`) and integer fractional-N RFPLL | **Zero soft-float helpers** linked; high sustained throughput with fast fade fallback |
 | **Reconnect & Credentials** | Synchronous key derivation on association; NVS-only storage | Eager caller-task PBKDF2-SHA1 + optional [64-byte `RTC_SYS` warm-reboot PMK/channel cache](#cfg-oss-wifi-rtc-fast-connect) | **Zero worker stalls** during setup; ~`0.6–0.8 s` faster warm-reboot reconnect |
-| **Memory Ownership** | Static worst-case connection pools always resident; `~1.6 KB` flat TX buffers | Scatter-gather TX descriptors (`~216 B`/slot), mode-scoped SoftAP peer slabs, `0 B` opt-in features | **-26.6% static DRAM** (`-3.1 KB`) and **-14.7% flash binary** (`-85.7 KB`) |
+| **Memory Ownership** | Static worst-case connection pools always resident; `~1.6 KiB` flat TX buffers | Scatter-gather TX descriptors (`~216 B`/slot), mode-scoped SoftAP peer slabs, `0 B` opt-in features | **-26.6% static DRAM** (`-3.1 KiB`) and **-14.7% flash binary** (`-83.7 KiB`) |
 
 ---
 
@@ -101,7 +101,7 @@ flowchart TB
 
 ### 3.1 The IRAM Diet & Surviving Flash-Cache Stalls
 
-The vendor stack maps almost all of `libphy.a` and `libpp.a` unconditionally into IRAM (`25.2 KB`), starving the rest of the system. In the open-source stack, IRAM residency is strictly opt-in: only the **10 PHY primitives** invoked from NMI or flash-off sleep transitions, the `38 B` SoftISR trampoline (`MacIsrSigPostDefHdl`), and the Level-3 NMI handler (`wDev_ProcessFiq`, compiled with `-fno-jump-tables` and audited for zero flash references) live in IRAM. Calibration, channel synthesis, rate adaptation, DMA bookkeeping, crypto key programming, and all 802.11 protocol state machines stay in flash XIP. That single discipline cuts static IRAM by more than half.
+The vendor stack maps almost all of `libphy.a` and `libpp.a` unconditionally into IRAM (`25.2 KiB`), starving the rest of the system. In the open-source stack, IRAM residency is strictly opt-in: only the **10 PHY primitives** invoked from NMI or flash-off sleep transitions, the `38 B` SoftISR trampoline (`MacIsrSigPostDefHdl`), and the Level-3 NMI handler (`wDev_ProcessFiq`, compiled with `-fno-jump-tables` and audited for zero flash references) live in IRAM. Calibration, channel synthesis, rate adaptation, DMA bookkeeping, crypto key programming, and all 802.11 protocol state machines stay in flash XIP. That single discipline cuts static IRAM by more than half.
 
 Moving the worker to flash introduces one unavoidable physical trade-off: during a `30–60 ms` SPI flash sector erase (or sustained flash read bursts), the CPU disables the SPI flash XIP cache and pauses all flash-resident tasks while Level-3 NMI stays live. If TX retries and next-frame launches wait for the flash-resident worker to wake back up, in-flight bursts stall and modem-sleep wakes stretch out.
 
@@ -146,10 +146,10 @@ Because only one task mutates MAC state, there are no coarse scheduler locks —
 
 ### 3.4 Memory Ownership & Pay-for-What-You-Use Footprint
 
-The `~15–20 KB` runtime heap advantage over Vendor Blobs comes from eliminating static worst-case buffers and copy-heavy packet paths:
+The `~14–19 KiB` runtime heap advantage over Vendor Blobs comes from eliminating static worst-case buffers and copy-heavy packet paths:
 
-- **Scatter-Gather TX & Backpressure**: Instead of reserving `~1.6 KB` flat bounce buffers per TX slot, each slot holds compact scatter-gather DMA descriptors (`~216 B` default, `~188 B` with Minimal NMI) that read lwIP `pbuf` payload segments directly from DRAM without copying frame bodies. A bounded ring between lwIP and the worker applies backpressure before advancing 802.11 sequence or cipher packet numbers.
-- **Contiguous RX DMA Ring with Hybrid Ownership**: Hardware receives into a contiguous ring of `524 B` DMA buffers drained by NMI in microseconds with zero heap allocation. The worker strips FCS, linearizes ring wrap-arounds safely, and uses [`CONFIG_ESP8266_WIFI_LEFT_CONTINUOUS_RX_BUFFER_NUM`](#cfg-wifi-left-continuous-rx-buffer-num) to decide between immediate heap-copy (returning DMA descriptors at once — the safe default) and zero-copy handoff into lwIP when both contiguous DMA headroom and 8-bit free DRAM (`> 6 KB`) permit.
+- **Scatter-Gather TX & Backpressure**: Instead of reserving `~1.6 KiB` flat bounce buffers per TX slot, each slot holds compact scatter-gather DMA descriptors (`~216 B` default, `~188 B` with Minimal NMI) that read lwIP `pbuf` payload segments directly from DRAM without copying frame bodies. A bounded ring between lwIP and the worker applies backpressure before advancing 802.11 sequence or cipher packet numbers.
+- **Contiguous RX DMA Ring with Hybrid Ownership**: Hardware receives into a contiguous ring of `524 B` DMA buffers drained by NMI in microseconds with zero heap allocation. The worker strips FCS, linearizes ring wrap-arounds safely, and uses [`CONFIG_ESP8266_WIFI_LEFT_CONTINUOUS_RX_BUFFER_NUM`](#cfg-wifi-left-continuous-rx-buffer-num) to decide between immediate heap-copy (returning DMA descriptors at once — the safe default) and zero-copy handoff into lwIP when both contiguous DMA headroom and 8-bit free DRAM (`> 6 KiB`) permit.
 - **Zero Idle Footprint**: SoftAP peer slabs exist only while SoftAP is running and are freed completely on stop; promiscuous sniffer rings allocate only while sniffing is active. Optional features compile out to **`0 B`** when disabled — including A-MPDU RX ([`CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED`](#cfg-wifi-ampdu-rx-enabled)), RX defragmentation ([`CONFIG_ESP8266_OSS_WIFI_RX_DEFRAG_ENABLED`](#cfg-oss-wifi-rx-defrag-enabled)), and 802.11k/11v roaming hooks ([`CONFIG_WPA_11KV_SUPPORT`](#cfg-wpa-11kv-support)). Even always-wired WPS and WPA2-Enterprise glue links `0 B` of `wps` or `eap_peer` code via `--gc-sections` when unused. Non-Wi-Fi projects can also select `CONFIG_ESP8266_OSS_PHY_ONLY` to keep clean-room SoC clocks, sleep, and SAR ADC/VDD33 with zero Wi-Fi code.
 
 ### 3.5 Security, Radio Coexistence & Power-Save Posture
@@ -216,7 +216,7 @@ xychart-beta
 | **Flash Code + Rodata**<br>(`.flash.text + .rodata`, B) | `558,368` | `484,844`<br>($`\color{green}{-13.2\%}`$, `-73,524 B`) | `484,824`<br>($`\color{green}{-13.2\%}`$, `-73,544 B`) | `484,824`<sup>[\*a](#note-ampdu-flash)</sup><br>($`\color{green}{-13.2\%}`$, `-73,544 B`) |
 | **Firmware Binary**<br>(`firmware.bin`, B) | `581,520` | `495,088`<br>($`\color{green}{-14.9\%}`$, `-86,432 B`) | `495,856`<br>($`\color{green}{-14.7\%}`$, `-85,664 B`) | `497,184`<br>($`\color{green}{-14.5\%}`$, `-84,336 B`) |
 
-*(<a id="note-ampdu-flash"></a><sup>\*a</sup>Relative to OSS Default, `OSS A-MPDU RX` adds `+1,324 B` static IRAM, `+16 B` static DRAM, `+1,328 B` `firmware.bin`, and `+2,591 B` to `libesp8266.a` `.flash.text`, which fits inside existing 4 KB `.flash.text` alignment slack before `.flash.rodata`, so total `.flash.text` stays `421,872 B` and `.flash.rodata` stays `62,952 B`.)*
+*(<a id="note-ampdu-flash"></a><sup>\*a</sup>Relative to OSS Default, `OSS A-MPDU RX` adds `+1,324 B` static IRAM, `+16 B` static DRAM, `+1,328 B` `firmware.bin`, and `+2,591 B` to `libesp8266.a` `.flash.text`, which fits inside existing 4 KiB `.flash.text` alignment slack before `.flash.rodata`, so total `.flash.text` stays `421,872 B` and `.flash.rodata` stays `62,952 B`.)*
 
 ### Runtime Heap Watermarks
 
@@ -233,13 +233,13 @@ Measured on live hardware via `-DZW_FOOTPRINT_PROBE` (`+56 B` static DRAM / `+81
 | `softap_prov` | `free_heap` / `min_free_heap` | `51,168` / `44,844` | `70,832` ($`\color{green}{+38.4\%}`$) / `64,724` ($`\color{green}{+44.3\%}`$) | `69,008` ($`\color{green}{+34.9\%}`$) / `62,896` ($`\color{green}{+40.3\%}`$) | `58,136` ($`\color{green}{+13.6\%}`$) / `52,028` ($`\color{green}{+16.0\%}`$) |
 | `softap_prov` | `free_8bit` / `min_free_8bit` | `27,968` / `21,644` | `33,892` ($`\color{green}{+21.2\%}`$) / `27,784` ($`\color{green}{+28.4\%}`$) | `32,856` ($`\color{green}{+17.5\%}`$) / `26,744` ($`\color{green}{+23.6\%}`$) | `23,308` ($`\color{red}{-16.7\%}`$) / `17,200` ($`\color{red}{-20.5\%}`$) |
 
-**Reading the footprint numbers:** Because ESP8266 adds unused IRAM to the general 32-bit heap, cutting `12.9 KB` of static IRAM directly translates into `+14.8–19.9 KB` of additional total runtime heap across idle, HTTP load, and SoftAP provisioning states (`OSS Default` and `OSS Minimal NMI`), while also lifting 8-bit DMA-capable DRAM headroom by `+15%` to `+21%` once Wi-Fi is running. Enabling `OSS A-MPDU RX` with `28` RX buffers explicitly spends `~9.6 KB` of 8-bit DRAM on the expanded DMA arena and subframe pool while still finishing ahead of Vendor Blobs on both total heap and static IRAM.
+**Reading the footprint numbers:** Because ESP8266 adds unused IRAM to the general 32-bit heap, cutting `12.6 KiB` of static IRAM directly translates into `+14.4–19.4 KiB` of additional total runtime heap across idle, HTTP load, and SoftAP provisioning states (`OSS Default` and `OSS Minimal NMI`), while also lifting 8-bit DMA-capable DRAM headroom by `+15%` to `+21%` once Wi-Fi is running. Enabling `OSS A-MPDU RX` with `28` RX buffers explicitly spends `~9.3 KiB` of 8-bit DRAM on the expanded DMA arena and subframe pool while still finishing ahead of Vendor Blobs on both total heap and static IRAM.
 
 ---
 
 ## 5. End-to-End Performance A/B Comparison
 
-Measured back-to-back on identical ESP8266 hardware (160 MHz, 4 MB flash, `ESPZWApplianceT2` firmware) using [`test/wifi_benchmark.py`](test/wifi_benchmark.py) (`--runs 7`, 5-of-7 trimmed `mean ± stdev`). All deltas are relative to **Vendor Blobs** ($`\color{green}{\text{green}}`$ = better, $`\color{red}{\text{red}}`$ = worse); cells where either build's mean falls within the other's $`\pm 1\sigma`$ range ($`|\mu_{\text{oss}} - \mu_{\text{vendor}}| \le \max(\sigma_{\text{oss}}, \sigma_{\text{vendor}})`$) are marked **`on par`**.
+Measured back-to-back on identical ESP8266 hardware (160 MHz, 4 MiB flash, `ESPZWApplianceT2` firmware) using [`test/wifi_benchmark.py`](test/wifi_benchmark.py) (`--runs 7`, 5-of-7 trimmed `mean ± stdev`). All deltas are relative to **Vendor Blobs** ($`\color{green}{\text{green}}`$ = better, $`\color{red}{\text{red}}`$ = worse); cells where either build's mean falls within the other's $`\pm 1\sigma`$ range ($`|\mu_{\text{oss}} - \mu_{\text{vendor}}| \le \max(\sigma_{\text{oss}}, \sigma_{\text{vendor}})`$) are marked **`on par`**.
 
 | Metric<br>(unit, lower/higher is better) | Vendor Blobs | OSS Minimal NMI<br>([`OSS_WIFI_MIN_NMI=y`](#cfg-oss-wifi-min-nmi)) | OSS Default<br>([`OSS_WIFI_MIN_NMI=n`](#cfg-oss-wifi-min-nmi)) | OSS A-MPDU RX (`n=28, win=6`)<br>([`AMPDU_RX_ENABLED=y`](#cfg-wifi-ampdu-rx-enabled)) |
 | :--- | ---: | ---: | ---: | ---: |
@@ -250,13 +250,13 @@ Measured back-to-back on identical ESP8266 hardware (160 MHz, 4 MB flash, `ESPZW
 | Fragmented ICMP Burst (5800 B, 4-frag)<sup>[\*3](#note-ampdu-rx)</sup><br>(pps, higher is better) | 33.31 ± 3.67 | 26.70 ± 1.13<br>($`\color{red}{-19.8\%}`$) | 23.71 ± 5.90<br>($`\color{red}{-28.8\%}`$) | 32.25 ± 2.98<br>(on par) |
 | Heavy-MTU Saturation (4w x 100 @ 1400 B)<sup>[\*3](#note-ampdu-rx)</sup><br>(pps, higher is better) | 178.45 ± 34.15 | 197.32 ± 26.52<br>(on par) | 194.14 ± 10.80<br>(on par) | 223.89 ± 12.95<br>($`\color{green}{+25.5\%}`$) |
 | Heavy-MTU Saturation Tail p99 (4w @ 1400 B)<sup>[\*1](#note-fast-tx)</sup><br>(ms, lower is better) | 84.46 ± 17.79 | 85.07 ± 12.36<br>(on par) | 75.41 ± 20.87<br>(on par) | 74.98 ± 11.40<br>(on par) |
-| Uncontested Downlink (1 MB flash read)<br>(KB/s, higher is better) | 161.72 ± 29.22 | 148.44 ± 9.66<br>(on par) | 159.40 ± 6.83<br>(on par) | 162.89 ± 7.62<br>(on par) |
-| Flash-Read Contended Downlink (1 MB + 1400 B)<sup>[\*3](#note-ampdu-rx)</sup><br>(KB/s, higher is better) | 175.38 ± 14.31 | 159.18 ± 10.69<br>($`\color{red}{-9.2\%}`$) | 133.85 ± 15.02<br>($`\color{red}{-23.7\%}`$) | 124.97 ± 21.61<br>($`\color{red}{-28.7\%}`$) |
-| WebDAV Storage Write (128 KB PUT)<br>(KB/s, higher is better) | 70.95 ± 1.62 | 67.29 ± 7.87<br>(on par) | 72.35 ± 2.00<br>(on par) | 73.24 ± 2.76<br>(on par) |
-| WebDAV Storage Read (128 KB GET)<br>(KB/s, higher is better) | 109.17 ± 18.66 | 93.14 ± 42.52<br>(on par) | 113.98 ± 13.50<br>(on par) | 112.22 ± 7.68<br>(on par) |
+| Uncontested Downlink (1 MiB flash read)<br>(KiB/s, higher is better) | 161.72 ± 29.22 | 148.44 ± 9.66<br>(on par) | 159.40 ± 6.83<br>(on par) | 162.89 ± 7.62<br>(on par) |
+| Flash-Read Contended Downlink (1 MiB + 1400 B)<sup>[\*3](#note-ampdu-rx)</sup><br>(KiB/s, higher is better) | 175.38 ± 14.31 | 159.18 ± 10.69<br>($`\color{red}{-9.2\%}`$) | 133.85 ± 15.02<br>($`\color{red}{-23.7\%}`$) | 124.97 ± 21.61<br>($`\color{red}{-28.7\%}`$) |
+| WebDAV Storage Write (128 KiB PUT)<br>(KiB/s, higher is better) | 70.95 ± 1.62 | 67.29 ± 7.87<br>(on par) | 72.35 ± 2.00<br>(on par) | 73.24 ± 2.76<br>(on par) |
+| WebDAV Storage Read (128 KiB GET)<br>(KiB/s, higher is better) | 109.17 ± 18.66 | 93.14 ± 42.52<br>(on par) | 113.98 ± 13.50<br>(on par) | 112.22 ± 7.68<br>(on par) |
 | Flash-Erase Contention Probe p95 (PUT + 32 B)<br>(ms, lower is better) | 49.35 ± 11.45 | 49.21 ± 12.21<br>(on par) | 49.29 ± 7.62<br>(on par) | 50.58 ± 4.35<br>(on par) |
 | Flash-Erase Contention Stalls >40 ms (PUT + 32 B)<br>(%, lower is better) | 10.52 ± 4.91 | 8.28 ± 4.67<br>(on par) | 8.53 ± 2.32<br>(on par) | 10.42 ± 0.91<br>(on par) |
-| Flash-Erase Burst Contention PUT (PUT + 4200 B)<sup>[\*1](#note-fast-tx)</sup><br>(KB/s, higher is better) | 61.95 ± 3.50 | 51.23 ± 9.22<br>($`\color{red}{-17.3\%}`$) | 62.92 ± 4.13<br>(on par) | 63.28 ± 1.57<br>(on par) |
+| Flash-Erase Burst Contention PUT (PUT + 4200 B)<sup>[\*1](#note-fast-tx)</sup><br>(KiB/s, higher is better) | 61.95 ± 3.50 | 51.23 ± 9.22<br>($`\color{red}{-17.3\%}`$) | 62.92 ± 4.13<br>(on par) | 63.28 ± 1.57<br>(on par) |
 | Flash-Erase Burst Contention Probe p95 (+4200 B)<sup>[\*1](#note-fast-tx)</sup><br>(ms, lower is better) | 76.07 ± 17.80 | 134.00 ± 39.39<br>($`\color{red}{+76.2\%}`$) | 87.82 ± 19.84<br>(on par) | 77.82 ± 12.62<br>(on par) |
 | Concurrent HTTP Close (6w x 25 /!sys/discover)<sup>[\*3](#note-ampdu-rx)</sup><br>(req/s, higher is better) | 33.13 ± 2.03 | 34.43 ± 1.25<br>(on par) | 33.34 ± 1.29<br>(on par) | 37.16 ± 1.16<br>($`\color{green}{+12.2\%}`$) |
 | Concurrent HTTP Keep-Alive (4w x 40 boot_serial)<br>(req/s, higher is better) | 43.30 ± 2.14 | 46.79 ± 1.48<br>($`\color{green}{+8.1\%}`$) | 44.18 ± 0.77<br>(on par) | 45.26 ± 2.25<br>(on par) |
@@ -265,9 +265,9 @@ Measured back-to-back on identical ESP8266 hardware (160 MHz, 4 MB flash, `ESPZW
 
 ### Interpreting the Trade-Offs
 
-- <a id="note-fast-tx"></a>**[\*1] Why Fast TX in NMI Is Default**: Under [`OSS_WIFI_MIN_NMI=y`](#cfg-oss-wifi-min-nmi), pushing TX retries and next-slot launches out to the flash-resident worker slows `Modem-Sleep Wake` (`153.69 ms`, `+35.9%`) and hurts `Flash-Erase Burst Contention` (`51.23 KB/s`, `-17.3%` PUT; `134.00 ms`, `+76.2%` probe p95 across `30–60 ms` flash-erase windows). Keeping the compact fast-TX path in IRAM (`+789 B`) recovers both metrics directly to **`on par`** with Vendor Blobs (`114.29 ms` wake; `62.92 KB/s` PUT; `87.82 ms` p95), while `Heavy-MTU Saturation Tail p99` stays **`on par`** across all OSS builds.
+- <a id="note-fast-tx"></a>**[\*1] Why Fast TX in NMI Is Default**: Under [`OSS_WIFI_MIN_NMI=y`](#cfg-oss-wifi-min-nmi), pushing TX retries and next-slot launches out to the flash-resident worker slows `Modem-Sleep Wake` (`153.69 ms`, `+35.9%`) and hurts `Flash-Erase Burst Contention` (`51.23 KiB/s`, `-17.3%` PUT; `134.00 ms`, `+76.2%` probe p95 across `30–60 ms` flash-erase windows). Keeping the compact fast-TX path in IRAM (`+789 B`) recovers both metrics directly to **`on par`** with Vendor Blobs (`114.29 ms` wake; `62.92 KiB/s` PUT; `87.82 ms` p95), while `Heavy-MTU Saturation Tail p99` stays **`on par`** across all OSS builds.
 - <a id="note-warm-reboot"></a>**[\*2] Warm-Reboot Reconnect Speedup & Quantization**: All three OSS builds reach HTTP-ready ~`580–780 ms` faster on average than Vendor Blobs (`2375–2578 ms` vs. `3160 ms`) thanks to `RTC_SYS` PMK + channel caching. The wider `±434–532 ms` spread reflects discrete `+1000 ms` beacon/DHCP retry quantization (`~2.17 s` on most runs vs. `~3.16 s` when a single initial probe misses a beacon window; `0` HTTP errors).
-- <a id="note-ampdu-rx"></a>**[\*3] A-MPDU RX Upside vs. Flash-XIP Overhead**: Without A-MPDU RX aggregation, rapid multi-fragment bursts (`Fragmented ICMP Burst`, `-28.8%` on Default) queue as individual MPDUs. Enabling [`ESP8266_WIFI_AMPDU_RX_ENABLED=y`](#cfg-wifi-ampdu-rx-enabled) (`n=28, win=6`) restores fragmented bursts to **`on par`** (`32.25 pps`, `+36.0%` vs. Default) and pushes `Heavy-MTU Saturation` (`+25.5%`) and `Concurrent HTTP Close` (`+12.2%`) well ahead of Vendor Blobs. Two narrow workloads reflect the deliberate cost of keeping the MAC in flash XIP rather than pinning `25 KB` into IRAM: `Idle ICMP RTT` adds `~0.7–0.8 ms` of flash-cache wakeup latency (`5.7 ms` vs. `4.9 ms`), and `Flash-Read Contended Downlink` drops `-9%` to `-29%` when a continuous `1 MB` `spi_flash_read` stream competes directly with 1400 B floods for SPI flash cache bandwidth.
+- <a id="note-ampdu-rx"></a>**[\*3] A-MPDU RX Upside vs. Flash-XIP Overhead**: Without A-MPDU RX aggregation, rapid multi-fragment bursts (`Fragmented ICMP Burst`, `-28.8%` on Default) queue as individual MPDUs. Enabling [`ESP8266_WIFI_AMPDU_RX_ENABLED=y`](#cfg-wifi-ampdu-rx-enabled) (`n=28, win=6`) restores fragmented bursts to **`on par`** (`32.25 pps`, `+36.0%` vs. Default) and pushes `Heavy-MTU Saturation` (`+25.5%`) and `Concurrent HTTP Close` (`+12.2%`) well ahead of Vendor Blobs. Two narrow workloads reflect the deliberate cost of keeping the MAC in flash XIP rather than pinning `25 KiB` into IRAM: `Idle ICMP RTT` adds `~0.7–0.8 ms` of flash-cache wakeup latency (`5.7 ms` vs. `4.9 ms`), and `Flash-Read Contended Downlink` drops `-9%` to `-29%` when a continuous `1 MiB` `spi_flash_read` stream competes directly with 1400 B floods for SPI flash cache bandwidth.
 
 ---
 
@@ -279,18 +279,18 @@ For the full Kconfig menu hierarchy, legacy vendor-blob fallback switches (`CONF
 
 | Profile | Key Settings | Best Fit | Trade-Off |
 | :--- | :--- | :--- | :--- |
-| **OSS Default (Fast TX)** | Out-of-the-box defaults (`OSS_WIFI_MIN_NMI=n`, `AMPDU_RX_ENABLED=n`, `RX_BUFFER_NUM=16`) | General IoT, HTTP/WebDAV servers, LittleFS/OTA devices | Best balance: **-50.2% static IRAM**, `+15–18 KB` runtime heap, and full flash-erase TX resilience |
-| **OSS Minimal NMI** | [`CONFIG_ESP8266_OSS_WIFI_MIN_NMI=y`](#cfg-oss-wifi-min-nmi) | IRAM-starved or TLS-heavy firmware that rarely erases flash under active Wi-Fi bursts | Saves another `789 B` IRAM and unlocks `TX_PKT_NUM < 10` (`+1.8 KB` more runtime heap), at the cost of slower modem-sleep wake and flash-erase burst throughput |
-| **OSS A-MPDU RX** | [`CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED=y`](#cfg-wifi-ampdu-rx-enabled), `RX_BUFFER_NUM=28`, `RX_BA_WIN_SIZE=6` (use `PPT_TASKSTACK_SIZE=5120` with WPA3) | High-concurrency servers or RX-burst-heavy workloads with `~10 KB` of 8-bit DRAM headroom | Lifts saturation (`+25.5%`) and concurrent HTTP (`+12.2%`) past Vendor Blobs; costs `+1.3 KB` IRAM and `~9.6 KB` 8-bit heap vs. Default |
+| **OSS Default (Fast TX)** | Out-of-the-box defaults (`OSS_WIFI_MIN_NMI=n`, `AMPDU_RX_ENABLED=n`, `RX_BUFFER_NUM=16`) | General IoT, HTTP/WebDAV servers, LittleFS/OTA devices | Best balance: **-50.2% static IRAM**, `+14–18 KiB` runtime heap, and full flash-erase TX resilience |
+| **OSS Minimal NMI** | [`CONFIG_ESP8266_OSS_WIFI_MIN_NMI=y`](#cfg-oss-wifi-min-nmi) | IRAM-starved or TLS-heavy firmware that rarely erases flash under active Wi-Fi bursts | Saves another `789 B` IRAM and unlocks `TX_PKT_NUM < 10` (`+1.8 KiB` more runtime heap), at the cost of slower modem-sleep wake and flash-erase burst throughput |
+| **OSS A-MPDU RX** | [`CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED=y`](#cfg-wifi-ampdu-rx-enabled), `RX_BUFFER_NUM=28`, `RX_BA_WIN_SIZE=6` (use `PPT_TASKSTACK_SIZE=5120` with WPA3) | High-concurrency servers or RX-burst-heavy workloads with `~10 KiB` of 8-bit DRAM headroom | Lifts saturation (`+25.5%`) and concurrent HTTP (`+12.2%`) past Vendor Blobs; costs `+1.3 KiB` IRAM and `~9.3 KiB` 8-bit heap vs. Default |
 
 ### 6.2 Key Tuning Levers & Behavioral Differences from Vendor Blobs
 
 | Kconfig Option | Default (Range) | Architectural Role & Subtle Differences |
 | :--- | :--- | :--- |
 | <a id="cfg-oss-wifi-min-nmi"></a>`CONFIG_ESP8266_OSS_WIFI_MIN_NMI` | `n` | Disables the IRAM Level-3 NMI fast-TX retry/launch path (`-789 B` IRAM) and removes the `10`-slot TX pool floor. |
-| <a id="cfg-wifi-tx-pkt-num"></a>`CONFIG_ESP8266_WIFI_TX_PKT_NUM` | `6` (`4..16`) | Scatter-gather TX slot count (`~216 B`/slot vs. Vendor `~1.6 KB`/buf). **Floored at `10` slots** when `OSS_WIFI_MIN_NMI=n` (`4..9` apply only under Minimal NMI). |
+| <a id="cfg-wifi-tx-pkt-num"></a>`CONFIG_ESP8266_WIFI_TX_PKT_NUM` | `6` (`4..16`) | Scatter-gather TX slot count (`~216 B`/slot vs. Vendor `~1.6 KiB`/buf). **Floored at `10` slots** when `OSS_WIFI_MIN_NMI=n` (`4..9` apply only under Minimal NMI). |
 | <a id="cfg-wifi-rx-buffer-num"></a>`CONFIG_ESP8266_WIFI_RX_BUFFER_NUM` | `16` (`14..28`) | Size of the contiguous `524 B`/buffer RX DMA ring (capped at `28`). Keep `16` for baseline builds; raise to `24–28` when enabling A-MPDU RX. |
-| <a id="cfg-wifi-left-continuous-rx-buffer-num"></a>`CONFIG_ESP8266_WIFI_LEFT_CONTINUOUS_RX_BUFFER_NUM` | `16` (`0..16`) | Hybrid zero-copy vs. heap-copy RX threshold. At default `16/16`, OSS always copies to heap and recycles DMA immediately; lowering below `RX_BUFFER_NUM - 1` enables zero-copy RX into lwIP whenever free 8-bit DRAM exceeds `6 KB`. |
+| <a id="cfg-wifi-left-continuous-rx-buffer-num"></a>`CONFIG_ESP8266_WIFI_LEFT_CONTINUOUS_RX_BUFFER_NUM` | `16` (`0..16`) | Hybrid zero-copy vs. heap-copy RX threshold. At default `16/16`, OSS always copies to heap and recycles DMA immediately; lowering below `RX_BUFFER_NUM - 1` enables zero-copy RX into lwIP whenever free 8-bit DRAM exceeds `6 KiB`. |
 | <a id="cfg-wifi-ampdu-rx-enabled"></a>`CONFIG_ESP8266_WIFI_AMPDU_RX_ENABLED` | `n` | Opt-in A-MPDU RX across STA, SoftAP, Sniffer, and WPA3-SAE links (auto-selects `QOS_ENABLED`; `0 B` when `n`). Pair with `CONFIG_ESP8266_WIFI_RX_BA_WIN_SIZE` (default `6`, range `0..16`). |
 | <a id="cfg-wifi-qos-enabled"></a>`CONFIG_ESP8266_WIFI_QOS_ENABLED` | `n` | Opt-in WMM/QoS negotiation and IPv4 DSCP-to-AC QoS Data TX framing (RX always accepts both QoS and non-QoS frames). |
 | <a id="cfg-oss-wifi-rtc-fast-connect"></a>`CONFIG_ESP8266_OSS_WIFI_RTC_FAST_CONNECT` | `y` if `!WIFI_NVS`, else `n` | Caches derived STA PMK, BSSID, and channel in `64 B` of `RTC_SYS` across warm resets/OTA reboots (auto-cleared on POR). |
@@ -309,7 +309,7 @@ For the full Kconfig menu hierarchy, legacy vendor-blob fallback switches (`CONF
 
 ### 7.1 Intentional Non-Goals & Design Trade-Offs
 
-To protect the ESP8266's `32 KB` IRAM, `80 KB` DRAM, and security posture, several capabilities are deliberately omitted from the open-source stack:
+To protect the ESP8266's `32 KiB` IRAM, `80 KiB` DRAM, and security posture, several capabilities are deliberately omitted from the open-source stack:
 
 - **No A-MSDU RX**: Rejected unconditionally to avoid FragAttacks exposure and large single-frame DRAM spikes.
 - **No MAC-Layer Block-Ack Reorder Buffer**: Under `AMPDU_RX_ENABLED=y`, hardware maintains the RX Block Ack scoreboard while out-of-order TCP segments rely on lwIP's `OOSEQ` queue and the 64-packet sliding replay window — saving several kilobytes of DRAM at the expense of strict MAC-level reordering for non-TCP UDP bursts.
