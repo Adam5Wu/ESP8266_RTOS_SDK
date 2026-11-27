@@ -67,6 +67,93 @@ extern void uart_buff_switch(uint8_t uart_no);
 #define PHY_VER_1167_0_WORD             0x048F0000U
 
 /* --------------------------------------------------------------------------
+ * Semantic Indices into chip6_phy_init_ctrl[80] (Parsed esp_phy_init_data_t)
+ * -------------------------------------------------------------------------- */
+
+#define PHY_CTRL_XTAL_FREQ              0x00U /* 0=40 MHz, 1=26 MHz, 2=24 MHz */
+#define PHY_CTRL_RX_CMP_BASE            0x01U /* 3 signed bytes: Ch 1/6/11 base RX comp */
+#define PHY_CTRL_RX_CMP_EXT2            0x04U /* 3 signed bytes: rxmax_ext lvl 2 comp */
+#define PHY_CTRL_RX_CMP_EXT3            0x07U /* 3 signed bytes: rxmax_ext lvl 3 (-30) */
+#define PHY_CTRL_SPUR1_NUM_LO           0x0BU /* Spur #1 numerator low byte */
+#define PHY_CTRL_SPUR1_DEN              0x0CU /* Spur #1 denominator (0 disables) */
+#define PHY_CTRL_SPUR1_MASK_LO          0x0EU /* Spur #1 channel bitmask (uint16 LE) */
+#define PHY_CTRL_SPUR1_MASK_HI          0x0FU
+#define PHY_CTRL_CH_CLAMP_BASE          0x10U /* 4 bytes: Ch 1,11,13,14 max pwr clamps */
+#define PHY_CTRL_TARGET_PWR_BASE        0x14U /* 6 bytes: target TX power (0.25 dBm) */
+#define PHY_CTRL_RATE_PWR_IDX_BASE      0x1AU /* 8 bytes: per-rate target power index */
+#define PHY_CTRL_BTCO_MODE              0x22U /* BT coex mode (0=off, 1/3/4/5=active) */
+#define PHY_CTRL_BTCO_SUBMODE           0x23U /* BT coex priority/polarity sub-mode */
+#define PHY_CTRL_ANT_SWITCH_MODE        0x24U /* Standalone antenna switch mode (2/3) */
+#define PHY_CTRL_EXT_SLEEP_OPT          0x25U /* External sleep option (0/1/2) */
+#define PHY_CTRL_SPUR2_NUM_LO           0x26U /* Spur #2 numerator low byte */
+#define PHY_CTRL_SPUR2_DEN              0x27U /* Spur #2 denominator */
+#define PHY_CTRL_SPUR2_MASK_LO          0x28U /* Spur #2 channel bitmask (uint16 LE) */
+#define PHY_CTRL_SPUR2_MASK_HI          0x29U
+#define PHY_CTRL_SPUR1_NUM_HI           0x2AU /* Spur #1 numerator high byte */
+#define PHY_CTRL_SPUR2_NUM_HI           0x2BU /* Spur #2 numerator high byte */
+#define PHY_CTRL_SPUR3_FREQ_LO          0x2CU /* Fixed spur #3 offset above 2400 MHz (0.1 MHz LE) */
+#define PHY_CTRL_SPUR4_FREQ_LO          0x2EU /* Fixed spur #4 offset above 2400 MHz (0.1 MHz LE) */
+#define PHY_CTRL_FCC_BACKOFF_EN         0x30U /* 0=legacy FCC edge, 1=configured edge */
+#define PHY_CTRL_FCC_HI_IDX             0x31U /* High-band FCC target power index */
+#define PHY_CTRL_FCC_LO_IDX             0x32U /* Low-band FCC target power index */
+#define PHY_CTRL_FCC_HI_CNT             0x33U /* High-band FCC channel count from Ch 14 */
+#define PHY_CTRL_FCC_LO_CNT             0x34U /* Low-band FCC channel count from Ch 1 */
+#define PHY_CTRL_FCC_INTERP_EN          0x35U /* High/low-band linear interpolation flag */
+#define PHY_CTRL_FCC_LO_FLAG            0x36U /* Low-band FCC extra flag */
+#define PHY_CTRL_FCC_11B_HI_OFF         0x37U /* 11b 1M/2M FCC power index offset (ch > 6) */
+#define PHY_CTRL_FCC_11B_LO_OFF         0x38U /* 11b 1M/2M FCC power index offset (ch <= 6) */
+#define PHY_CTRL_FCC_TEST_MODE          0x39U /* 0=normal, 1=cont TX+FCC, 2=per-ch clamp */
+#define PHY_CTRL_CCA_THRESH             0x3AU /* Custom CCA threshold override value */
+#define PHY_CTRL_CCA_MODE               0x3BU /* 0=off, 3=thresh, 4=thresh+chan_comp bit */
+#define PHY_CTRL_MAC_DEBUG_MODE         0x3CU /* 2=write 0x55555555 to MAC debug reg */
+#define PHY_CTRL_LOW_PWR_EN             0x3DU /* Fixed low-power TX gain mode enable */
+#define PHY_CTRL_LOW_PWR_STAGE10        0x3EU /* Low-power RF stage-10 gain code */
+#define PHY_CTRL_LOW_PWR_BB_DELTA       0x3FU /* Low-power TX BB attenuation delta */
+#define PHY_CTRL_11B_PWR_EN             0x40U /* Separate 11b TX power index enable */
+#define PHY_CTRL_11B_1M2M_IDX           0x41U /* 11b 1M/2M target power index */
+#define PHY_CTRL_11B_5M11M_IDX          0x42U /* 11b 5.5M/11M target power index */
+#define PHY_CTRL_BG_PWCTRL_DIS          0x43U /* Bit 0: disable tx_pwctrl_background() */
+#define PHY_CTRL_BBPLL160_OPT           0x44U /* 0=auto, 1=force on, 2=force off */
+#define PHY_CTRL_VDD33_CONST            0x47U /* 0xFF=ADC VDD33, 18..36=0.1V, else 3.3V */
+#define PHY_CTRL_DSLP_RECAL_INT         0x48U /* Deep-sleep wakes between RF recalibrations */
+#define PHY_CTRL_CH14_FREQ_EN           0x49U /* Bit 0: enable custom Ch 14 frequency */
+#define PHY_CTRL_CH14_FREQ_LO           0x4AU /* Custom Ch 14 center frequency (MHz LE) */
+#define PHY_CTRL_FREQ_OFF_MODE          0x4CU /* Crystal frequency-offset compensation mode */
+#define PHY_CTRL_FREQ_OFF_VAL           0x4DU /* Signed crystal freq offset (8 kHz steps) */
+#define PHY_CTRL_POWERUP_CAL_MODE       0x4EU /* Boot RF cal mode: 0=none, 1=partial, 3=full */
+
+/* --------------------------------------------------------------------------
+ * Common PHY Domain Constants (Crystal, PM Sleep Modes, ADC & Calibration)
+ * -------------------------------------------------------------------------- */
+
+#define PHY_XTAL_40MHZ                  0U
+#define PHY_XTAL_26MHZ                  1U
+#define PHY_XTAL_24MHZ                  2U
+
+#define PHY_PM_MODE_LIGHT_BB_OFF        1U /* Light sleep, baseband powered down */
+#define PHY_PM_MODE_LIGHT_BB_ON         2U /* Light sleep, baseband retained */
+#define PHY_PM_MODE_MODEM_PAUSE         4U /* Transient RF/MAC pause (chan change / ADC) */
+#define PHY_PM_MODE_MODEM_SLEEP         8U /* Modem sleep (RF off, CPU active) */
+
+#define PHY_VDD33_MODE_MEASURE          0xFFU   /* Measure VDD33 via internal SAR ADC */
+#define PHY_VDD33_NOMINAL_RAW           0x0D33U /* Nominal 3.3 V raw VDD33 reading (~3379) */
+#define PHY_ADC_INVALID                 0xFFFFU /* Sentinel for unavailable ADC reading */
+
+#define PHY_TX_RF_ANA_GAIN_DEFAULT      0x0BF0U /* Default packed (rf_gain<<5 | ana_gain) */
+#define PHY_SAR_PWDET_REF_DEFAULT       0x0138U /* Reference dB offset for SAR power detector */
+#define PHY_TONE_FREQ_CAL_DEFAULT       0x40U   /* Standard TX calibration DDS tone code */
+#define PHY_CAL_BB_ATTEN_BIAS           0x1FU   /* Baseband attenuation zero-reference bias */
+
+#define PHY_NOISE_FLOOR_DEFAULT_QDB     (-388)  /* -97.0 dBm in 0.25 dB units */
+#define PHY_NOISE_FLOOR_PARTIAL_QDB     (-384)  /* -96.0 dBm partial-cal reset baseline */
+#define PHY_NOISE_FLOOR_MIN_QDB         (-392)  /* -98.0 dBm lower saturation clamp */
+#define PHY_NOISE_FLOOR_MAX_QDB         (-340)  /* -85.0 dBm upper saturation clamp */
+
+#define PHY_RX_GAIN_DC_TABLE_WORDS      125U    /* 64 gain + 60 DC + 1 checksum words */
+#define PHY_RTC_CAL_DATA_WORDS          32U     /* 128-byte RTC PHY cal block (W0..W31) */
+#define PHY_RTC_CAL_CHKSUM_WORDS        26U     /* Checksummed words W0..W25 */
+
+/* --------------------------------------------------------------------------
  * ABI-Locked RTC Calibration Parameters (96 B: W0..W23 @ 0x60001000..0x105F)
  * -------------------------------------------------------------------------- */
 

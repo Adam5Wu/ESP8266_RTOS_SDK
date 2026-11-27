@@ -24,6 +24,7 @@
 #define N8_DEFRAG_SLOTS         2U
 #define N8_DEFRAG_MAX_MSDU_LEN  2304U
 #define N8_DEFRAG_TIMEOUT_TICKS 20U /* 2.0 s at 100 ms worker ticks */
+#define N8_DEFRAG_KEY_ID_MASK   3U  /* 2-bit IEEE 802.11 Key ID mask */
 
 typedef struct {
     uint8_t  in_use;
@@ -43,6 +44,11 @@ typedef struct {
 
 static n8_defrag_slot_t *s_defrag_slots = NULL;
 
+/**
+ * @brief Free the lazily allocated defragmentation slot table once all slots are idle.
+ *
+ * Keeps steady-state heap usage at zero bytes when no fragmented MSDUs are in flight.
+ */
 static void defrag_maybe_release_table(void)
 {
     if (s_defrag_slots == NULL) {
@@ -57,6 +63,11 @@ static void defrag_maybe_release_table(void)
     s_defrag_slots = NULL;
 }
 
+/**
+ * @brief Free any partial reassembly buffer held by @p slot and zero its metadata.
+ *
+ * @param slot  Pointer to an active or unused entry in `s_defrag_slots`.
+ */
 static void defrag_reset_slot(n8_defrag_slot_t *slot)
 {
     if (slot->buf != NULL) {
@@ -101,7 +112,7 @@ uint8_t *n8_defrag_rx_frag(uint8_t vif, const uint8_t ta[IEEE80211_ADDR_LEN],
         return NULL;
     }
 
-    uint16_t seq_num = (uint16_t)(seq_ctrl >> 4);
+    uint16_t seq_num = (uint16_t)(seq_ctrl >> IEEE80211_SEQ_SHIFT);
     uint8_t frag_num = (uint8_t)(seq_ctrl & IEEE80211_FRAG_NUM_MASK);
 
     if (s_defrag_slots == NULL) {
@@ -158,7 +169,7 @@ uint8_t *n8_defrag_rx_frag(uint8_t vif, const uint8_t ta[IEEE80211_ADDR_LEN],
         match->next_frag = 1U;
         match->is_prot = is_prot ? 1U : 0U;
         match->cipher = (uint8_t)cipher;
-        match->key_idx = (uint8_t)(key_idx & 3U);
+        match->key_idx = (uint8_t)(key_idx & N8_DEFRAG_KEY_ID_MASK);
         match->age_ticks = 0U;
         match->seq_num = seq_num;
         match->len = frag_len;
@@ -177,7 +188,7 @@ uint8_t *n8_defrag_rx_frag(uint8_t vif, const uint8_t ta[IEEE80211_ADDR_LEN],
     if (frag_num != match->next_frag ||
         (is_prot ? 1U : 0U) != match->is_prot ||
         (uint8_t)cipher != match->cipher ||
-        (uint8_t)(key_idx & 3U) != match->key_idx ||
+        (uint8_t)(key_idx & N8_DEFRAG_KEY_ID_MASK) != match->key_idx ||
         (pn_required && pn != (match->last_pn + 1ULL)) ||
         ((uint32_t)match->len + (uint32_t)frag_len > N8_DEFRAG_MAX_MSDU_LEN)) {
         defrag_reset_slot(match);

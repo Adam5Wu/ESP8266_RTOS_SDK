@@ -31,16 +31,31 @@ extern bool ets_timer_proc_one(void);
 /* Single zero-initialized global net80211 context (0 SHN_COMMON) */
 net80211_ctx_t g_n8 = {0};
 
-#define N8_EVT_QUEUE_LEN        64U
-#define N8_LMAC_RX_BATCH        16U
-#define N8_LMAC_TX_BATCH        16U
-#define N8_HK_PERIOD_US         100000LL
+#define N8_EVT_QUEUE_LEN            64U         /* Unified worker event queue depth */
+#define N8_LMAC_RX_BATCH            16U         /* Max LMAC RX frames processed per dispatch */
+#define N8_LMAC_TX_BATCH            16U         /* Max LMAC TX completions processed per dispatch */
+#define N8_HK_PERIOD_US             100000LL    /* 100 ms periodic housekeeping interval */
+#define N8_WORKER_POLL_MS           50U         /* Queue receive timeout to service housekeeping */
+#define N8_WORKER_MIN_STACK_BYTES   3072U       /* Minimum worker task stack floor (bytes) */
+#define N8_WORKER_STOP_TIMEOUT_MS   500U        /* Max wait for worker task self-exit on stop */
+#define N8_WORKER_STOP_POLL_MS      10U         /* Delay step while polling worker exit */
 
 /* --------------------------------------------------------------------------
  * ISR Event Posting Hooks (LMAC SoftISR + esp_ets_timer FRC2 ISR)
  * -------------------------------------------------------------------------- */
 
-int n8_lmac_notify_from_isr(void *ctx)
+/**
+ * @brief Coalesced ISR notification hook called by LMAC SoftISR when RX/TX events arrive.
+ *
+ * Runs in ISR context (IRAM_ATTR). Uses @c g_n8.lmac_evt_queued to coalesce
+ * bursts of interrupts into a single N8_EVT_LMAC queue entry. Does not invoke
+ * portYIELD_FROM_ISR() directly; returns @c woken so the LMAC ISR dispatcher
+ * can perform a single deferred context switch.
+ *
+ * @param ctx Unused opaque context pointer from LMAC registration.
+ * @return Non-zero (pdTRUE) if posting woke a higher-priority task, 0 otherwise.
+ */
+int IRAM_ATTR n8_lmac_notify_from_isr(void *ctx)
 {
     (void)ctx;
     if (g_n8.evt_queue == NULL || g_n8.lmac_evt_queued) {
@@ -55,7 +70,16 @@ int n8_lmac_notify_from_isr(void *ctx)
     return (int)woken;
 }
 
-int esp_wifi_post_timer_from_isr(void)
+/**
+ * @brief Coalesced ISR notification hook called by esp_ets_timer FRC2 ISR.
+ *
+ * Runs in ISR context (IRAM_ATTR). Coalesces timer expiry notifications via
+ * @c g_n8.timer_evt_queued into a single N8_EVT_ETS_TIMER queue entry and
+ * triggers portYIELD_FROM_ISR() immediately when a higher-priority task wakes.
+ *
+ * @return Non-zero (pdTRUE) if posting woke a higher-priority task, 0 otherwise.
+ */
+int IRAM_ATTR esp_wifi_post_timer_from_isr(void)
 {
     if (g_n8.evt_queue == NULL || g_n8.timer_evt_queued) {
         return 0;
@@ -71,6 +95,17 @@ int esp_wifi_post_timer_from_isr(void)
     return (int)woken;
 }
 
+/**
+ * @brief Post an asynchronous event to the Wi-Fi worker queue from task context.
+ *
+ * Non-blocking (zero wait ticks). For level-triggered event types (N8_EVT_LMAC,
+ * N8_EVT_TX, N8_EVT_ETS_TIMER), checks and sets the corresponding coalescing
+ * flag inside a critical section so at most one instance is queued at a time;
+ * if the queue is full, rolls the flag back so a subsequent event can retry.
+ *
+ * @param type Worker event type to enqueue.
+ * @param ptr  Optional event-specific payload pointer (NULL for coalesced events).
+ */
 void n8_post_evt(n8_evt_type_t type, void *ptr)
 {
     if (g_n8.evt_queue == NULL) {
@@ -104,16 +139,39 @@ void n8_post_evt(n8_evt_type_t type, void *ptr)
     }
 }
 
+/**
+ * @brief Check whether the caller is currently executing on the Wi-Fi worker task.
+ *
+ * Safe to call from any FreeRTOS task context.
+ *
+ * @return True if the current task handle matches @c g_n8.worker_task, false otherwise.
+ */
 bool n8_on_worker_task(void)
 {
     return (g_n8.worker_task != NULL) && (xTaskGetCurrentTaskHandle() == g_n8.worker_task);
 }
 
+/**
+ * @brief Execute a net80211 control-plane handler synchronously on the Wi-Fi worker task.
+ *
+ * Called from application or internal task context. To avoid self-deadlock when
+ * invoked re-entrantly from the worker task (e.g. from supplicant callbacks or
+ * event handlers) — or before the worker task has started — executes @p fn(arg)
+ * inline directly. Otherwise serializes concurrent callers with @c api_mutex,
+ * posts a stack-allocated @c n8_api_req_t via N8_EVT_API, and blocks on its
+ * binary completion semaphore until the worker finishes.
+ *
+ * @param fn  Handler callback to execute on the worker task.
+ * @param arg Opaque argument pointer passed to @p fn.
+ * @return Return value of @p fn, ESP_ERR_INVALID_ARG if @p fn is NULL, or
+ *         ESP_ERR_NO_MEM if the completion semaphore could not be allocated.
+ */
 esp_err_t n8_api_call(n8_api_fn_t fn, void *arg)
 {
     if (fn == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
+    /* Execute inline if worker is not active or caller is already on worker (prevents deadlock). */
     if (!g_n8.worker_running || g_n8.evt_queue == NULL || n8_on_worker_task()) {
         return fn(arg);
     }
@@ -146,6 +204,15 @@ esp_err_t n8_api_call(n8_api_fn_t fn, void *arg)
     return req.ret;
 }
 
+/**
+ * @brief Dispatch a legacy system_event_t to the configured handler or ESP event loop.
+ *
+ * Typically called from the Wi-Fi worker task when STA/AP/scan states change.
+ * Invokes `g_n8.init_cfg.event_handler` directly when registered via
+ * `wifi_init_config_t`, falling back to `esp_event_send()` otherwise.
+ *
+ * @param evt Pointer to the populated system event structure (ignored if NULL).
+ */
 void n8_send_system_event(system_event_t *evt)
 {
     if (evt == NULL) {
@@ -162,6 +229,21 @@ void n8_send_system_event(system_event_t *evt)
  * Cooperative Single Wi-Fi Worker Task
  * -------------------------------------------------------------------------- */
 
+/**
+ * @brief Main loop of the unified cooperative Wi-Fi worker task.
+ *
+ * Runs as the dedicated `"wifi"` FreeRTOS task. Drains LMAC events in bounded
+ * batches, processes one ETS timer callback per turn, drains the data-plane TX
+ * ring, executes synchronous API RPCs, and drives 100 ms periodic housekeeping
+ * (LMAC maintenance, stalled TX drain, STA/AP/PM ticks, and RX defragmentation
+ * timeout aging).
+ *
+ * For each coalesced event (LMAC, ETS timer, TX), the queued flag is cleared
+ * inside a critical section *before* servicing the work so any concurrent ISR
+ * or task posting during processing re-arms the flag without lost wakeups.
+ *
+ * @param arg Unused FreeRTOS task parameter.
+ */
 static void n8_worker_task(void *arg)
 {
     (void)arg;
@@ -169,15 +251,17 @@ static void n8_worker_task(void *arg)
 
     while (g_n8.worker_running) {
         n8_evt_t ev;
-        BaseType_t got = xQueueReceive(g_n8.evt_queue, &ev, pdMS_TO_TICKS(50U));
+        BaseType_t got = xQueueReceive(g_n8.evt_queue, &ev, pdMS_TO_TICKS(N8_WORKER_POLL_MS));
 
         if (got == pdTRUE) {
             switch (ev.type) {
             case N8_EVT_LMAC:
+                /* Clear coalescing flag before draining so new ISRs re-arm cleanly. */
                 taskENTER_CRITICAL();
                 g_n8.lmac_evt_queued = 0U;
                 taskEXIT_CRITICAL();
                 if (esp_lmac_process_events(N8_LMAC_RX_BATCH, N8_LMAC_TX_BATCH)) {
+                    /* More LMAC work remains; re-post to yield cooperatively to other events. */
                     n8_post_evt(N8_EVT_LMAC, NULL);
                 }
                 /* Drain any backpressured data TX as soon as ANY LMAC slot frees (data/mgmt/null/bcn) */
@@ -191,6 +275,7 @@ static void n8_worker_task(void *arg)
                 g_n8.timer_evt_queued = 0U;
                 taskEXIT_CRITICAL();
                 if (ets_timer_proc_one()) {
+                    /* Another timer is already due; re-post to keep timer work bounded. */
                     n8_post_evt(N8_EVT_ETS_TIMER, NULL);
                 }
                 break;
@@ -243,6 +328,16 @@ static void n8_worker_task(void *arg)
     vTaskDelete(NULL);
 }
 
+/**
+ * @brief Allocate synchronization primitives and spawn the Wi-Fi worker task.
+ *
+ * Called from caller task context during esp_wifi_init(). Enforces the minimum
+ * stack floor (N8_WORKER_MIN_STACK_BYTES) and clamps task priority
+ * (`CONFIG_ESP8266_OSS_WIFI_TASK_PRIO`) below `configMAX_PRIORITIES`.
+ * Idempotent if the worker is already running.
+ *
+ * @return ESP_OK on success, or ESP_ERR_NO_MEM if queue, mutex, or task creation fails.
+ */
 esp_err_t n8_worker_start(void)
 {
     if (g_n8.worker_running) {
@@ -267,8 +362,8 @@ esp_err_t n8_worker_start(void)
     g_n8.worker_running = true;
 
     uint32_t stk_bytes = (uint32_t)_g_esp_wifi_ppt_task_stk_size;
-    if (stk_bytes < 3072U) {
-        stk_bytes = 3072U;
+    if (stk_bytes < N8_WORKER_MIN_STACK_BYTES) {
+        stk_bytes = N8_WORKER_MIN_STACK_BYTES;
     }
     UBaseType_t prio = (UBaseType_t)CONFIG_ESP8266_OSS_WIFI_TASK_PRIO;
     if (prio >= configMAX_PRIORITIES) {
@@ -289,6 +384,13 @@ esp_err_t n8_worker_start(void)
     return ESP_OK;
 }
 
+/**
+ * @brief Signal the Wi-Fi worker task to stop, wait for exit, and free its IPC objects.
+ *
+ * Called from caller task context during esp_wifi_deinit(). Posts
+ * N8_EVT_STOP_WORKER and polls up to N8_WORKER_STOP_TIMEOUT_MS for the worker
+ * task to clear @c g_n8.worker_task before deleting the queue and API mutex.
+ */
 void n8_worker_stop(void)
 {
     if (!g_n8.worker_running && g_n8.worker_task == NULL) {
@@ -299,9 +401,9 @@ void n8_worker_stop(void)
     n8_post_evt(N8_EVT_STOP_WORKER, NULL);
 
     uint32_t wait_ms = 0U;
-    while (g_n8.worker_task != NULL && wait_ms < 500U) {
-        vTaskDelay(pdMS_TO_TICKS(10U));
-        wait_ms += 10U;
+    while (g_n8.worker_task != NULL && wait_ms < N8_WORKER_STOP_TIMEOUT_MS) {
+        vTaskDelay(pdMS_TO_TICKS(N8_WORKER_STOP_POLL_MS));
+        wait_ms += N8_WORKER_STOP_POLL_MS;
     }
 
     if (g_n8.evt_queue != NULL) {

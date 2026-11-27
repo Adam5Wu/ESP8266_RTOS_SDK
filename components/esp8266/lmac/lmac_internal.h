@@ -156,6 +156,66 @@ _Static_assert(sizeof(lmac_nmi_evt_t) == 8U, "lmac_nmi_evt_t must be 8 bytes");
 #define LMAC_TX_MAX_DESCS           (1U + LMAC_TX_MAX_SG_SEGS + 1U) /* hdr + 2 segs + trailer/FCS */
 #define LMAC_TX_DEFAULT_MAX_RETRIES 7U
 #define LMAC_TX_LIFETIME_US         500000U
+#define LMAC_TX_MIN_LIFETIME_TU     10U
+#define LMAC_TX_MAX_LIFETIME_TU     0x3FFU
+#define LMAC_TX_BEACON_BACKOFF      0x7DU
+#define LMAC_TX_BEACON_LIFETIME_TU  100U
+
+/* Common IEEE 802.11 / WDEV frame & timing constants */
+#define LMAC_IEEE80211_FCS_LEN      4U
+#define LMAC_IEEE80211_MIN_MPDU_LEN 10U         /* Shortest valid 802.11 control frame */
+#define LMAC_IEEE80211_MAX_MPDU_LEN 2346U       /* Maximum 802.11 MPDU length incl. FCS */
+#define LMAC_IEEE80211_MGMT_HDR_LEN 24U
+#define LMAC_IEEE80211_FC1_RETRY    0x08U       /* Frame Control byte 1 Retry bit */
+#define LMAC_TU_US                  1024U       /* 1 IEEE 802.11 Time Unit = 1024 us */
+#define LMAC_TU_SHIFT               10U
+
+/* Hardware RX control header (12-byte wifi_pkt_rx_ctrl_t) word-field masks */
+#define LMAC_RXCTRL_W0_HT_MASK      0x0000C000U /* sig_mode != 0 -> HT length in word 1 */
+#define LMAC_RXCTRL_W0_LEG_LEN_SH   16U         /* [27:16]: legacy_length */
+#define LMAC_RXCTRL_W0_LEG_LEN_MASK 0x0FFFU
+#define LMAC_RXCTRL_W0_VIF_SHIFT    28U         /* [31:28]: hardware VIF/BSSID match mask */
+#define LMAC_RXCTRL_W1_HT_LEN_SH    8U          /* [23:8]: HT_length */
+#define LMAC_RXCTRL_W1_AMPDU_BIT    BIT(27)     /* Aggregation bit (A-MPDU subframe) */
+#define LMAC_RXCTRL_W2_STATE_MASK   0xFFU       /* [7:0]: rxend_state */
+#define LMAC_RXCTRL_W2_CH_SHIFT     16U         /* [19:16]: channel stamp */
+#define LMAC_RXCTRL_W2_CH_CLEAR     0xFFF0FFFFU
+
+/* WDEV hardware rate encodings */
+#define LMAC_RATE_11B_1M            0x00U
+#define LMAC_RATE_11B_2M            0x01U
+#define LMAC_RATE_11B_5_5M          0x02U
+#define LMAC_RATE_11B_11M           0x03U
+#define LMAC_RATE_11B_SHORT_PRE_BIT 0x04U       /* OR'd onto 2M/5.5M/11M for short preamble */
+#define LMAC_RATE_11B_2M_SP         0x05U
+#define LMAC_RATE_11B_5_5M_SP       0x06U
+#define LMAC_RATE_11B_11M_SP        0x07U
+#define LMAC_RATE_11G_48M           0x08U
+#define LMAC_RATE_11G_24M           0x09U
+#define LMAC_RATE_11G_12M           0x0AU
+#define LMAC_RATE_11G_6M            0x0BU
+#define LMAC_RATE_11G_54M           0x0CU
+#define LMAC_RATE_11G_36M           0x0DU
+#define LMAC_RATE_11G_18M           0x0EU
+#define LMAC_RATE_11G_9M            0x0FU
+#define LMAC_RATE_11N_MCS0          0x10U       /* 0x10..0x17 = HT20 MCS0..MCS7 (LGI) */
+#define LMAC_RATE_11N_MCS1          0x11U
+#define LMAC_RATE_11N_MCS2          0x12U
+#define LMAC_RATE_11N_MCS3          0x13U
+#define LMAC_RATE_11N_MCS4          0x14U
+#define LMAC_RATE_11N_MCS5          0x15U
+#define LMAC_RATE_11N_MCS6          0x16U
+#define LMAC_RATE_11N_MCS7          0x17U
+#define LMAC_RATE_11N_SGI_BASE      0x18U       /* >= 24 selects HT20 Short GI */
+
+/* Peer capability flags & TRC schedule modes */
+#define LMAC_PEER_FLAG_SHORT_PRE    0x01U
+#define LMAC_PEER_FLAG_SGI20        0x02U
+#define LMAC_PEER_FLAG_QOS          0x04U
+#define LMAC_PEER_FLAG_HT           0x08U
+#define LMAC_SCHED_11B              0U
+#define LMAC_SCHED_11G              1U
+#define LMAC_SCHED_11N              2U
 
 #define LMAC_FC1_PROTECTED          0x40U
 #define LMAC_KEY_SLOT_AP_BIT        0x80U

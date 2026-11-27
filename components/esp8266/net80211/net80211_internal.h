@@ -48,15 +48,17 @@ extern "C" {
 #endif
 
 /* --------------------------------------------------------------------------
- * 802.11 Frame Control, Subtypes & Information Elements
+ * 802.11 Frame Control, Subtypes, Header Layout & Information Elements
  * -------------------------------------------------------------------------- */
 
+/** Frame Control byte 0 masks and frame type values (IEEE 802.11-2016 §9.2.4.1). */
 #define IEEE80211_FC_TYPE_MASK          0x0CU
 #define IEEE80211_FC_TYPE_MGMT          0x00U
 #define IEEE80211_FC_TYPE_CTRL          0x04U
 #define IEEE80211_FC_TYPE_DATA          0x08U
 #define IEEE80211_FC_SUBTYPE_MASK       0xF0U
 
+/** Management frame subtypes (shifted into Frame Control byte 0 bits [7:4]). */
 #define IEEE80211_SUBTYPE_ASSOC_REQ     0x00U
 #define IEEE80211_SUBTYPE_ASSOC_RESP    0x10U
 #define IEEE80211_SUBTYPE_REASSOC_REQ   0x20U
@@ -69,13 +71,16 @@ extern "C" {
 #define IEEE80211_SUBTYPE_DEAUTH        0xC0U
 #define IEEE80211_SUBTYPE_ACTION        0xD0U
 
+/** Control frame subtypes. */
 #define IEEE80211_SUBTYPE_PS_POLL       0xA0U /* CTRL */
 
+/** Data frame subtypes. */
 #define IEEE80211_SUBTYPE_DATA          0x00U
 #define IEEE80211_SUBTYPE_NULLFUNC      0x40U
 #define IEEE80211_SUBTYPE_QOS_DATA      0x80U
 #define IEEE80211_SUBTYPE_QOS_NULL      0xC0U
 
+/** Frame Control byte 1 flag bits. */
 #define IEEE80211_FC1_TODS              0x01U
 #define IEEE80211_FC1_FROMDS            0x02U
 #define IEEE80211_FC1_MOREFRAG          0x04U
@@ -84,6 +89,45 @@ extern "C" {
 #define IEEE80211_FC1_MOREDATA          0x20U
 #define IEEE80211_FC1_PROTECTED         0x40U
 
+/** Standard 3-address 802.11 MAC header field offsets and lengths (bytes). */
+#define IEEE80211_HDR_LEN               24U
+#define IEEE80211_QOS_HDR_LEN           26U
+#define IEEE80211_HDR_ADDR1_OFF         4U
+#define IEEE80211_HDR_ADDR2_OFF         10U
+#define IEEE80211_HDR_ADDR3_OFF         16U
+#define IEEE80211_HDR_SEQ_OFF           22U
+#define IEEE80211_ADDR_LEN              6U
+#define IEEE80211_SEQ_SHIFT             4U
+#define IEEE80211_SEQ_MASK              0x0FFFU
+
+/** Beacon / Probe Response fixed-parameter length (8B TSF + 2B interval + 2B capinfo). */
+#define IEEE80211_BCN_FIXED_LEN         12U
+#define IEEE80211_BCN_INT_OFF           8U
+#define IEEE80211_BCN_CAPINFO_OFF       10U
+
+/** Capability Information field bits (IEEE 802.11-2016 §9.4.1.4). */
+#define IEEE80211_CAPINFO_ESS           0x0001U
+#define IEEE80211_CAPINFO_PRIVACY       0x0010U
+#define IEEE80211_CAPINFO_SHORT_PREAMBLE 0x0020U
+#define IEEE80211_CAPINFO_SHORT_SLOT    0x0400U
+
+/** Ethernet II & LLC/SNAP framing constants (bytes). */
+#define IEEE80211_ETH_HDR_LEN           14U
+#define IEEE80211_LLC_SNAP_LEN          8U
+#define IEEE80211_LLC_DSAP_SNAP         0xAAU
+#define IEEE80211_LLC_SSAP_SNAP         0xAAU
+#define IEEE80211_LLC_CTRL_UI           0x03U
+
+/** Security header / trailer lengths (bytes). */
+#define IEEE80211_WEP_IV_LEN            4U
+#define IEEE80211_CCMP_HDR_LEN          8U
+#define IEEE80211_CCMP_MIC_LEN          8U
+#define IEEE80211_TKIP_HDR_LEN          8U
+#define IEEE80211_TKIP_MIC_LEN          8U
+#define IEEE80211_TKIP_EXT_IV_BIT       0x20U
+#define IEEE80211_CCMP_EXT_IV_BIT       0x20U
+
+/** Information Element IDs (IEEE 802.11-2016 §9.4.2.1). */
 #define IEEE80211_IE_SSID               0U
 #define IEEE80211_IE_SUPP_RATES         1U
 #define IEEE80211_IE_DS_PARAM           3U
@@ -127,10 +171,12 @@ extern "C" {
 #define IEEE80211_WMM_INFO_IE_LEN       9U
 #define IEEE80211_WMM_PARAM_IE_LEN      26U
 
+/** Authentication algorithm numbers (IEEE 802.11-2016 §9.4.1.1). */
 #define IEEE80211_AUTH_ALG_OPEN         0U
 #define IEEE80211_AUTH_ALG_SHARED       1U
 #define IEEE80211_AUTH_ALG_SAE          3U
 
+/** Action frame categories and action codes (Block Ack & SA Query). */
 #define IEEE80211_CAT_SPECTRUM_MGMT     0U
 #define IEEE80211_CAT_QOS               1U
 #define IEEE80211_CAT_DLS               2U
@@ -157,22 +203,12 @@ extern "C" {
 #define IEEE80211_SA_QUERY_REQ          0U
 #define IEEE80211_SA_QUERY_RESP         1U
 
-#define IEEE80211_HDR_LEN               24U
+/** Additional 802.11 QoS, crypto, MMIE, and replay-window constants. */
 #define IEEE80211_QOS_CTRL_LEN          2U
-#define IEEE80211_QOS_HDR_LEN           (IEEE80211_HDR_LEN + IEEE80211_QOS_CTRL_LEN)
 #define IEEE80211_QOS_TID_MASK          0x07U
 #define IEEE80211_QOS_AMSDU_BIT         0x80U
 #define IEEE80211_FRAG_NUM_MASK         0x000FU
-#define IEEE80211_HDR_ADDR1_OFF         4U
-#define IEEE80211_HDR_ADDR2_OFF         10U
-#define IEEE80211_HDR_ADDR3_OFF         16U
-#define IEEE80211_HDR_SEQ_OFF           22U
-#define IEEE80211_ADDR_LEN              6U
-#define IEEE80211_CCMP_HDR_LEN          8U
-#define IEEE80211_CCMP_MIC_LEN          8U
 #define IEEE80211_CCMP_KEY_LEN          16U
-#define IEEE80211_TKIP_HDR_LEN          8U
-#define IEEE80211_TKIP_MIC_LEN          8U
 #define IEEE80211_TKIP_ICV_LEN          4U
 #define IEEE80211_TKIP_TRAILER_LEN      (IEEE80211_TKIP_MIC_LEN + IEEE80211_TKIP_ICV_LEN)
 #define IEEE80211_PN_BYTES              6U
@@ -199,13 +235,26 @@ typedef struct {
     uint8_t *slots[N8_VND_IE_TYPE_COUNT][N8_VND_IE_ID_COUNT];
 } n8_vendor_ie_table_t;
 
+/** EAPOL EtherType (0x888E) high/low bytes. */
 #define ETH_P_EAPOL_H                   0x88U
 #define ETH_P_EAPOL_L                   0x8EU
 
+/** Data-plane async TX job ring capacity (power of 2) and SoftAP PS buffer cap. */
 #define N8_TX_RING_SIZE                 16U
 #define N8_TX_RING_MASK                 (N8_TX_RING_SIZE - 1U)
 _Static_assert((N8_TX_RING_SIZE & N8_TX_RING_MASK) == 0U, "N8_TX_RING_SIZE must be power of 2");
 #define N8_AP_PS_MAX_PKTS               4U
+
+/** 2.4 GHz channel range and default TX power limit (quarter-dBm: 78 = 19.5 dBm). */
+#define N8_CHANNEL_MIN                  1U
+#define N8_CHANNEL_MAX                  14U
+#define N8_MAX_SSID_LEN                 32U
+#define N8_PMK_LEN                      32U
+#define N8_TKIP_MIC_KEY_LEN             8U
+#define N8_TX_POWER_MIN_QDBM            8
+#define N8_TX_POWER_MAX_QDBM            84
+#define N8_WPA_PROTO_WPA                1U
+#define N8_WPA_PROTO_RSN                2U
 
 /* --------------------------------------------------------------------------
  * Supplicant App IE Slot (supports both copied IEs and live assoc_ie_buf+2)
@@ -675,10 +724,6 @@ static inline void n8_defrag_on_tick_100ms(void) {}
 void      n8_pm_init(void);
 void      n8_pm_deinit(void);
 void      n8_pm_on_connect(void);
-
-/* net80211_api.c */
-void      n8_apply_tx_power_limit(void);
-void      n8_sync_country_power(void);
 void      n8_pm_on_disconnect(void);
 void      n8_pm_on_activity(void);
 void      n8_pm_on_beacon_rx(const uint8_t *frame, uint16_t len);
@@ -687,6 +732,10 @@ void      n8_pm_wake_for_tx(void);
 void      n8_pm_set_ps(wifi_ps_type_t type);
 void      n8_pm_send_nullfunc_now(bool pm_bit);
 void      n8_pm_send_nullfunc_cb(bool pm_bit, esp_lmac_tx_done_cb_t cb, void *ctx);
+
+/* net80211_api.c */
+void      n8_apply_tx_power_limit(void);
+void      n8_sync_country_power(void);
 
 #ifdef __cplusplus
 }
