@@ -45,4 +45,15 @@ menu "Newlib"
             If you need 64-bit integer formatting support or C99 features, keep this
             option disabled.
 
+    config NEWLIB_NANO_FORMAT_FLOAT
+        bool "Enable float formatting in nano printf/scanf (-u _printf_float)"
+        depends on NEWLIB_NANO_FORMAT
+        default n
+        help
+            By default, newlib-nano omits floating-point printf formatting (~10-15 KB
+            flash plus dtoa/mprec buffers) and renders %e/%f/%g specifiers as "<f>".
+
+            Enabling this option passes -Wl,-u,_printf_float so full float
+            formatting is linked into the application.
+
 endmenu # Newlib
