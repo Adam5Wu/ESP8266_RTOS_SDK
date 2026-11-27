@@ -523,14 +523,14 @@ def format_cell(
     bval = base_stat["mean"]
     bsd = base_stat.get("stdev", 0.0)
     if abs(val - bval) <= max(sd, bsd):
-        return f"{core} (on par)"
+        return f"{core}<br>(on par)" if markdown_color else f"{core} (on par)"
     pct_diff = ((val - bval) / bval) * 100.0
     is_better = (pct_diff > 0.0) if direction == "higher" else (pct_diff < 0.0)
     sign_str = f"{pct_diff:+.1f}%"
     if markdown_color:
         color = "green" if is_better else "red"
         tex_str = sign_str.replace("%", r"\%")
-        return f"{core} ($`\\color{{{color}}}{{{tex_str}}}`$)"
+        return f"{core}<br>($`\\color{{{color}}}{{{tex_str}}}`$)"
     return f"{core} ({sign_str})"
 
 
@@ -566,7 +566,7 @@ def main() -> int:
     ap.add_argument("--baseline", help="Optional baseline JSON from a previous run for delta percentages")
     ap.add_argument(
         "--markdown-color", action="store_true",
-        help="Format delta percentages with KaTeX/GitHub green/red color markup",
+        help="Format delta percentages on a new line (<br>) with KaTeX/GitHub green/red color markup",
     )
     args = ap.parse_args()
 
