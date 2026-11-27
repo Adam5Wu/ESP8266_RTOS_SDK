@@ -58,7 +58,7 @@ flowchart TB
     end
 
     subgraph IRAM["IRAM Fast Path — Cache-Disabled Safe (.iram0.text)"]
-        SOFTISR["Level-1 SoftISR Wakeup Bridge (128 B)"]
+        SOFTISR["Level-1 SoftISR Trampoline (38 B)"]
         NMI["Level-3 NMI (wDev_ProcessFiq: RX Drain, Timers, Fast TX)"]
         PHY_IRAM["Minimal PHY IRAM Core (10 Flash-Disabled Primitives)"]
     end
@@ -101,7 +101,7 @@ flowchart TB
 
 ### 3.1 The IRAM Diet & Surviving Flash-Cache Stalls
 
-The vendor stack maps almost all of `libphy.a` and `libpp.a` unconditionally into IRAM (`25.2 KB`), starving the rest of the system. In the open-source stack, IRAM residency is strictly opt-in: only the **10 PHY primitives** invoked from NMI or flash-off sleep transitions, the `128 B` SoftISR trampoline, and the Level-3 NMI handler (`wDev_ProcessFiq`, compiled with `-fno-jump-tables` and audited for zero flash references) live in IRAM. Calibration, channel synthesis, rate adaptation, DMA bookkeeping, crypto key programming, and all 802.11 protocol state machines stay in flash XIP. That single discipline cuts static IRAM by more than half.
+The vendor stack maps almost all of `libphy.a` and `libpp.a` unconditionally into IRAM (`25.2 KB`), starving the rest of the system. In the open-source stack, IRAM residency is strictly opt-in: only the **10 PHY primitives** invoked from NMI or flash-off sleep transitions, the `38 B` SoftISR trampoline (`MacIsrSigPostDefHdl`), and the Level-3 NMI handler (`wDev_ProcessFiq`, compiled with `-fno-jump-tables` and audited for zero flash references) live in IRAM. Calibration, channel synthesis, rate adaptation, DMA bookkeeping, crypto key programming, and all 802.11 protocol state machines stay in flash XIP. That single discipline cuts static IRAM by more than half.
 
 Moving the worker to flash introduces one unavoidable physical trade-off: during a `30–60 ms` SPI flash sector erase (or sustained flash read bursts), the CPU disables the SPI flash XIP cache and pauses all flash-resident tasks while Level-3 NMI stays live. If TX retries and next-frame launches wait for the flash-resident worker to wake back up, in-flight bursts stall and modem-sleep wakes stretch out.
 
