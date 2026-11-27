@@ -114,17 +114,17 @@ sequenceDiagram
     participant NMI as Level-3 NMI (IRAM)
     participant Worker as Cooperative Worker (Flash XIP)
 
-    Note over Worker: Precomputes retry schedule & queues frames #1..#N on TXQ0
+    Note over Worker: Precomputes retries & queues frames 1..N
     Flash->>Flash: Disable flash XIP cache (30-60 ms sector erase)
 
-    rect rgb(235, 245, 235)
+    rect rgba(46, 160, 67, 0.16)
         Note over WDEV,NMI: Default Fast TX (OSS_WIFI_MIN_NMI = n): NMI remains live
-        WDEV-->>NMI: TX_DONE (ACK timeout) on frame #1
+        WDEV-->>NMI: TX_DONE (ACK timeout) on frame 1
         NMI->>WDEV: Re-arm hardware retry directly in IRAM (< 10 us)
-        WDEV-->>NMI: TX_DONE (OK) on frame #1
-        NMI->>WDEV: Pop & arm queued frame #2 directly in IRAM
-        NMI->>NMI: Push frame #1 onto coalesced TX-done FIFO + PendSV
-        WDEV-->>NMI: TX_DONE (OK) on frame #2 -> arm frame #3
+        WDEV-->>NMI: TX_DONE (OK) on frame 1
+        NMI->>WDEV: Pop & arm queued frame 2 directly in IRAM
+        NMI->>NMI: Queue frame 1 in TX-done FIFO + PendSV
+        WDEV-->>NMI: TX_DONE (OK) on frame 2 (NMI arms frame 3)
     end
 
     Flash->>Flash: Re-enable flash XIP cache
