@@ -517,11 +517,11 @@ config ESP8266_OSS_WIFI_MIN_NMI
 
         By default (n), retryable TX completions and queued TX launches
         execute directly in IRAM NMI so TX continues uninterrupted across
-        SPI flash erase/read cache-off windows (+708 B IRAM, still ~50%
+        SPI flash erase/read cache-off windows (+789 B IRAM, still ~50%
         less IRAM than vendor blobs).
 
         Enable (y) to defer all TX handling to the flash-resident Wi-Fi
-        worker task and reclaim those 708 B of static IRAM.
+        worker task and reclaim those 789 B of static IRAM.
 
 config ESP8266_OSS_WIFI_TASK_PRIO
     int "OSS Wi-Fi worker task priority"
