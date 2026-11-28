@@ -12,6 +12,6 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/espressif/ESP8266_RTOS_SDK"
+    "url": "https://github.com/Adam5Wu/ESP8266_RTOS_SDK"
   }
 }
